@@ -1,0 +1,78 @@
+.container-Login{
+    display: flex;
+    justify-content: flex-end;
+position: relative;
+  width: 100%;
+    padding: 20px;
+  height: 100vh;
+  --color: var(--black-t);
+  background-color: var(--black);
+  background-image: linear-gradient(0deg, transparent 24.6667%, var(--color) 25%, var(--color) 25.3333%, transparent 25.6666%,
+                                      transparent 74.3334%, var(--color) 74.6667%, var(--color) 75%, transparent 75.3333%),
+                    linear-gradient(90deg, transparent 24.6667%, var(--color) 25%, var(--color) 25.3333%, transparent 25.6666%,
+                                      transparent 74.3334%, var(--color) 74.6667%, var(--color) 75%, transparent 75.3333%);
+  background-size: 150px 150px;
+}
+.container_content_Login{
+
+    width: 450px;
+    background-color: var(--black-s);
+    border: 2px solid var(--black-t);
+    border-radius: 14px;
+}
+
+.sinin_conatainer{
+  width: 382px;
+}
+
+.form_signIn label{
+  padding: 0px 10px 16px 0px;
+}
+
+.container_content_Login{
+    z-index: 10;
+    display: flex;
+    position: relative;
+    align-items: center;
+    justify-content: center;
+}
+
+.loginInacctext h1{
+  text-align: center;
+font-size: 23px;
+  font-weight: 600;
+}
+
+.signachore {
+    padding-top: 64px;
+    opacity: 0.5;
+}
+
+
+.hero_content_login {
+  position: absolute;
+  top: 0;
+  left: 0;
+  overflow: hidden;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 60%;
+  height: 100vh;
+}
+
+.hero_content_login img{
+  object-fit: cover;
+  flex-shrink: 0;
+  min-width: 100%;
+  min-height: 100%;
+  width: auto;
+  height: auto;
+}
+
+@media screen and (max-width: 490px) {
+.sinin_conatainer{
+        width: 77vw;
+}
+
+}

@@ -1,6 +1,7 @@
 // Buttons.jsx
 import React from 'react';
 
+
 const Buttons = ({ type, children, onClick, disabled }) => {
   const buttonClass = `button button--${type || 'primary'} ${disabled ? 'button--disabled' : ''}`;
 

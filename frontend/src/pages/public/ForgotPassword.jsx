@@ -1,4 +1,3 @@
-
 import LogoSvg from "../../assets/svg/pulse_logo.svg";
 import GoogleSvg from "../../assets/svg/svg_google.svg";
 import Buttons from "../../components/UI/buttons.jsx";
@@ -10,10 +9,14 @@ import Preloader from "../../components/UI/preloader.jsx";
 
 
 
-export default function Login() {
 
+
+
+
+
+
+export default function ForgotPassword() {
   return (
-    
     <div className="container-Login">
       <div className="hero_content_login">
           <img src={pulseImagerr} alt="Pulse" />
@@ -28,12 +31,9 @@ export default function Login() {
                   <p >Pulse</p>
                 </div>
                 <div className="loginInacctext">
-                  <h1 >Войти в свой аккаунт</h1>
-                  <div className="flex items-center justify-center gap-[8px]">
-                    <p>У вас нет аккаунта?</p>
-                    <Link to="/register">
-                        <Buttons type="text-blue-underline">Зарегистрироваться</Buttons>
-                    </Link>
+                  <h1 >Восстановление пароля</h1>
+                  <div className="flex items-center justify-center gap-[8px] text-center">
+                    <p>Введите адрес электронной почты, на который зарегистрирован ваш аккаунт</p>
                   </div>
                 </div>
               </div>
@@ -41,24 +41,15 @@ export default function Login() {
                   <div className="flex flex-col gap-[8px]">
                     <label className="pl-[10px]" htmlFor="email" >Почта</label>
                     <Inputs variant="primary" type="email" placeholder="example@gmail.com" />
-                    <label className="pl-[10px]" htmlFor="password" >Пароль</label>
-                    <Inputs variant="primary" type="password" placeholder="Пароль" />
                   </div>
                   <div className="pt-[24px]">
-                     <div className="flex items-center justify-between pb-[24px]">
-                        <Checkbox textCheckbox="Запомнить меня" />
-                        <Link to="/forgot-password"><Buttons type="text-blue-underline">Забыли пароль?</Buttons></Link>
-                      </div>
-                      <Link to="/app">
-                        <Buttons className="btn_signIn" type="primary-full">Войти</Buttons>
-                      </Link>
+                      <Buttons className="btn_signIn" type="primary-full">Отправить код</Buttons>
                       <div className="line"></div>
-                      <Buttons onClick={() => alert('Войти с помощью Google')} type="black_prymary-widht">
-                        <div className="flex items-center justify-center gap-[8px]">
-                           <img src={GoogleSvg} alt="Google" />
-                            Войти с помощью Google
-                        </div>
-                      </Buttons>
+                      <center>
+                        <Link to="/login">
+                          <Buttons type="text-blue-underline"> &crarr; Вернуться ко входу</Buttons>
+                        </Link>
+                      </center>
                   </div>
               </form>
               <center>

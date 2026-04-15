@@ -12,6 +12,8 @@ import AppLayout from "../layouts/AppLayout";
 
 import Register from "../pages/public/Register.jsx";
 
+import ForgotPassword from "../pages/public/ForgotPassword.jsx";
+
 export default function Router() {
   return (
     <Routes>
@@ -19,6 +21,7 @@ export default function Router() {
       <Route path="/" element={<Landing />} />
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Register />} />
+      <Route path="/forgot-password" element={<ForgotPassword />} />
 
       {/* App */}
       <Route path="/app" element={<AppLayout />}>

@@ -43,7 +43,7 @@
 /* Disabled состояние */
 .button--disabled {
   opacity: 0.6;
-  cursor: not-allowed;
+  cursor: not-allowed !important;
   transform: none !important;
 }
 
@@ -74,3 +74,63 @@
   box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
   opacity: 0.9;
 }
+
+
+/* Full width кнопка */
+.button--primary-full {
+  background-color: var(--primary-blue);
+  color: white;
+  border: 5px solid var(--primary-blue-glass);
+  padding: 12px 24px;
+  border-radius: 30px;
+  width: 100%;
+  display: block;
+}
+
+.button--primary-full:hover:not(:disabled) {
+  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+  border: 5px solid var(--primary-blue);
+}
+
+.button--primary-full:active:not(:disabled) {
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+  opacity: 0.5;
+}
+
+
+
+
+/* Text кнопка */
+.button--text-blue-underline {
+  background-color: transparent;
+  color: var(--primary-blue);
+  text-decoration: underline;
+  border: none;
+  border-radius: 4px;
+}
+
+.button--text-blue-underline:hover:not(:disabled) {
+    color: var(--white);
+}
+
+.button--text-blue-underline:active:not(:disabled) {
+    opacity: 0.5;
+}
+
+
+/* черная на всю ширину */
+.button--black_prymary-widht{
+    cursor: pointer;
+    background-color: var(--black);
+    color: white;
+    width: 100%;
+    border: 5px solid var(--black-blur);
+    padding: 12px 24px;
+    border-radius: 30px;
+}
+
+.button--black_prymary-widht:hover:not(:disabled) {
+    color: var(--primary-blue);
+    border: 5px solid var(--black);
+}
+

@@ -1,8 +1,9 @@
 @import "./style/fonts/fonst-settings.css";
 @import "./style/components/pages/Landing.css";
 @import "./style/components/buttons.css";
-
-
+@import "./style/components/pages/Login.css";
+@import "./style/components/inputs.css";
+/* @import "./style/components/preloader.css"; */
 
 
 
@@ -42,3 +43,11 @@ html{
     border: 2px solid var(--black-t);
     border-radius: 20px;
 }
+
+.line{
+    margin: 20px 0px 20px 0px;
+    width: 100%;
+    height: 1px;
+    background-color: #363636;
+}
+/* force refresh */

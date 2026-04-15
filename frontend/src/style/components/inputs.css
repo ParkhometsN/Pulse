@@ -1,0 +1,17 @@
+.input{
+  transition: all 0.3s ease;
+  cursor: pointer;
+}
+
+.input--primary {  
+    width: 100%;
+    background-color: var(--black);
+    border: 1px solid var(--black-t);
+    border-radius: 6px;
+    padding: 12px 18px;
+}
+
+.input--primary:focus{
+    border: 1px solid var(--primary-blue);
+    outline: none;
+}
