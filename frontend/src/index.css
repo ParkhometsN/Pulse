@@ -1,3 +1,44 @@
+@import "./style/fonts/fonst-settings.css";
+@import "./style/components/pages/Landing.css";
+@import "./style/components/buttons.css";
+
+
+
+
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+
+
+
+body{
+    margin: 0 auto;
+    background-color: var(--black);
+    color: var(--white);
+    max-width: 2000px;
+
+  font-family: "Inter", sans-serif;
+  font-weight: 400;
+}
+
+html{
+    scroll-behavior: smooth;
+}
+
+:root {
+    --primary-blue: #1E75FF;
+    --primary-blue-glass: #26487D;
+    --white: #ffffff;
+    --black: #141416;
+    --black-s: #1C1C1E;
+    --black-t: #252525;
+    --black-blur: #232324;
+}
+
+.black_box{
+    background-color: var(--black);
+    border: 2px solid var(--black-t);
+    border-radius: 20px;
+}

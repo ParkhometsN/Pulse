@@ -1,7 +1,7 @@
-export default function Login() {
+export default function News() {
   return (
     <div className="p-10 text-3xl">
-      Login page 🔐
+      News page 📰
     </div>
   );
 }

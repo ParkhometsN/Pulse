@@ -1,0 +1,76 @@
+/* Buttons.css */
+.button {
+  transition: all 0.3s ease;
+  cursor: pointer;
+}
+
+/* Primary кнопка */
+.button--primary {
+  background-color: var(--primary-blue);
+  color: white;
+  border: 5px solid var(--primary-blue-glass);
+  padding: 12px 24px;
+  border-radius: 30px;
+}
+
+.button--primary:hover:not(:disabled) {
+  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+  border: 5px solid var(--primary-blue);
+}
+
+.button--primary:active:not(:disabled) {
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+  opacity: 0.5;
+}
+
+/* Text кнопка */
+.button--text {
+  background-color: transparent;
+  color: white;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 4px;
+}
+
+.button--text:hover:not(:disabled) {
+    color: var(--primary-blue);
+}
+
+.button--text:active:not(:disabled) {
+    opacity: 0.5;
+}
+
+/* Disabled состояние */
+.button--disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none !important;
+}
+
+.button--black_prymary{
+    cursor: pointer;
+    background-color: var(--black);
+    color: white;
+    border: 5px solid var(--black-blur);
+    padding: 12px 24px;
+    border-radius: 30px;
+}
+
+.button--black_prymary:hover:not(:disabled) {
+    color: var(--primary-blue);
+    border: 5px solid var(--black);
+}
+
+.button_icon{
+    display: flex;
+    align-items: center;
+}
+.button_icon img{
+    width: 2vw;
+}
+
+
+.button--black_prymary:active:not(:disabled) {
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+  opacity: 0.9;
+}
