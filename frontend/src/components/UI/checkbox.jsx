@@ -12,7 +12,7 @@ const Checkbox = ({textCheckbox}) => {
             <polyline points="1 9 7 14 15 4" />
           </svg>
         </label>
-        <p>{textCheckbox}</p>
+        <p >{textCheckbox}</p>
       </div>
     </StyledWrapper>
   );

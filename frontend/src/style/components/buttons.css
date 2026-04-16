@@ -2,6 +2,7 @@
 .button {
   transition: all 0.3s ease;
   cursor: pointer;
+  font-size: 14px !important;
 }
 
 /* Primary кнопка */

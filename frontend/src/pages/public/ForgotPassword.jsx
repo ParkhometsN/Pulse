@@ -10,11 +10,6 @@ import Preloader from "../../components/UI/preloader.jsx";
 
 
 
-
-
-
-
-
 export default function ForgotPassword() {
   return (
     <div className="container-Login">
