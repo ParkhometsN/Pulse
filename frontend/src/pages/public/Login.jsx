@@ -53,7 +53,7 @@ export default function Login() {
                         <Buttons className="btn_signIn" type="primary-full">Войти</Buttons>
                       </Link>
                       <div className="line"></div>
-                      <Buttons onClick={() => alert('Войти с помощью Google')} type="black_prymary-widht">
+                      <Buttons disabled="disabled" onClick={() => alert('Войти с помощью Google')} type="black_prymary-widht">
                         <div className="flex items-center justify-center gap-[8px]">
                            <img src={GoogleSvg} alt="Google" />
                             Войти с помощью Google

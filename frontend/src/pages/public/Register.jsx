@@ -57,7 +57,7 @@ export default function Register() {
                         <Checkbox textCheckbox="Продолжая вы соглашаетесь с политикой обработкой данных" />
                       </div>
                       <Link to="/app">
-                        <Buttons disabled="disabled" className="btn_signIn" type="primary-full">Войти</Buttons>
+                        <Buttons className="btn_signIn" type="primary-full">Войти</Buttons>
                       </Link>
                   </div>
               </form>

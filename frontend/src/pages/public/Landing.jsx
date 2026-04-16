@@ -18,7 +18,7 @@ export default function Landing() {
                 <p >Pulse</p>
               </div>
               <div className="flex items-center gap-4">
-                <Link to="/register">
+                <Link to="/register" className="Mb-disabled">
                   <Buttons type="text">Зарегистрироваться</Buttons>
                 </Link>
                 <Link to="/login">

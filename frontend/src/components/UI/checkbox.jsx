@@ -12,7 +12,7 @@ const Checkbox = ({textCheckbox}) => {
             <polyline points="1 9 7 14 15 4" />
           </svg>
         </label>
-        <p >{textCheckbox}</p>
+        <p className='textcheckbox' >{textCheckbox}</p>
       </div>
     </StyledWrapper>
   );
@@ -28,6 +28,9 @@ const StyledWrapper = styled.div`
     -webkit-tap-highlight-color: transparent;
     transform: translate3d(0, 0, 0);
   }
+    .textcheckbox{
+    font-size: 14px;
+    }
 
   .check:before {
     content: "";

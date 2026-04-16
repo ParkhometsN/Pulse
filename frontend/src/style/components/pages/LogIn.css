@@ -70,9 +70,22 @@ font-size: 23px;
   height: auto;
 }
 
-@media screen and (max-width: 490px) {
+@media screen and (max-width: 500px) {
 .sinin_conatainer{
         width: 77vw;
 }
+.signIn_content{
+  padding: 10px;
+}
+.container-Login {
+    padding: 0px;
+}
+.container_content_Login {
+    border-radius: 0px;
+    width: 100%;
+}
+.sinin_conatainer {
+        width: 97vw;
+    }
 
 }

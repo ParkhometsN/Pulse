@@ -89,3 +89,21 @@ header{
 }
 
 }
+
+@media screen and (max-width: 490px) {
+.Mb-disabled{
+  display: none;
+}
+.title_hero p {
+  font-size: 38vw;
+  margin-top: 3vh;
+  height: 100%;
+}
+
+.container-landing {
+  padding: 0px;
+}
+.flex-col {
+  flex-direction: column;
+}
+}
