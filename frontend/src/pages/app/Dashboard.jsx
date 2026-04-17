@@ -15,7 +15,7 @@ export default function Dashboard() {
                     <Buttons type='text'><h5>₽</h5></Buttons>
                   </div>
                   <div className="moneyAll">
-                    <p>17 430 021,12 ₽</p>
+                    <p className="titlePriceDAsh">17 430 021,12 ₽</p>
                     <div className="changes_to_day">
                       <p style={{opacity: 0.5, fontSize: '12px', fontWeight: 400}}>за сегодня</p>
                       <div className="changes">

@@ -1,6 +1,7 @@
 /* dashboard styles */
 .dashboard_content{
     padding: 10px;
+    height: 100%;
 }
 .dashboard_container{
     background-color: var(--black);
@@ -20,7 +21,6 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding-bottom: 35px;
 }
 .title_ds h5{
     display: flex;
@@ -34,6 +34,13 @@
 .left_block_dsh{
     width: 100%;
     height: 100%;
+}
+.left_block_dsh{
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    height: 100%;
+    gap: 36px;
 }
 .moneyAll{
     display: flex;
@@ -133,9 +140,45 @@ align-items: flex-end;
     .dashboard_container{
         flex-direction: column;
 }
+.blockf{
+    width: 100%;
+    max-width: 100%;
+    min-height: 250px;
+}
+.blocks{
+    width: 100%;
+    max-width: 100%;
+    min-height: 250px;
+}
+
+.block{
+    width: 100%;
+    max-width: 100%;
+    min-height: 250px;
+}
 }
 @media screen and (max-width: 574px){
     .dashboard_container{
       border-radius: 28px;
 }
+.changes_to_day {
+    display: flex;
+    width: 100%;
+    justify-content: space-between;
+    align-items: flex-end;
+    flex-direction: row;
+}
+.moneyAll {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    flex-direction: column;
+}
+.left_block_dsh {
+    gap: 0px;
+}
+.titlePriceDAsh{
+    font-size: 10vw !important;
+}
+
 }
