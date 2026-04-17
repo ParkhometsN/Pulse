@@ -14,6 +14,8 @@ import Register from "../pages/public/Register.jsx";
 
 import ForgotPassword from "../pages/public/ForgotPassword.jsx";
 
+import Profile from "../pages/app/Profile.jsx";
+
 export default function Router() {
   return (
     <Routes>
@@ -25,10 +27,11 @@ export default function Router() {
 
       {/* App */}
       <Route path="/app" element={<AppLayout />}>
-        <Route index element={<Dashboard />} />
+        <Route index element={<Dashboard/>} />
         <Route path="market" element={<Market />} />
-        <Route path="news" element={<News />} />
+        <Route path="news" element={<News/>} />
         <Route path="settings" element={<Settings />} />
+        <Route path="profile" element={<Profile/>} />
       </Route>
     </Routes>
   );

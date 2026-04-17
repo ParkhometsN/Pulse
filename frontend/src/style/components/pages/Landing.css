@@ -79,6 +79,7 @@ header{
   z-index: 10;
 }
 .description p{
+  max-width: 545px;
   padding-bottom: 16px;
   text-align: center;
 }
@@ -95,9 +96,17 @@ header{
   display: none;
 }
 .title_hero p {
-  font-size: 38vw;
-  margin-top: 3vh;
-  height: 100%;
+font-size: 30vw;
+        margin-top: 3vh;
+        height: 100%;
+}
+.content_hero {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    position: relative;
+    z-index: 10;
+    padding: 27px;
 }
 
 .container-landing {

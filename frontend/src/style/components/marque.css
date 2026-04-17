@@ -1,0 +1,55 @@
+.marquee {
+    width: 100%;
+    overflow: hidden;
+    box-sizing: border-box;
+    position: relative;
+}
+
+.marquee-content {
+    padding-bottom: 25px;
+    padding-top: 14px;
+    display: flex;
+    gap: 16px;
+    white-space: nowrap;
+    animation: marquee 15s linear infinite;
+    width: fit-content;
+}
+
+@keyframes marquee {
+    0% {
+        transform: translateX(0);
+    }
+    100% {
+        transform: translateX(-50%);
+    }
+}
+
+.persent_money {
+    color: var(--green);
+}
+
+.coin_mn {
+    padding-left: 8px;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+}
+
+.coin_mn img {
+    width: 15px;
+    height: 15px;
+}
+
+/* Чтобы не было горизонтального скролла */
+.MainContentApp {
+    overflow-x: hidden;
+    width: 100%;
+}
+
+
+@media screen and (max-width: 574px){
+.marquee {
+    display: none;
+}
+}

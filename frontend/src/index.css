@@ -4,6 +4,10 @@
 @import "./style/components/pages/LogIn.css";
 @import "./style/components/inputs.css";
 @import "./style/components/preloader.css";
+@import "./style/components/sidebar.css";
+@import "./style/components/pages/dashboard.css";
+@import "./style/components/pages/app_main.css";
+@import "./style/components/marque.css";
 
 
 
@@ -18,11 +22,12 @@ body{
     margin: 0 auto;
     background-color: var(--black);
     color: var(--white);
-    max-width: 2000px;
-
-  font-family: "Inter", sans-serif;
-  font-weight: 400;
+    max-width: 1920px;
+    font-family: "Inter", sans-serif;
+    font-weight: 400;
+    
 }
+
 
 html{
     scroll-behavior: smooth;
@@ -36,6 +41,8 @@ html{
     --black-s: #1C1C1E;
     --black-t: #252525;
     --black-blur: #232324;
+    --green: #00FFAB; 
+    --red: #FF3B30;
 }
 
 .black_box{

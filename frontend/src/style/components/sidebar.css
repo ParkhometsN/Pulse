@@ -1,0 +1,228 @@
+.logo_blokc_sidebar img{
+ width: 30px;
+}  
+
+.logo_blokc_sidebar p{
+    font-size: 24px;
+    font-family: 'Coolvetica';
+}
+.logo_blokc_sidebar{
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.logo_burger{
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+
+}
+
+.container-sidebar{
+    background-color: var(--black);
+    height: 100%;
+    padding: 16px 16px 16px 16px;
+    width: 300px;
+}
+.container-sidebar-hidden{
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 16px 16px 16px 16px;
+}
+.container-sidebar-mobile{
+    padding: 25px 25px 0px 25px;
+}
+.coins{
+    display: flex;
+    width: 100%;
+}
+.Name_Account{
+    font-size: 13px;
+}
+.Destination{
+       font-size: 13px;
+       opacity: 0.6;
+}
+.PersentMoney{
+           font-size: 13px;
+    color: var(--green);
+}
+.account_button{
+    cursor: pointer;
+    padding-top: 16px;
+}
+.account_item{
+    background-color: var(--black-s);
+    border: 2px solid var(--black-t);
+    border-radius: 24px;
+    padding: 10px 25px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    transition: all 0.3s ease;
+}
+.text_account{
+    display: flex;
+    flex-direction: column;
+    gap: 5;
+}
+.account_item img{
+    width: 27px;
+}
+
+.account_button:hover .account_item{
+    border: 2px solid var(--primary-blue);
+}
+.account_button:active .account_item{
+    background-color: var(--primary-blue);
+}
+.account_button.active .account_item{
+    background-color: var(--primary-blue);
+}
+.NavigationAPP{
+    padding-top: 12px;
+    gap: 8px;
+    display: flex;
+    flex-direction: column;
+}
+.NavigationAPP Link{
+    padding: 20px;
+}
+
+.iconBut{
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.NavTitle{
+    opacity: 0.5;
+    padding: 5px 5px 5px 15px;
+}
+
+
+.text_account{
+    display: flex;
+    flex-direction: column;
+    gap: 5;
+}
+
+
+
+.container-sidebar-mobile{
+    display: none;
+}
+
+.account_item-hidden-sidebar img{
+    width: 24px;
+}
+
+.account_button:hover .account_item-hidden-sidebar{
+    border: 2px solid var(--primary-blue);
+}
+.account_button:active .account_item-hidden-sidebar{
+    background-color: var(--primary-blue);
+}
+.account_button.active .account_item-hidden-sidebar{
+    background-color: var(--primary-blue);
+}
+.account_item-hidden-sidebar{
+    background-color: var(--black-s);
+    border: 2px solid var(--black-t);
+    border-radius: 24px;
+    padding: 10px 15px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    transition: all 0.3s ease;
+}
+
+.hiddenside{
+    padding: 2px;
+}
+
+.IconSvgNav svg{
+    width: 24px;
+}
+
+.TodayMoney{
+    display: none;
+}
+
+/* Анимация для появления/исчезновения */
+.container-sidebar,
+.container-sidebar-hidden {
+  transition: opacity 0.3s ease-in-out, transform 0.3s ease-in-out;
+}
+
+/* При монтировании/демонтировании компонента */
+.container-sidebar {
+  animation: slideInRight 0.3s ease-in-out;
+}
+
+.container-sidebar-hidden {
+  animation: slideInLeft 0.3s ease-in-out;
+}
+
+@keyframes slideInRight {
+  from {
+    opacity: 0;
+    transform: translateX(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes slideInLeft {
+  from {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.activeButtonBurger{
+    background-color: var(--primary-blue);
+}
+
+
+@media screen and (max-width: 871px){
+    .container-sidebar{
+        z-index: 10;
+        position: absolute;
+    }
+}
+
+@media screen and (max-width: 574px){
+    .container-sidebar-hidden{
+        display: none;
+    }
+    .container-sidebar{
+    padding: 25px 25px 25px 25px;
+    width: 100%;
+}
+.container-sidebar-mobile{
+    display: block;
+}
+.account_button.active .account_item{
+    background-color: var(--black);
+}
+.account_item{
+    background-color: var(--black);
+}
+.TodayMoney{
+    background-color: #00ffaa1d;
+    padding: 8px 15px;
+    display: block;
+    /* border: 1.5px solid var(--black-t); */
+    border-radius: 20px;
+}
+
+
+}
+

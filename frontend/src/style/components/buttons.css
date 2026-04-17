@@ -135,3 +135,100 @@
     border: 5px solid var(--black);
 }
 
+
+
+
+.button--black_prymary-t{
+    cursor: pointer;
+    background-color: var(--black-s);
+    color: white;
+    border: 1.5px solid var(--black-t);
+    padding: 13px 16px;
+    border-radius: 14px;
+}
+
+.button--black_prymary-t:hover:not(:disabled) {
+    border: 1.5px solid var(--primary-blue);
+}
+.button--black_prymary-t:active:not(:disabled) {
+    background-color: var(--primary-blue);
+}
+
+
+
+
+
+
+
+
+
+/* navigation_But */
+
+.button--navigation_But {
+  width: 100%;
+  background-color: var(--black);
+  color: white;
+  padding: 12px 10px;
+  border-radius: 12px;
+}
+
+.button--navigation_But:hover:not(:disabled) {
+  background-color: #1e74ff2f;
+  color: var(--primary-blue);
+}
+
+.button--navigation_But:active:not(:disabled) {
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+  opacity: 0.5;
+}
+
+.IconSvgNav svg {
+  stroke: var(--white);
+  fill: transparent;
+}
+/* Добавить это правило */
+.button--navigation_But:hover:not(:disabled) .IconSvgNav svg {
+  stroke: var(--primary-blue);
+}
+
+
+
+
+/* Primary кнопка */
+.button--primary-danger {
+  background-color: var(--red);
+  color: white;
+  border: 5px solid #63363B;
+  padding: 12px 24px;
+  border-radius: 30px;
+}
+
+.button--primary-danger:hover:not(:disabled) {
+  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+  border: 5px solid var(--red);
+}
+
+.button--primary-danger:active:not(:disabled) {
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+  opacity: 0.5;
+}
+
+
+
+
+
+/* Активное состояние кнопки - такой же как hover */
+.button--navigation_But.active:not(:disabled) {
+  background-color: #1e74ff2f;
+  color: var(--primary-blue);
+}
+
+/* Активное состояние для иконки */
+.button--navigation_But.active:not(:disabled) .IconSvgNav svg {
+  stroke: var(--primary-blue);
+}
+
+/* Если нужно, чтобы иконка тоже меняла цвет */
+.IconSvgNav.active svg {
+  stroke: var(--primary-blue);
+}

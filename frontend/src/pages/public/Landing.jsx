@@ -33,7 +33,7 @@ export default function Landing() {
                 <p>Pulse</p>
               </div>
               <div className="description">
-                <p>Единый центр управления инвестициями. Подключайте любые портфели <br /> и управляйте активами в режиме одного окна.</p>
+                <p>Единый центр управления инвестициями. Подключайте любые портфели и управляйте активами в режиме одного окна.</p>
               </div>
               <Link to="/register">
                 <Buttons type="black_prymary" className="button_icon">

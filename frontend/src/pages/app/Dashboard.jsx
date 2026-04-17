@@ -1,7 +1,12 @@
 export default function Dashboard() {
   return (
-    <div className="p-10 text-3xl">
-      Dashboard 📊
+    <div className="app_pages">
+      
+      <div className="app_content">
+        <div className="app_items">
+          <h1>Портфель</h1>
+        </div>
+      </div>
     </div>
   );
 }
