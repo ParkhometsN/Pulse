@@ -129,7 +129,7 @@
 .account_item-hidden-sidebar{
     background-color: var(--black-s);
     border: 2px solid var(--black-t);
-    border-radius: 24px;
+    border-radius: 14px !important;
     padding: 10px 15px;
     display: flex;
     align-items: center;
