@@ -77,7 +77,9 @@ export default function AppLayout() {
             </div>
           </div>
         </div>
-        <Outlet />
+        <div className="app_outlet_wrapper">
+          <Outlet />
+        </div>
       </main>
     </div>
   );

@@ -1,1 +1,141 @@
 /* dashboard styles */
+.dashboard_content{
+    padding: 10px;
+}
+.dashboard_container{
+    background-color: var(--black);
+    border: 1.5px solid var(--black-t);
+    border-radius: 16px;
+    padding: 16px;
+    display: flex;
+    justify-content: space-between;
+    gap: 20px;
+}
+
+.title_ds p{
+    font-size: 18px;
+    color: var(--primary-blue);
+}
+.title_ds{
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-bottom: 35px;
+}
+.title_ds h5{
+    display: flex;
+    justify-content: center; 
+    align-items: center;
+    height: 12px;
+    width: 12px;
+    font-size: 19px;
+}
+.Right_block_dsh,
+.left_block_dsh{
+    width: 100%;
+    height: 100%;
+}
+.moneyAll{
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+}
+.Right_block_dsh{
+    height: 100%;
+    background-color: var(--black-s);
+    border: 1.5px solid var(--black-t);
+    padding: 5px;
+    border-radius: 16px;
+}
+
+.moneyAll p{
+    font-weight: 600;
+    font-size: 40px;
+}
+.changes p{
+    font-size: 14px ;
+    font-weight: 400;
+    color: var(--green);
+}
+.changes{
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.changes_to_day{
+    display: flex;
+flex-direction: column;
+align-items: flex-end;
+}
+.button_addBag{
+    cursor: pointer;
+    max-width: 100%;
+    display: flex;
+    padding: 4px;
+    justify-content: center;
+    flex-direction: column;
+    justify-content: center;
+    align-items:center;
+    text-align: center;
+    gap: 6px;
+    height: 100px;
+    box-sizing: content-box;
+    border: 1.5px var(--primary-blue) dashed;
+    border-radius:11px;
+    background-color: hsla(217, 100%, 56%, 0.126);
+    transition: all 0.3s ease;
+    user-select: none;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+}
+.button_addBag:hover{
+    color: var(--primary-blue);
+}
+.button_addBag:active{
+    border: 1.5px var(--primary-blue) solid;
+}
+.button_addBag img{
+    width: 30px;
+}
+.button_addBag h5{
+    font-size: 13px;
+}
+.button_addBag p{
+    opacity: 0.5;
+    font-size: 12px;
+}
+.blockf{
+    width: 100%;
+    min-width: 500px;
+    min-height: 250px;
+}
+.blocks{
+    width: 100%;
+    min-width: 150px;
+    min-height: 250px;
+}
+
+.block{
+    width: 100%;
+    min-width: 400px;
+    min-height: 250px;
+}
+
+.containerAnalic{
+    display: flex;
+    padding-top: 10px;
+    gap: 10px;
+}
+
+@media screen and (max-width: 1240px){
+    .containerAnalic,
+    .dashboard_container{
+        flex-direction: column;
+}
+}
+@media screen and (max-width: 574px){
+    .dashboard_container{
+      border-radius: 28px;
+}
+}

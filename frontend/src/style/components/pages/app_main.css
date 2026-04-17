@@ -2,16 +2,26 @@
     width: 100%;
     height: 100%;
     background-color: var(--black-s);
-    border-radius: 10px;
+    border-radius: 20px;
     border: 2px solid var(--black-t);
-}
-.app_items{
-    padding: 20px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-width: none; /* Для Firefox */
+    -ms-overflow-style: none; /* Для IE и Edge */
 }
 
+.app_content::-webkit-scrollbar {
+    display: none; /* Для Chrome, Safari, Edge */
+}
+
+ 
 .MainContentApp{
     width: 100%;
     padding: 16px 16px 16px 0px;
+     display: flex;           /* Добавить */
+    flex-direction: column;  /* Добавить */
+    height: 100vh;           /* Добавить или оставить */
+    overflow: hidden; 
 }
 .persent_money{
     font-size: 11px;
@@ -25,10 +35,16 @@
 .app_pages{
     height: 100%;
 }
+
+.app_outlet_wrapper {
+    flex: 1;           
+    min-height: 0;           
+    overflow: auto;         
+}
 @media screen and (max-width: 672px){
     .MainContentApp{
     width: 100%;
-    padding: 16px 16px 16px 16px;
+    padding: 16px 16px 16px 0px;
 }
 }
 
