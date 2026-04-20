@@ -11,8 +11,44 @@ import {
 import Buttons from "../../components/UI/buttons";
 import ChartUP from "../../assets/svg/cartUP.svg";
 import SVGplus from "../../assets/svg/plus_blue.svg";
+import { useState } from "react";
 
 export default function Dashboard() {
+
+   const [currency, setCurrency] = useState({
+    symbol: '$',
+    rate: 1
+  });
+
+  // Храним базовую сумму (например, в рублях)
+  const baseMoneyInRub = 17430021.12;
+
+  // Функция смены валюты (меняет только валюту, не трогает сумму)
+  const changeCurrency = () => {
+    setCurrency(prev => {
+      if (prev.symbol === "$") {
+        return { symbol: '€', rate: 0.92 };
+      } else if (prev.symbol === "€") {
+        return { symbol: '₽', rate: 88.5 };
+      } else {
+        return { symbol: '$', rate: 1 };
+      }
+    });
+  };
+
+  // Функция конвертации (вычисляет сумму на лету)
+  const getConvertedMoney = () => {
+    // Переводим рубли в доллары, затем в нужную валюту
+    const moneyInUSD = baseMoneyInRub / 88.5;
+    const converted = moneyInUSD * currency.rate;
+    
+    // Форматируем с пробелами и копейками
+    return converted.toLocaleString('ru-RU', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    });
+  };
+
   return (
     <div className="app_pages">
       <div className="app_content">
@@ -22,10 +58,10 @@ export default function Dashboard() {
                 <div className="left_block_dsh">
                   <div className="title_ds">
                     <p>Ваш портфель</p>
-                    <Buttons type='text'><h5>₽</h5></Buttons>
+                    <Buttons onClick={changeCurrency} type='text'><h5>{currency.symbol}</h5></Buttons>
                   </div>
                   <div className="moneyAll">
-                    <p className="titlePriceDAsh">17 430 021,12 ₽</p>
+                    <p className="titlePriceDAsh">{getConvertedMoney()} {currency.symbol}</p>
                     <div className="changes_to_day">
                       <p style={{opacity: 0.5, fontSize: '12px', fontWeight: 400}}>за сегодня</p>
                       <div className="changes">

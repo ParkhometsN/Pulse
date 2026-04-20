@@ -54,10 +54,7 @@ body{
     background-color: var(--black) !important;
   border: 1.5px solid var(--black-t) !important;
 }
-#radix-_r_0_{
-  background-color: var(--black) !important;
-  border: 1.5px solid var(--black-t) !important;
-}
+
 .text-card-foreground {
   color: var(--card-foreground) !important;
 }
@@ -129,10 +126,54 @@ html{
   }
 }
 
-/* Добавь недостающие классы для Shadcn */
 .bg-background { background-color: var(--background); }
 .bg-card { background-color: var(--card); }
 .bg-primary { background-color: var(--primary); }
 .text-foreground { color: var(--foreground); }
 .text-card-foreground { color: var(--card-foreground); }
 .border-border { border-color: var(--border); }
+
+
+
+.container_settings{
+  
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  align-content: center;
+}
+.content_settings{
+  padding: 20px;
+  width: 100%;
+  height: 100%;
+  max-width: 800px;
+}
+.title_pages_st p{
+  font-size: 32px;
+  font-weight: 500;
+}
+.title_pages_st h5{
+  opacity: 0.6;
+  font-size: 16px;
+}
+.title_pages_stetttt p{
+    font-size: 22px;
+}
+.dinamic_buttons{
+  padding-top: 16px;
+  display: flex;
+  justify-content: space-between;
+    align-items: center;
+}
+
+.settingsContend{
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+@media screen and (max-width: 574px){
+.content_settings{
+  padding: 40px;
+}
+}

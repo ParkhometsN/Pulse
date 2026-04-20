@@ -240,15 +240,27 @@
 
 
 .button--nm_black_prymary{
-    cursor: pointer;
-    background-color: var(--black-s);
-    color: white;
-    border: 2px solid var(--black-blur);
-    padding: 6px 10px;
-    border-radius: 10px;
+    cursor: pointer !important;
+    background-color: var(--black) !important;
+    color: white !important;
+    border: 2px solid var(--black-blur) !important;
+    padding: 6px 10px !important;
+    border-radius: 10px !important;
 }
 
 .button--nm_black_prymary:hover:not(:disabled) {
     color: var(--primary-blue);
+    background-color: var(--primary-blue) !important;
     border: 2px solid var(--primary-blue);
+}
+.button--nm_black_prymary:active:not(:disabled) {
+  opacity: 0.5;
+}
+.butBAck{
+  width: 100% !important;
+  background-color: var(--black-s) !important;
+  border: none !important;
+}
+.ewriu{
+  width: 100% !important;
 }
