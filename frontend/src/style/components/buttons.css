@@ -232,3 +232,23 @@
 .IconSvgNav.active svg {
   stroke: var(--primary-blue);
 }
+
+
+
+
+
+
+
+.button--nm_black_prymary{
+    cursor: pointer;
+    background-color: var(--black-s);
+    color: white;
+    border: 2px solid var(--black-blur);
+    padding: 6px 10px;
+    border-radius: 10px;
+}
+
+.button--nm_black_prymary:hover:not(:disabled) {
+    color: var(--primary-blue);
+    border: 2px solid var(--primary-blue);
+}

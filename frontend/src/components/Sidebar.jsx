@@ -204,9 +204,9 @@ export default function Sidebar() {
             <p className="DisabledItemsSideBar" >Pulse</p>
           </div>
           <Link to='/app'>
-            <div className="TodayMoney">
+            {/* <div className="TodayMoney">
               <p className="persent_money">+1 500 ₽ (+0,87%)</p>
-            </div>
+            </div> */}
           </Link>
           <Buttons onClick={toogleSidebar} type="black_prymary-t">
             <img src={BurgerIconSvg} alt="Menu" />

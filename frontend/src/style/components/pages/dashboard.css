@@ -99,6 +99,12 @@ align-items: flex-end;
 .button_addBag:hover{
     color: var(--primary-blue);
 }
+.lineDrawer{
+    height: 5px;
+    border-radius: 20px;
+    background-color: var(--black-t);
+    width: 200px;
+}
 .button_addBag:active{
     border: 1.5px var(--primary-blue) solid;
 }

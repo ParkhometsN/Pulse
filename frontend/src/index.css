@@ -9,15 +9,11 @@
 @import "./style/components/pages/app_main.css";
 @import "./style/components/marque.css";
 
-
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-
-
-
+/* Твои глобальные стили */
 body{
     margin: 0 auto;
     background-color: var(--black);
@@ -25,10 +21,54 @@ body{
     max-width: 1920px;
     font-family: "Inter", sans-serif;
     font-weight: 400;
-
 }
 
+/* Принудительные стили для Shadcn компонентов */
+.bg-background {
+  background-color: var(--background) !important;
+}
 
+.bg-card {
+  background-color: var(--card) !important;
+}
+
+.bg-primary {
+  background-color: var(--primary) !important;
+}
+
+.bg-secondary {
+  background-color: var(--secondary) !important;
+}
+.bg-black\/10{
+  background-color: rgba(0, 0, 0, 0.259) !important;
+}
+
+.bg-destructive {
+  background-color: var(--destructive) !important;
+}
+
+.text-foreground {
+  color: var(--foreground) !important;
+}
+.data-\[vaul-drawer-direction\=bottom\]\:mt-24[data-vaul-drawer-direction="bottom"]{
+    background-color: var(--black) !important;
+  border: 1.5px solid var(--black-t) !important;
+}
+#radix-_r_0_{
+  background-color: var(--black) !important;
+  border: 1.5px solid var(--black-t) !important;
+}
+.text-card-foreground {
+  color: var(--card-foreground) !important;
+}
+
+.text-primary-foreground {
+  color: var(--primary-foreground) !important;
+}
+
+.border-border {
+  border-color: var(--border) !important;
+}
 html, body {
   overflow: hidden; 
   position: fixed; 
@@ -39,6 +79,7 @@ html{
     scroll-behavior: smooth;
 }
 
+/* Твои CSS переменные */
 :root {
     --primary-blue: #1E75FF;
     --primary-blue-glass: #26487D;
@@ -51,6 +92,7 @@ html{
     --red: #FF3B30;
 }
 
+/* Твои кастомные классы */
 .black_box{
     background-color: var(--black);
     border: 2px solid var(--black-t);
@@ -63,4 +105,34 @@ html{
     height: 1px;
     background-color: #363636;
 }
-/* force refresh */
+
+/* Базовые стили для Shadcn компонентов (используют твои цвета) */
+@layer base {
+  :root {
+    --background: var(--black);
+    --foreground: var(--white);
+    --card: var(--black-s);
+    --card-foreground: var(--white);
+    --primary: var(--primary-blue);
+    --primary-foreground: var(--white);
+    --secondary: var(--black-t);
+    --secondary-foreground: var(--white);
+    --muted: var(--black-t);
+    --muted-foreground: var(--white);
+    --accent: var(--primary-blue);
+    --accent-foreground: var(--white);
+    --destructive: var(--red);
+    --border: var(--black-t);
+    --input: var(--black-t);
+    --ring: var(--primary-blue);
+    --radius: 0.5rem;
+  }
+}
+
+/* Добавь недостающие классы для Shadcn */
+.bg-background { background-color: var(--background); }
+.bg-card { background-color: var(--card); }
+.bg-primary { background-color: var(--primary); }
+.text-foreground { color: var(--foreground); }
+.text-card-foreground { color: var(--card-foreground); }
+.border-border { border-color: var(--border); }

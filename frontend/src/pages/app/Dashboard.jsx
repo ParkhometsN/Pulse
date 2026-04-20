@@ -1,3 +1,13 @@
+import {
+  Drawer,
+  DrawerClose,
+  DrawerContent,
+  DrawerDescription,
+  DrawerFooter,
+  DrawerHeader,
+  DrawerTitle,
+  DrawerTrigger,
+} from "@/components/ui/drawer"
 import Buttons from "../../components/UI/buttons";
 import ChartUP from "../../assets/svg/cartUP.svg";
 import SVGplus from "../../assets/svg/plus_blue.svg";
@@ -35,7 +45,28 @@ export default function Dashboard() {
               </div>
               <div className="dashboard_analytycs">
                 <div className="containerAnalic">
-                  <div className="blockf black_box"></div>
+                  <div className="blockf black_box">
+                    <Drawer>
+                      <DrawerTrigger>
+                        <Buttons type='nm_black_prymary'>История</Buttons>
+                      </DrawerTrigger>
+                      <DrawerContent className="bg-black-s text-white border border-black-t rounded-t-2xl">
+                        <center>
+                            <div className="lineDrawer"></div>
+                        </center>
+                        <DrawerHeader>
+                          <DrawerTitle>Are you absolutely sure?</DrawerTitle>
+                          <DrawerDescription>This action cannot be undone.</DrawerDescription>
+                        </DrawerHeader>
+                        <DrawerFooter>
+                          <Buttons>Submit</Buttons>
+                          <DrawerClose>
+                            <Buttons >Cancel</Buttons>
+                          </DrawerClose>
+                        </DrawerFooter>
+                      </DrawerContent>
+                    </Drawer>
+                  </div>
                   <div className="blocks black_box"></div>
                   <div className="block black_box"></div>
                 </div>
