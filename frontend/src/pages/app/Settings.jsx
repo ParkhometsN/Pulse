@@ -14,7 +14,7 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion"
-import Buttons from "@/components/ui/buttons";
+import Buttons from "../../components/UI/buttons";
 import Inputs from "../../components/UI/inputs.jsx";
 
 export default function Settings() {
