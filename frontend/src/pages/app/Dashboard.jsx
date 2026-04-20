@@ -20,10 +20,8 @@ export default function Dashboard() {
     rate: 1
   });
 
-  // Храним базовую сумму (например, в рублях)
   const baseMoneyInRub = 17430021.12;
 
-  // Функция смены валюты (меняет только валюту, не трогает сумму)
   const changeCurrency = () => {
     setCurrency(prev => {
       if (prev.symbol === "$") {
@@ -36,13 +34,11 @@ export default function Dashboard() {
     });
   };
 
-  // Функция конвертации (вычисляет сумму на лету)
   const getConvertedMoney = () => {
-    // Переводим рубли в доллары, затем в нужную валюту
+
     const moneyInUSD = baseMoneyInRub / 88.5;
     const converted = moneyInUSD * currency.rate;
     
-    // Форматируем с пробелами и копейками
     return converted.toLocaleString('ru-RU', {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2
@@ -72,11 +68,30 @@ export default function Dashboard() {
                   </div>
                 </div>
                 <div className="Right_block_dsh">
-                  <div className="button_addBag">
-                    <img src={SVGplus} alt="plus" />
-                    <h5>Добавте портфели</h5>
-                    <p>Которыми вы хотите автоматически торговать </p>
-                  </div>
+                  <Drawer>
+                      <DrawerTrigger>
+                        <div className="button_addBag">
+                          <img src={SVGplus} alt="plus" />
+                          <h5>Добавте портфели</h5>
+                          <p>Которыми вы хотите автоматически торговать </p>
+                        </div>
+                      </DrawerTrigger>
+                      <DrawerContent className="bg-black-s text-white border border-black-t rounded-t-2xl">
+                        <center>
+                            <div className="lineDrawer"></div>
+                        </center>
+                        <DrawerHeader>
+                          <DrawerTitle>Are you absolutely sure?</DrawerTitle>
+                          <DrawerDescription>This action cannot be undone.</DrawerDescription>
+                        </DrawerHeader>
+                        <DrawerFooter>
+                          <Buttons>Submit</Buttons>
+                          <DrawerClose>
+                            <Buttons >Cancel</Buttons>
+                          </DrawerClose>
+                        </DrawerFooter>
+                      </DrawerContent>
+                  </Drawer>
                 </div>
               </div>
               <div className="dashboard_analytycs">

@@ -95,7 +95,19 @@ html{
     border: 2px solid var(--black-t);
     border-radius: 20px;
 }
-
+.contentSettingsssss {
+    display: flex;
+    gap: 16px;
+    width: 70vw;
+    max-width: 800px;
+    overflow-y: hidden;
+    overflow-x: auto;
+    scrollbar-width: none; /* Firefox */
+    -ms-overflow-style: none; /* IE и Edge */
+}
+.contentSettingsssss::-webkit-scrollbar {
+    display: none; /* Chrome, Safari, Opera */
+}
 .line{
     margin: 20px 0px 20px 0px;
     width: 100%;
@@ -142,11 +154,21 @@ html{
   align-items: center;
   align-content: center;
 }
+.currencyBOX {
+    min-width: 176px;
+    display: flex;
+    align-items: end;
+    justify-content: space-between;
+}
+.content_settingsss,
 .content_settings{
   padding: 20px;
   width: 100%;
   height: 100%;
-  max-width: 800px;
+  max-width: 900px;
+}
+.deleteAccount{
+  padding-top: 90px;
 }
 .title_pages_st p{
   font-size: 32px;
@@ -169,11 +191,98 @@ html{
 .settingsContend{
     display: flex;
     justify-content: center;
-    align-items: center;
+}
+
+.title_box p{
+  opacity: 0.5;
+  font-size: 13px;
+}
+.boxCurrency{
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  width: 300px;
+  height: 130px;
+  padding: 10px;
+  background-color: var(--black);
+  border-radius: 16px;
+  border: 1.5px solid var(--black-t);
+}
+.currencyBOX h5{
+  font-size: 24px;
+  font-weight: 500;
+}
+.currencyBOX p{
+  font-size: 13px;
+  color: var(--green);
+  font-weight: 500;
+}
+.qergwe{
+  width: 100px !important;
+}
+.buttons_Log_delete{
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-top: 50px;
+}
+.infipqowiuefh{
+  display: flex;
+  width: 100%;
+  padding: 20px 0px;
+  justify-content: space-between;
+  gap: 16px;
+}
+.profilesett{
+  padding-top: 40px;
+}
+.frominpeuts{
+  display: flex;
+  gap: 8px;
+  flex-direction: column;
+  width: 100%;
+
+}
+.data-\[size\=default\]\:max-w-xs[data-size="default"] {
+    max-width: 20rem;
+    background-color: var(--black);
+}
+.data-\[size\=sm\]\:max-w-xs[data-size="sm"] {
+    background-color: var(--black);
+    max-width: 20rem;
+}
+.rounded-full {
+    border-radius: 9999px;
+    color: red;
 }
 
 @media screen and (max-width: 574px){
-.content_settings{
-  padding: 40px;
+    .content_settingsss {
+        padding: 32px 32px 32px 32px;
+    }
+    .content_settings {
+        padding: 32px 32px 32px 32px;
+    }
+    .deleteAccount .button--primary-danger{
+      width: 100%;
+    }
+.contentSettingsssss {
+    display: flex;
+    gap: 16px;
+    width: 86vw;
+    max-width: 800px;
+    overflow-y: hidden;
+    overflow-x: auto;
+}
+.profilesett{
+  padding-top: 20px;
+}
+.infipqowiuefh {
+    display: flex;
+    width: 100%;
+    padding: 20px 0px;
+    justify-content: space-between;
+    gap: 16px;
+    flex-direction: column;
 }
 }

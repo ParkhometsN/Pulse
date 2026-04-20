@@ -257,7 +257,6 @@
   opacity: 0.5;
 }
 .butBAck{
-  width: 100% !important;
   background-color: var(--black-s) !important;
   border: none !important;
 }
