@@ -16,7 +16,6 @@ import {
 } from "@/components/ui/accordion"
 import Buttons from "@/components/ui/buttons";
 import Inputs from "../../components/UI/inputs.jsx";
-import { Button } from "@/components/ui/button.jsx";
 
 export default function Settings() {
 

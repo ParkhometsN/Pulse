@@ -1,5 +1,4 @@
 import Buttons from "../../components/UI/buttons";
-import { Link } from "react-router-dom";
 
 export default function Profile() {
   return (
