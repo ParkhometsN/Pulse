@@ -1,22 +1,39 @@
-import React from 'react';
+import React from "react";
 
 const Inputs = ({ 
-  variant = 'primary',  
-  type = 'text',       
+  variant = "primary",  
+  type = "text",       
   value, 
   disabled, 
-  placeholder 
+  placeholder,
+  icon
 }) => {
-  const inputclass = `input input--${variant} ${disabled ? 'input--disabled' : ''}`;
+
+  const inputclass = `
+    input 
+    input--${variant} 
+    ${disabled ? "input--disabled" : ""} 
+    ${icon ? "input--has-icon" : ""}
+  `;
 
   return (
-    <input   
-      className={inputclass}
-      type={type}
-      value={value}
-      disabled={disabled}
-      placeholder={placeholder}
+    <div className="input-container">
+  <input   
+    className={inputclass}
+    type={type}
+    value={value}
+    disabled={disabled}
+    placeholder={placeholder}
+  />
+
+  {icon && (
+    <img 
+      src={icon} 
+      alt="icon" 
+      className="input__icon"
     />
+  )}
+</div>
   );
 };
 
