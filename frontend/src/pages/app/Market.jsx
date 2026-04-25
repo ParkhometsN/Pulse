@@ -1,8 +1,8 @@
 import Inputs from "../../components/UI/inputs.jsx";
 import SearchIcon from "../../assets/svg/searchicon.svg";
 import PulseSvgTag from "../../assets/svg/tagpulsegray.svg";
-import Buttons from "@/components/ui/buttons.jsx";
-import MarketCardBot from "@/components/ui/marketCard.jsx";
+import Buttons from "../../components/UI/buttons";
+import MarketCardBot from "../../components/UI/marketCard.jsx";
 
 export default function Market() {
   return (
