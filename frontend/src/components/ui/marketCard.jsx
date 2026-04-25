@@ -1,4 +1,4 @@
-import Buttons from "@/components/ui/buttons.jsx";
+import Buttons from "../../components/UI/buttons";
 import PulseSvgTag from "../../assets/svg/tagpulsegray.svg";
 
 
