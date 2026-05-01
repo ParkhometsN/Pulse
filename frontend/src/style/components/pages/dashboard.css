@@ -120,6 +120,7 @@ align-items: flex-end;
 }
 .blockf{
     width: 100%;
+    padding: 10px;
     min-width: 500px;
     min-height: 250px;
 }

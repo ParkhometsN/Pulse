@@ -9,6 +9,8 @@
 @import "./style/components/pages/app_main.css";
 @import "./style/components/marque.css";
 @import "./style/components/pages/market.css";
+@import "./style/components/loadingAnimation.css";
+@import "./style/components/pages/CoinPage.css";
 
 @tailwind base;
 @tailwind components;
@@ -98,14 +100,17 @@ html{
 /* Твои CSS переменные */
 :root {
     --primary-blue: #1E75FF;
-    --primary-blue-glass: #26487D;
+    --primary-blue-glass: #26477d78;
     --white: #ffffff;
+    --gray: #6b6b6b;
     --black: #141416;
+    --black-blur:rgba(20, 20, 22, 0.209)6;
     --black-s: #1C1C1E;
     --black-t: #252525;
     --black-blur: #232324;
     --green: #00FFAB; 
     --red: #FF3B30;
+    --red-blur: #ff3a3039;
 }
 
 /* Твои кастомные классы */
@@ -274,7 +279,59 @@ html{
     border-radius: 9999px;
     color: red;
 }
+.shure_conteuner{
+  z-index: 999999;
+  position: absolute;
+  width: 100%;
+  height: 100%;
+}
+.shure_conteuner::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: #00000047;
+  backdrop-filter: blur(5px);  
 
+  z-index: -1; 
+}
+.shure_conteuner{
+  display: flex;
+  width: 100%;
+  height: 100%;
+  justify-content: center;
+  align-items: center;
+}
+.textdilogAlert h1{
+  font-size: 20px;
+  padding-bottom: 8px;
+  font-weight: 600;
+}
+.textdilogAlert{
+  padding: 16px;
+}
+.textdilogAlert p{
+  opacity: 0.5;
+}
+.container_buttons_shure{
+  padding: 8px;
+  border-radius: 0px 0px 12px 12px;
+  background-color: var(--black-s);
+}
+.container_shure{
+  width: 400px;
+}
+.line_dilog{
+  background-color: #363636;
+  height: 1px;
+}
+.container_buttons_shure{
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
 @media screen and (max-width: 574px){
     .content_settingsss {
         padding: 32px 32px 32px 32px;

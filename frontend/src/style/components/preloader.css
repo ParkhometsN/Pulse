@@ -1,16 +1,17 @@
 .preloader_animation {
-    position: absolute;
-    z-index: 10000;
-    background-color: var(--black);
+    min-height: 240px;
     width: 100%;
-    height: 100%;
-    display: flex;          
-    justify-content: center; 
-    align-items: center;  
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .preloader_animation img {
-    animation: sercle 2s linear infinite
+    width: 72px;
+    height: 72px;
+    object-fit: contain;
+    animation: sercle 2s linear infinite;
+    opacity: 0.92;
 }
 
 @keyframes sercle {

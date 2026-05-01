@@ -36,9 +36,17 @@
     font-size: 13px;
 }
 
-.coin_mn img {
+.coin_mn .coin_icon {
     width: 15px;
     height: 15px;
+    font-size: 5px;
+}
+
+.marquee_loading {
+    width: 100%;
+    height: 42px;
+    padding: 8px 10px 14px 10px;
+    box-sizing: border-box;
 }
 
 /* Чтобы не было горизонтального скролла */

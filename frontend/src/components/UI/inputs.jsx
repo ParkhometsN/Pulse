@@ -4,6 +4,11 @@ const Inputs = ({
   variant = "primary",  
   type = "text",       
   value, 
+  onChange,
+  onFocus,
+  onBlur,
+  id,
+  name,
   disabled, 
   placeholder,
   icon
@@ -19,9 +24,14 @@ const Inputs = ({
   return (
     <div className="input-container">
   <input   
+    id={id || name}
+    name={name || id || `input-${variant}`}
     className={inputclass}
     type={type}
     value={value}
+    onChange={onChange}
+    onFocus={onFocus}
+    onBlur={onBlur}
     disabled={disabled}
     placeholder={placeholder}
   />

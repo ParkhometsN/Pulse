@@ -8,6 +8,8 @@
     overflow-x: hidden;
     scrollbar-width: none; /* Для Firefox */
     -ms-overflow-style: none; /* Для IE и Edge */
+    container-type: inline-size;
+    container-name: app-container;
 }
 
 .app_content::-webkit-scrollbar {
@@ -63,6 +65,7 @@
     background-color: var(--black-s);
     border-radius: 35px 35px 0px 0px;
     border: 2px solid var(--black-t);
+
 }
 
 }

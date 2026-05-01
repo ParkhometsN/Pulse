@@ -1,8 +1,13 @@
-from src.config import settings
-from src.http_client import CMCHTTPClient
+from src.http_client import BybitHTTPClient, CoinGeckoHTTPClient, MoexHTTPClient
 
+bybit_client = BybitHTTPClient(
+    base_url="https://api.bybit.com"
+)
 
-cmc_client = CMCHTTPClient(
-    base_url="https://pro-api.coinmarketcap.com",
-    api_key=settings.CMC_API_KEY
+moex_client = MoexHTTPClient(
+    base_url="https://iss.moex.com"
+)
+
+coingecko_client = CoinGeckoHTTPClient(
+    base_url="https://api.coingecko.com"
 )

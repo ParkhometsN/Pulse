@@ -1,12 +1,12 @@
 
 import LogoSvg from "../../assets/svg/pulse_logo.svg";
 import GoogleSvg from "../../assets/svg/svg_google.svg";
-import Buttons from "../../components/UI/buttons.jsx";
-import Checkbox from "../../components/UI/checkbox.jsx";
-import Inputs from "../../components/UI/inputs.jsx";
+import Buttons from "../../components/ui/buttons.jsx";
+import Checkbox from "../../components/ui/checkbox.jsx";
+import Inputs from "../../components/ui/inputs.jsx";
 import pulseImagerr from '../../assets/img/singin.png';
 import { Link } from "react-router-dom";
-import Preloader from "../../components/UI/preloader.jsx";
+import Preloader from "../../components/ui/preloader.jsx";
 
 
 

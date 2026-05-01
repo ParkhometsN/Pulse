@@ -316,3 +316,90 @@
   box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
   opacity: 0.5;
 }
+
+
+
+
+
+
+
+/* navigation_But_exit */
+
+.button--navigation_But_exit {
+  width: 100%;
+  background-color: var(--black);
+  color: rgba(255, 255, 255, 0.288);
+  padding: 12px 10px;
+  border: 1px solid var(--black-t);
+  border-radius: 12px;
+}
+
+.button--navigation_But_exit:hover:not(:disabled) {
+  background-color: var(--red-blur);
+  color: var(--red);
+  border: 1px solid var(--red);
+}
+
+.button--navigation_But_exit:active:not(:disabled) {
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+  opacity: 0.5;
+}
+
+.IconSvgNav-exit svg {
+  stroke: rgba(255, 255, 255, 0.288);
+  fill: transparent;
+}
+/* Добавить это правило */
+.button--navigation_But_exit:hover:not(:disabled) .IconSvgNav-exit svg {
+  stroke: var(--red);
+}
+
+
+
+
+
+
+
+
+
+
+/* Primary кнопка */
+.button--alert_dilog {
+  background-color: var(--black);
+  color: white;
+  border: 2px solid var(--black-t);
+  padding: 7px 20px;
+  border-radius: 14px;
+}
+
+.button--alert_dilog:hover:not(:disabled) {
+  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+  border: 2px solid var(--primary-blue);
+}
+
+.button--alert_dilog:active:not(:disabled) {
+  background-color: var(--primary-blue);
+}
+
+
+
+
+
+
+/* Primary кнопка */
+.button--alert_dilog-red {
+  background-color: var(--red-blur);
+  color: var(--red);
+  border: 2px solid transparent;
+  padding: 7px 20px;
+  border-radius: 14px;
+}
+
+.button--alert_dilog-red:hover:not(:disabled) {
+  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+  border: 2px solid var(--red);
+}
+
+.button--alert_dilog-red:active:not(:disabled) {
+  opacity: 0.5;
+}

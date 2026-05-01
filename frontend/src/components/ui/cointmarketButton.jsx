@@ -1,4 +1,6 @@
-function MiniChart({ price, change24h, change7d, change30d }) {
+import CoinIcon from "./coinIcon.jsx";
+
+function MiniChart({ price, change24h, change7d, change30d, chartData }) {
   const width = 140;
   const height = 45;
 
@@ -9,30 +11,54 @@ function MiniChart({ price, change24h, change7d, change30d }) {
     return safePrice / (1 + value / 100);
   };
 
-  const pointsData = [
-    makePrice(change30d),
-    makePrice(change7d),
-    makePrice(change24h),
-    safePrice * 0.995,
-    safePrice,
-  ];
+  const chartPrices = Array.isArray(chartData)
+    ? chartData.map((item) => Number(item.close)).filter(Number.isFinite)
+    : [];
+  const pointsData = chartPrices.length > 1
+    ? chartPrices
+    : [
+      makePrice(change30d),
+      makePrice(change7d),
+      makePrice(change24h),
+      safePrice * 0.995,
+      safePrice,
+    ];
 
   const min = Math.min(...pointsData);
   const max = Math.max(...pointsData);
 
-  const points = pointsData
+  const chartPoints = pointsData
     .map((value, index) => {
       const x = (index / (pointsData.length - 1)) * width;
       const y = height - ((value - min) / (max - min || 1)) * height;
-      return `${x},${y}`;
-    })
+      return { x, y };
+    });
+  const points = chartPoints.map((point) => `${point.x},${point.y}`).join(" ");
+  const linePath = chartPoints
+    .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`)
     .join(" ");
+  const areaPath = `${linePath} L ${width} ${height} L 0 ${height} Z`;
 
-  const isUp = Number(change24h) >= 0;
-  const color = isUp ? "#00e0a4" : "#ff3b30";
+  const trend = Number(change24h) || 0;
+  const color = trend === 0 ? "#969696" : trend > 0 ? "#00e0a4" : "#ff3b30";
+  const gradientId = `mini-chart-gradient-${color.replace("#", "")}`;
 
   return (
     <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`}>
+      <defs>
+        <linearGradient
+          id={gradientId}
+          x1="0"
+          y1="0"
+          x2="0"
+          y2={height}
+          gradientUnits="userSpaceOnUse"
+        >
+          <stop stopColor={color} stopOpacity="0.2" />
+          <stop offset="1" stopColor={color} stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      <path d={areaPath} fill={`url(#${gradientId})`} />
       <polyline
         points={points}
         fill="none"
@@ -45,16 +71,51 @@ function MiniChart({ price, change24h, change7d, change30d }) {
   );
 }
 
+const formatMoney = (value) => {
+  const number = Number(value);
+
+  if (!Number.isFinite(number)) {
+    return "$0";
+  }
+
+  return `$${number.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
+};
+
+const formatPercent = (value) => {
+  const number = Number(value);
+
+  if (!Number.isFinite(number)) {
+    return "0.00%";
+  }
+
+  return `${number.toFixed(2)}%`;
+};
+
+const getPercentClass = (value) => {
+  const number = Number(value) || 0;
+
+  if (number === 0) {
+    return "gray";
+  }
+
+  return number > 0 ? "green" : "red";
+};
+
 export default function CointButtonMarket({
   NameCoin,
   NMC,
-  countCoin,
-  coinId,
+  baseCoin,
+  iconUrl,
+  assetType = "crypto",
+  currencySymbol = "$",
+  chartData,
   onClick,
   priceCoin,
   percent_change_24h,
   percent_change_7d,
   percent_change_30d,
+  isFavorite = false,
+  onToggleFavorite,
 }) {
   return (
     <div onClick={onClick} className="containerbutton">
@@ -62,41 +123,56 @@ export default function CointButtonMarket({
 
       <div className="idificatorCoint">
         <div className="count_star">
-            <p>{countCoin}</p>
+          <button
+            className={isFavorite ? "buttonStar buttonStar_active" : "buttonStar"}
+            type="button"
+            aria-label={isFavorite ? "Убрать из избранного" : "Добавить в избранное"}
+            onClick={(event) => {
+              event.stopPropagation();
+              onToggleFavorite?.();
+            }}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none">
+              <path d="M11.4802 3.49897C11.5225 3.3958 11.5945 3.30755 11.6871 3.24543C11.7797 3.18331 11.8887 3.15015 12.0002 3.15015C12.1117 3.15015 12.2206 3.18331 12.3132 3.24543C12.4058 3.30755 12.4779 3.3958 12.5202 3.49897L14.6452 8.60997C14.6849 8.70561 14.7503 8.78841 14.8341 8.84928C14.9179 8.91015 15.0169 8.94672 15.1202 8.95497L20.6382 9.39697C21.1372 9.43697 21.3392 10.06 20.9592 10.385L16.7552 13.987C16.6766 14.0542 16.6181 14.1417 16.586 14.2399C16.5539 14.3382 16.5494 14.4434 16.5732 14.544L17.8582 19.929C17.884 20.037 17.8772 20.1503 17.8387 20.2545C17.8002 20.3587 17.7317 20.4491 17.6418 20.5144C17.5519 20.5797 17.4447 20.6168 17.3337 20.6212C17.2227 20.6256 17.1129 20.597 17.0182 20.539L12.2932 17.654C12.2049 17.6001 12.1036 17.5715 12.0002 17.5715C11.8968 17.5715 11.7954 17.6001 11.7072 17.654L6.98216 20.54C6.88742 20.598 6.77762 20.6266 6.66662 20.6222C6.55562 20.6178 6.44841 20.5807 6.35853 20.5154C6.26865 20.4501 6.20013 20.3597 6.16162 20.2555C6.12311 20.1513 6.11634 20.038 6.14216 19.93L7.42716 14.544C7.451 14.4434 7.44661 14.3381 7.4145 14.2399C7.38239 14.1416 7.3238 14.0541 7.24516 13.987L3.04116 10.385C2.95651 10.3128 2.89517 10.2171 2.86492 10.1101C2.83468 10.003 2.83688 9.88942 2.87125 9.78362C2.90563 9.67782 2.97062 9.58461 3.05802 9.51578C3.14541 9.44695 3.25126 9.4056 3.36216 9.39697L8.88016 8.95497C8.98341 8.94672 9.08239 8.91015 9.16619 8.84928C9.25 8.78841 9.31539 8.70561 9.35516 8.60997L11.4802 3.49897Z" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          </button>
         </div>
-        <img
-          alt="coin_icon"
-          src={`https://s2.coinmarketcap.com/static/img/coins/64x64/${coinId}.png`}
+        <CoinIcon
+          baseCoin={baseCoin}
+          iconUrl={iconUrl}
+          label={NMC || NameCoin}
+          type={assetType}
         />
 
         <div className="name_coin">
           <h1>{NameCoin}</h1>
-          <p>{NMC}</p>
+          <p className="NMC">{NMC}</p>
         </div>
       </div>
     <div className="coinlistprice">
         <p className="coin_price">
-            ${priceCoin?.toLocaleString("en-US", { maximumFractionDigits: 2 })}
+            {formatMoney(priceCoin).replace("$", currencySymbol)}
         </p>
 
-        <p className={percent_change_24h >= 0 ? "green" : "red"}>
-            {percent_change_24h?.toFixed(2)}%
+        <p className={getPercentClass(percent_change_24h)}>
+            {formatPercent(percent_change_24h)}
         </p>
 
-        <p className={`disMob ${percent_change_7d >= 0 ? "green" : "red"}`}>
-            {percent_change_7d?.toFixed(2)}%
+        <p className={`disMob  ${getPercentClass(percent_change_7d)}`}>
+            {formatPercent(percent_change_7d)}
         </p>
 
-        <p className={`disMob ${percent_change_30d >= 0 ? "green" : "red"}`}>
-            {percent_change_30d?.toFixed(2)}%
+        <p className={`disMob ${getPercentClass(percent_change_30d)}`}>
+            {formatPercent(percent_change_30d)}
         </p>
     </div>
-      <div className="mini_chart disMob">
+      <div className="mini_chart disMob tabletdis">
         <MiniChart
           price={priceCoin}
           change24h={percent_change_24h}
           change7d={percent_change_7d}
           change30d={percent_change_30d}
+          chartData={chartData}
         />
       </div>
     </div>

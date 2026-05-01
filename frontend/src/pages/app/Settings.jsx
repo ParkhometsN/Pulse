@@ -25,18 +25,36 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
-import Buttons from "../../components/UI/buttons";
-import Inputs from "../../components/UI/inputs.jsx";
+import { useState } from "react";
+import AreYouShure from "@/components/ui/DilogShure";
+import Buttons from "../../components/ui/buttons";
+import Inputs from "../../components/ui/inputs.jsx";
 import { Trash2 } from "lucide-react"; // Добавьте импорт иконки
 
 export default function Settings() {
 
   const [position, setPosition] = React.useState("Deepseek")
+  const [alertDilog, setalertdilog] = useState(false)
+
+
+  const AddEvenlistenerAlertFilog = () => {
+    setalertdilog(true)
+  }
   
   return (
+    
     <div className="app_pages">
+                {alertDilog && <AreYouShure 
+                    TitledilogAlert = "Подтверждение удаления"
+                    Descriptionactive = "Вы удалятете свой аккаунт из приложения Pulse их нельзя будет восставновить"
+                    BackButtonAlertText = "Отмена"
+                    ShureButtonAlertText = "Да"
+                    onClickBackAlert = {() => setalertdilog(false)}
+                    onClickShureAlert = {() => navigation('/')}
+           />}
       <div className="app_content settingsContend">
         <div className="app_items">
+
           <div className="container_settings profilesett">
             <div className="content_settingsss">
               <div className="title_pages_st">
@@ -100,26 +118,7 @@ export default function Settings() {
                
               <Buttons className='ewriu' type='nm_black_prymary'> <a href="mailto:parkhometsniktia@gmail.com">Написать тикет</a></Buttons>
               <div className="deleteAccount">
-                <AlertDialog>
-                  <AlertDialogTrigger asChild>
-                    <Buttons type='primary-danger'>Удалить аккаунт</Buttons>
-                  </AlertDialogTrigger>
-                  <AlertDialogContent size="sm">
-                    <AlertDialogHeader>
-                      <div className="flex items-center justify-center w-12 h-12 rounded-full bg-destructive/10 text-destructive dark:bg-destructive/20 dark:text-destructive mx-auto mb-4">
-                        <Trash2 className="h-6 w-6" />
-                      </div>
-                      <AlertDialogTitle className="text-center">Удалить аккаунт?</AlertDialogTitle>
-                      <AlertDialogDescription className="text-center">
-                        Это действие нельзя отменить. Все ваши данные будут удалены навсегда.
-                      </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                      <AlertDialogCancel variant="outline">Отмена</AlertDialogCancel>
-                      <AlertDialogAction variant="destructive">Удалить</AlertDialogAction>
-                    </AlertDialogFooter>
-                  </AlertDialogContent>
-                </AlertDialog>
+                 <Buttons onClick={AddEvenlistenerAlertFilog}  type='primary-danger'>Удалить аккаунт</Buttons>
               </div>
             </div>
           </div>

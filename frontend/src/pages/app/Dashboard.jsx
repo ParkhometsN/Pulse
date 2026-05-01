@@ -9,7 +9,7 @@ import {
   DrawerTitle,
   DrawerTrigger,
 } from "@/components/ui/drawer";
-import Buttons from "../../components/UI/buttons";
+import Buttons from "../../components/ui/buttons";
 import ChartUP from "../../assets/svg/cartUP.svg";
 import SVGplus from "../../assets/svg/plus_blue.svg";
 import axios from "axios";
@@ -53,7 +53,7 @@ export default function Dashboard() {
 
   const getConvertedMoney = () => {
     if (!rates) {
-      return "Загрузка...";
+      return null;
     }
 
     if (currency.code === "RUB") {
@@ -77,7 +77,13 @@ export default function Dashboard() {
       <div className="app_content">
         <div className="app_items">
           <div className="dashboard_content">
-            <div className="dashboard_container">
+            <div
+              className={
+                rates
+                  ? "dashboard_container"
+                  : "dashboard_container container_loading_element"
+              }
+            >
               <div className="left_block_dsh">
                 <div className="title_ds">
                   <p>Ваш портфель</p>
@@ -89,7 +95,7 @@ export default function Dashboard() {
 
                 <div className="moneyAll">
                   <p className="titlePriceDAsh">
-                    {getConvertedMoney()} {currency.symbol}
+                    {rates ? `${getConvertedMoney()} ${currency.symbol}` : ""}
                   </p>
 
                   <div className="changes_to_day">
@@ -113,7 +119,7 @@ export default function Dashboard() {
 
               <div className="Right_block_dsh">
                 <Drawer>
-                  <DrawerTrigger>
+                  <DrawerTrigger asChild>
                     <div className="button_addBag">
                       <img src={SVGplus} alt="plus" />
                       <h5>Добавьте портфели</h5>
@@ -148,7 +154,7 @@ export default function Dashboard() {
               <div className="containerAnalic">
                 <div className="blockf black_box">
                   <Drawer>
-                    <DrawerTrigger>
+                    <DrawerTrigger asChild>
                       <Buttons type="nm_black_prymary">История</Buttons>
                     </DrawerTrigger>
 

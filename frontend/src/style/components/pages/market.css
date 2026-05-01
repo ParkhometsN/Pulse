@@ -2,6 +2,66 @@
 
 .search_coins{
     padding: 10px;
+    position: relative;
+    transition: all 0.3s ease;
+}
+.search_coins_expanded{
+    z-index: 30;
+}
+.market_search_results{
+    position: absolute;
+    z-index: 30;
+    left: 10px;
+    right: 10px;
+    top: calc(100% - 4px);
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 8px;
+    padding: 10px;
+    border-radius: 16px;
+    background: var(--black);
+    border: 1.5px solid var(--black-t);
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+}
+.market_search_result{
+    width: 100%;
+    min-height: 64px;
+    border: 1.5px solid var(--black-t);
+    border-radius: 12px;
+    background: var(--black-s);
+    color: white;
+    padding: 10px 12px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 10px;
+    cursor: pointer;
+    text-align: left;
+    transition: all 0.2s ease;
+}
+.market_search_result:hover{
+    border-color: var(--primary-blue);
+    background: var(--primary-blue-glass);
+}
+.market_search_result_text{
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+.market_search_result_text span{
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.market_search_result_text span:last-child,
+.market_search_empty{
+    color: #969696;
+    font-size: 12px;
+}
+.market_search_empty{
+    grid-column: 1 / -1;
+    padding: 10px;
 }
 .list_ofCois{
     width: 100%;
@@ -45,6 +105,7 @@
 
 /* контейнер карточки */
 .marketcard_container {
+    max-width: 390px;
     min-width: 380px;
 }
 
@@ -78,6 +139,11 @@
         linear-gradient(90deg, transparent 24.6667%, var(--color) 25%, var(--color) 25.3333%, transparent 25.6666%,
         transparent 74.3334%, var(--color) 74.6667%, var(--color) 75%, transparent 75.3333%);
     background-size: 80px 80px;
+}
+.imageCard img{
+    width: 100%;
+    object-fit: cover;
+    height: 100%;
 }
 
 /* блок текста + кнопка */
@@ -172,10 +238,24 @@
     opacity: 0.5;
 }
 
-
-.idificatorCoint img{
+.coin_icon{
     width: 40px;
+    height: 40px;
     border-radius: 50%;
+    object-fit: contain;
+    flex-shrink: 0;
+}
+
+.coin_icon_fallback{
+    background-color: var(--primary-blue-glass);
+    color: var(--primary-blue);
+    display: flex;
+    border: 2px solid var(--primary-blue);
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 1;
 }
 
 .containerbutton h1{
@@ -185,13 +265,16 @@
     opacity: 0.5;
     font-size: 10px;
 }
-.idificatorCoint{
+.idificatorCoint {
     display: flex;
+    padding-right: 16px;
+    width: 19vw;
     gap: 8px;
     align-items: center;
 }
 
 .containerbutton {
+    cursor: pointer;
     display: flex;
     justify-content: space-between;
   padding: 16px;
@@ -202,13 +285,13 @@
 }
 .coinlistprice{
  display: grid;
-  grid-template-columns: 120px 120px 120px 120px;
+grid-template-columns: 100px 100px 100px 100px;
   align-items: center;
 
 }
 .containerbutton p {
   margin: 0;
-  font-size: 16px;
+  font-size: 15px;
   opacity: 1;
 }
 
@@ -224,21 +307,83 @@
     gap: 10px;
     padding-bottom: 15px;
 }
+.market_pagination{
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 10px 0 4px 0;
+}
+
+.market_pagination_pages{
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.market_pagination_item{
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.market_pagination_button{
+    min-width: 36px;
+    height: 36px;
+    padding: 0 12px;
+    border: 1px solid var(--black-t);
+    border-radius: 8px;
+    background: var(--black);
+    color: white;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.market_pagination_button:hover{
+    border-color: var(--primary-blue);
+}
+
+.market_pagination_button:disabled{
+    cursor: default;
+    opacity: 0.45;
+}
+
+.market_pagination_button_active{
+    border-color: var(--primary-blue);
+    background: var(--primary-blue);
+}
+
+.market_pagination_ellipsis{
+    color: #969696;
+    padding: 0 4px;
+}
 .buttonStar svg{
     fill: transparent;
     width: 24px;
     stroke:white;
     transition: all 0.3s ease;
 }
+.buttonStar{
+    border: none;
+    background: transparent;
+    padding: 0;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+}
 .buttonStar svg:hover{
     stroke:var(--primary-blue);
+}
+.buttonStar_active svg{
+    fill: var(--primary-blue);
+    stroke: var(--primary-blue);
 }
 .count_star p{
     font-size: 16px;
 }
 .count_star{
     padding-left: 10px;
-    padding-right: 40px;
+    padding-right: 16px;
     display: flex;
     align-items: center;
     gap: 40px;
@@ -263,6 +408,10 @@
   justify-content: center;
 }
 
+.name_coin h1{
+    font-size: 14px !important;
+}
+
 .green {
   color: #00e0a4;
 }
@@ -270,17 +419,71 @@
 .red {
   color: #ff3b30;
 }
-@media screen and (max-width: 750px) {
+
+.gray {
+  color: #969696;
+}
+
+.NMC{
+    opacity: 0.5 !important;
+    font-size: 12px !important;
+}
+ .contentmarketstategy{
+ width: 100%;
+ height: 100%;
+ display: flex;
+ justify-content:center;
+ align-items: center;
+ flex-direction: column;
+}
+
+@container app-container (max-width: 1216px) {
+    .contentmarketstategy {
+        display: inline !important;  /* временно с !important для теста */
+        background: red; /* добавим для проверки, что правило срабатывает */
+    }
+}
+@media screen and (max-width: 1200px) {
+
+.tabletdis{
+    display: none;
+}
+.priceCoin{
+padding-right: 70px;
+}
+.idificatorCoint {
+    width: 100%;
+}
+}
+@media screen and (max-width: 800px) {
 .ttcoinww{
     padding-left: 0px !important;
+}
+.disMob{
+    display: none;
+}
+.coinlistprice {
+    display: grid;
+    grid-template-columns: 100px 100px;
+    align-items: center;
 }
 }
 @media screen and (max-width: 574px) {
 .disMob{
     display: none;
 }
+.priceCoin {
+    padding-right: 30px;
+}
 .ttcoinww{
     padding: 0px 10px !important;
 }
+    .coinlistprice {
+        display: grid;
+        grid-template-columns: 100px 60px;
+        align-items: center;
+    }
+    .count_star{
+        display: none;
+    }
 }
-

@@ -15,6 +15,7 @@ import Register from "../pages/public/Register.jsx";
 import ForgotPassword from "../pages/public/ForgotPassword.jsx";
 
 import Profile from "../pages/app/Profile.jsx";
+import CoinPage from "@/pages/app/coinPage";
 
 export default function Router() {
   return (
@@ -29,6 +30,7 @@ export default function Router() {
       <Route path="/app" element={<AppLayout />}>
         <Route index element={<Dashboard/>} />
         <Route path="market" element={<Market />} />
+        <Route path="market/coin-page" element={<CoinPage/>} />
         <Route path="news" element={<News/>} />
         <Route path="settings" element={<Settings />} />
         <Route path="profile" element={<Profile/>} />
