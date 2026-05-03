@@ -1,8 +1,31 @@
 import CoinIcon from "./coinIcon.jsx";
 
+const getSmoothPath = (points) => {
+  if (points.length < 2) {
+    return "";
+  }
+
+  return points.reduce((path, point, index) => {
+    if (index === 0) {
+      return `M ${point.x} ${point.y}`;
+    }
+
+    const previous = points[index - 1];
+    const beforePrevious = points[index - 2] || previous;
+    const next = points[index + 1] || point;
+    const controlOneX = previous.x + (point.x - beforePrevious.x) / 6;
+    const controlOneY = previous.y + (point.y - beforePrevious.y) / 6;
+    const controlTwoX = point.x - (next.x - previous.x) / 6;
+    const controlTwoY = point.y - (next.y - previous.y) / 6;
+
+    return `${path} C ${controlOneX} ${controlOneY}, ${controlTwoX} ${controlTwoY}, ${point.x} ${point.y}`;
+  }, "");
+};
+
 function MiniChart({ price, change24h, change7d, change30d, chartData }) {
-  const width = 140;
-  const height = 45;
+  const width = 100;
+  const height = 30;
+  const padding = 2;
 
   const safePrice = Number(price) || 0;
 
@@ -12,13 +35,18 @@ function MiniChart({ price, change24h, change7d, change30d, chartData }) {
   };
 
   const chartPrices = Array.isArray(chartData)
-    ? chartData.map((item) => Number(item.close)).filter(Number.isFinite)
+    ? chartData
+      .slice(-7)
+      .map((item) => Number(item.close))
+      .filter(Number.isFinite)
     : [];
   const pointsData = chartPrices.length > 1
     ? chartPrices
     : [
       makePrice(change30d),
+      makePrice((Number(change30d) + Number(change7d)) / 2),
       makePrice(change7d),
+      makePrice((Number(change7d) + Number(change24h)) / 2),
       makePrice(change24h),
       safePrice * 0.995,
       safePrice,
@@ -29,22 +57,20 @@ function MiniChart({ price, change24h, change7d, change30d, chartData }) {
 
   const chartPoints = pointsData
     .map((value, index) => {
-      const x = (index / (pointsData.length - 1)) * width;
-      const y = height - ((value - min) / (max - min || 1)) * height;
+      const x = padding + (index / (pointsData.length - 1)) * (width - padding * 2);
+      const y = padding + (1 - ((value - min) / (max - min || 1))) * (height - padding * 2);
       return { x, y };
     });
-  const points = chartPoints.map((point) => `${point.x},${point.y}`).join(" ");
-  const linePath = chartPoints
-    .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`)
-    .join(" ");
-  const areaPath = `${linePath} L ${width} ${height} L 0 ${height} Z`;
+  const linePath = getSmoothPath(chartPoints);
+  const lastPoint = chartPoints[chartPoints.length - 1];
 
-  const trend = Number(change24h) || 0;
+  const trend = pointsData[pointsData.length - 1] - pointsData[0];
   const color = trend === 0 ? "#969696" : trend > 0 ? "#00e0a4" : "#ff3b30";
-  const gradientId = `mini-chart-gradient-${color.replace("#", "")}`;
+  const gradientId = `mini_chart_gradient_${color.replace("#", "")}`;
+  const areaPath = `${linePath} L ${width - padding} ${height - padding} L ${padding} ${height - padding} Z`;
 
   return (
-    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`}>
+    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} fill="none">
       <defs>
         <linearGradient
           id={gradientId}
@@ -57,16 +83,54 @@ function MiniChart({ price, change24h, change7d, change30d, chartData }) {
           <stop stopColor={color} stopOpacity="0.2" />
           <stop offset="1" stopColor={color} stopOpacity="0" />
         </linearGradient>
+        <filter
+          id="mini_chart_point_shadow"
+          x="-4"
+          y="-4"
+          width="108"
+          height="38"
+          filterUnits="userSpaceOnUse"
+          colorInterpolationFilters="sRGB"
+        >
+          <feFlood floodOpacity="0" result="BackgroundImageFix"/>
+          <feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+          <feOffset dy="2"/>
+          <feGaussianBlur stdDeviation="2"/>
+          <feColorMatrix type="matrix" values="0 0 0 0 0.268354 0 0 0 0 0.268354 0 0 0 0 0.31049 0 0 0 0.15 0"/>
+          <feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow"/>
+          <feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow" result="shape"/>
+        </filter>
       </defs>
       <path d={areaPath} fill={`url(#${gradientId})`} />
-      <polyline
-        points={points}
+      <path
+        d={linePath}
         fill="none"
         stroke={color}
-        strokeWidth="2"
+        strokeWidth="3"
         strokeLinecap="round"
         strokeLinejoin="round"
       />
+      {lastPoint && (
+        <g filter="url(#mini_chart_point_shadow)">
+          <rect
+            x={lastPoint.x - 5}
+            y={lastPoint.y - 5}
+            width="10"
+            height="10"
+            rx="5"
+            fill={color}
+          />
+          <rect
+            x={lastPoint.x - 4}
+            y={lastPoint.y - 4}
+            width="8"
+            height="8"
+            rx="4"
+            stroke="white"
+            strokeWidth="2"
+          />
+        </g>
+      )}
     </svg>
   );
 }

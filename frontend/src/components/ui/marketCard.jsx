@@ -1,7 +1,6 @@
 import Buttons from "../../components/ui/buttons";
 import PulseSvgTag from "../../assets/svg/tagpulsegray.svg";
 
-
 export default function MarketCardBot({
     titleCardstrategi,
     desritioncardStrategy,

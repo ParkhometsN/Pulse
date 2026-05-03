@@ -1,23 +1,45 @@
 
 
 .container_loading_element{
+    position: relative;
+    overflow: hidden;
     width: 100%;
-    padding: 8px;
     height: 100%;
+    min-height: 100%;
+    padding: 8px;
     border: 2px solid var(--black-t);
+    background: var(--black);
+    background-size: 240% 100%;
+    border-radius: 16px;
+    filter: drop-shadow(0 0 3px rgba(255, 255, 255, 0.03));
+}
+
+.container_loading_element::before{
+    content: "";
+    position: absolute;
+    inset: 0;
     background:
       linear-gradient(
         105deg,
-        var(--black) 0%,
-        var(--black-s) 34%,
+        transparent 0%,
+        rgba(255, 255, 255, 0.015) 28%,
+        var(--black-s) 42%,
         var(--black-t) 50%,
-        var(--black-s) 66%,
-        var(--black) 100%
+        var(--black-s) 58%,
+        rgba(255, 255, 255, 0.015) 72%,
+        transparent 100%
       );
     background-size: 240% 100%;
-    border-radius: 16px;
-    animation: pulse 2.4s ease-in-out infinite;
-    filter: drop-shadow(0 0 3px rgba(255, 255, 255, 0.03));
+    animation: pulse 2.1s ease-in-out infinite;
+}
+
+.container_loading_element::after{
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    border: 1px solid rgba(255, 255, 255, 0.025);
+    pointer-events: none;
 }
 .maxHei{
     width: 100%;
@@ -41,12 +63,12 @@
 
 @keyframes pulse {
   0% {
-    background-position: 120% 0;
+    background-position: 160% 0;
   }
   50% {
     background-position: 0% 0;
   }
   100% {
-    background-position: -120% 0;
+    background-position: -160% 0;
   }
 }

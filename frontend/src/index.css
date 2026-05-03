@@ -11,6 +11,7 @@
 @import "./style/components/pages/market.css";
 @import "./style/components/loadingAnimation.css";
 @import "./style/components/pages/CoinPage.css";
+@import "./style/components/chart.css";
 
 @tailwind base;
 @tailwind components;

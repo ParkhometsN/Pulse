@@ -45,7 +45,6 @@ export default function Market() {
   const stocksAbortRef = useRef(null);
   const cryptoRequestIdRef = useRef(0);
   const stocksRequestIdRef = useRef(0);
-  const favoritesRequestIdRef = useRef(0);
   const navigate = useNavigate();
 
   const pages = [
@@ -555,46 +554,6 @@ export default function Market() {
     return () => controller.abort();
   }, []);
 
-  const fetchFavorites = useCallback(() => {
-    if (favorites.length === 0) {
-      return;
-    }
-
-    const requestId = favoritesRequestIdRef.current + 1;
-    favoritesRequestIdRef.current = requestId;
-
-    Promise
-      .allSettled(
-        favorites.map((asset) => {
-          const endpoint = asset.type === "stock"
-            ? `http://127.0.0.1:8000/stocks/${asset.symbol}`
-            : `http://127.0.0.1:8000/cryptocurrencies/${asset.symbol}`;
-
-          return axios.get(endpoint).then((response) => ({
-            ...asset,
-            ...response.data,
-            type: asset.type,
-            favoriteKey: asset.favoriteKey,
-          }));
-        })
-      )
-      .then((results) => {
-        if (requestId !== favoritesRequestIdRef.current) {
-          return;
-        }
-
-        const nextFavorites = results.map((result, index) => (
-          result.status === "fulfilled" ? result.value : favorites[index]
-        ));
-
-        setFavorites(nextFavorites);
-        localStorage.setItem(
-          FAVORITES_STORAGE_KEY,
-          JSON.stringify(nextFavorites)
-        );
-      });
-  }, [favorites]);
-
   const getSearchRank = useCallback((asset) => {
     const query = searchQuery.trim().toLowerCase();
 
@@ -823,24 +782,6 @@ export default function Market() {
       stocksAbortRef.current?.abort();
     };
   }, [activePage, fetchStocks]);
-
-  useEffect(() => {
-    if (activePage !== "favorites") {
-      return;
-    }
-
-    fetchFavorites();
-
-    const interval = setInterval(() => {
-      if (document.hidden) {
-        return;
-      }
-
-      fetchFavorites();
-    }, MARKET_REFRESH_INTERVAL);
-
-    return () => clearInterval(interval);
-  }, [activePage, fetchFavorites]);
 
   return (
     <div className="app_pages">

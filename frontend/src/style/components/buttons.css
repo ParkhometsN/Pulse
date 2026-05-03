@@ -29,7 +29,6 @@
   background-color: transparent;
   color: white;
   border: none;
-  padding: 8px 16px;
   border-radius: 4px;
 }
 
@@ -401,5 +400,136 @@
 }
 
 .button--alert_dilog-red:active:not(:disabled) {
+  opacity: 0.5;
+}
+
+
+
+
+/* Primary кнопка */
+.button--iconButton {
+  padding: 10px 15px 10px 15px;
+    background-color: var(--black-s);
+    border: 2px solid var(--black-t);
+    border-radius: 16px;
+}
+
+.button--iconButton:hover:not(:disabled) {
+    border: 2px solid var(--primary-blue);
+}
+
+.button--iconButton:active:not(:disabled) {
+    background-color: var(--primary-blue);
+}
+
+.button--iconButton.favorite-active {
+    border-color: var(--primary-blue);
+    background-color: var(--primary-blue-glass);
+}
+
+.button--iconButton.favorite-active svg path {
+    fill: var(--primary-blue);
+    stroke: var(--primary-blue);
+}
+
+
+
+
+.button--primary-buy {
+  background-color: var(--primary-blue);
+  color: white;
+  border: 5px solid var(--primary-blue-glass);
+  padding: 12px 24px;
+  border-radius: 30px;
+}
+
+.button--primary-buy:hover:not(:disabled) {
+  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+  border: 5px solid var(--primary-blue);
+}
+
+.button--primary-buy:active:not(:disabled) {
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+  opacity: 0.5;
+}
+/* 
+
+
+.button--text_choosevariant {
+  color: gray;
+  background-color: transparent;
+  padding: 16px 16px 0px 16px;
+  border: none;
+  border-radius: 4px;
+} */
+
+.buttons_loader_contentIn_container {
+  display: flex;
+  flex-wrap: nowrap; /* ЗАПРЕЩАЕМ перенос на новую строку */
+  overflow-x: auto;  /* ВКЛЮЧАЕМ горизонтальный скролл */
+  gap: 0; /* убираем отступы если есть */
+  min-width: min-content; /* обеспечивает правильное определение ширины */
+}
+
+/* Уберите overflow-x из родительского контейнера */
+.containerInformaton_about_coin_content {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  /* overflow-x: auto; - УБРАТЬ ОТСЮДА */
+  overflow-y: hidden;
+}
+  .button--text_choosevariant {
+    color: gray;
+    border-bottom: 2px solid transparent;
+    background-color: transparent;
+    padding: 16px 24px 16px 24px;
+    border-radius: 0px;
+  }
+
+  .button--text_choosevariant.active {
+    color: var(--primary-blue);
+    border-bottom: 2px solid var(--primary-blue);
+    background-color: transparent;
+    padding: 16px 24px 16px 24px;
+    border-radius: 0px;
+  }
+
+  .button--text_choosevariant:hover:not(:disabled) {
+    color: var(--primary-blue);
+  }
+
+  .button--text_choosevariant:active:not(:disabled) {
+    opacity: 0.5;
+  }
+
+
+
+
+
+
+.button--chartBuy {
+  color: var(--gray);
+  padding: 10px;
+  border-radius: 13px;
+  border: 2px solid transparent;
+  transition: background-color 0.25s ease, color 0.25s ease, border-color 0.25s ease, transform 0.2s ease, opacity 0.2s ease;
+}
+
+.button--chartBuy.active {
+  background-color: var(--black-t);
+  color: var(--primary-blue);
+  padding: 10px;
+  border-radius: 13px;
+}
+
+.button--chartBuy:hover:not(:disabled) {
+  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+  border: 2px solid var(--black-t);
+  transform: translateY(-1px);
+}
+
+.button--chartBuy:active:not(:disabled) {
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
   opacity: 0.5;
 }
