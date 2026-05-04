@@ -2,7 +2,7 @@ import { Outlet, useNavigate } from "react-router-dom";
 import Sidebar from "../components/Sidebar";
 import LoaderAnimation from "../components/ui/loaderAnimation";
 import CoinIcon from "../components/ui/coinIcon";
-import axios from "axios";
+import api from "../lib/api";
 import { useCallback, useEffect, useState } from "react";
 import AreYouShure from "../components/ui/DilogShure";
 import { Dialog } from "radix-ui";
@@ -34,7 +34,7 @@ export default function AppLayout() {
     }, []);
 
     const fetchCurrency = useCallback(() => {
-      axios.get("http://127.0.0.1:8000/cryptocurrencies", {
+      api.get("/cryptocurrencies", {
         params: {
           limit: 15,
           offset: 0,

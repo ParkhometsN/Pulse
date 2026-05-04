@@ -570,10 +570,10 @@ export default function CoinPage() {
     }
 
     if (assetType === "stock") {
-      return `http://127.0.0.1:8000/stocks/${symbol}`;
+      return `/stocks/${symbol}`;
     }
 
-    return `http://127.0.0.1:8000/cryptocurrencies/${symbol}`;
+    return `/cryptocurrencies/${symbol}`;
   }, [assetType, symbol]);
 
   const fetchAsset = useCallback((targetEndpoint) => {
@@ -865,8 +865,8 @@ export default function CoinPage() {
     const days = Math.min(rawDays, 1000);
     const controller = new AbortController();
     const chartEndpoint = isStock
-      ? `http://127.0.0.1:8000/stocks/${symbol}/chart`
-      : `http://127.0.0.1:8000/cryptocurrencies/${symbol}/chart`;
+      ? `/stocks/${symbol}/chart`
+      : `/cryptocurrencies/${symbol}/chart`;
     const params = isStock
       ? {
         days,
