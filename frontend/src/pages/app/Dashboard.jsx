@@ -9,7 +9,7 @@ import {
   DrawerTitle,
   DrawerTrigger,
 } from "@/components/ui/drawer";
-import Buttons from "../../components/ui/buttons";
+import Buttons from "../../components/UI/buttons";
 import ChartUP from "../../assets/svg/cartUP.svg";
 import SVGplus from "../../assets/svg/plus_blue.svg";
 import axios from "axios";

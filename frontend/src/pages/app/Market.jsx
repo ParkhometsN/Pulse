@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import Inputs from "../../components/ui/inputs";
+import Inputs from "../../components/UI/inputs";
 import SearchIcon from "../../assets/svg/searchicon.svg";
 import PulseSvgTag from "../../assets/svg/tagpulsegray.svg";
-import Buttons from "../../components/ui/buttons";
+import Buttons from "../../components/UI/buttons";
 import MarketCardBot from "../../components/ui/marketCard";
 import CointButtonMarket from "../../components/ui/cointmarketButton";
 import CoinIcon from "../../components/ui/coinIcon";

@@ -1,4 +1,4 @@
-import Buttons from "../../components/ui/buttons";
+import Buttons from "../../components/UI/buttons";
 
 export default function AreYouShure({
     TitledilogAlert,

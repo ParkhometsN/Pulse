@@ -1,5 +1,5 @@
 import LogoSvg from "../../assets/svg/pulse_logo.svg";
-import Buttons from "../../components/ui/buttons";
+import Buttons from "../../components/UI/buttons";
 import pulseImage from '../../assets/img/promo_page_pulse.png';
 import { Link } from "react-router-dom";
 

@@ -27,8 +27,8 @@ import {
 } from "@/components/ui/alert-dialog"
 import { useState } from "react";
 import AreYouShure from "../../components/ui/DilogShure";
-import Buttons from "../../components/ui/buttons";
-import Inputs from "../../components/ui/inputs";
+import Buttons from "../../components/UI/buttons";
+import Inputs from "../../components/UI/inputs";
 import { Trash2 } from "lucide-react"; // Добавьте импорт иконки
 
 export default function Settings() {

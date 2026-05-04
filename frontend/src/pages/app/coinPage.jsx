@@ -17,7 +17,7 @@ import api from "../../lib/api";
 import { Link} from "react-router-dom";
 
 import LoaderAnimation from "../../components/ui/loaderAnimation";
-import Buttons from "../../components/ui/buttons";
+import Buttons from "../../components/UI/buttons";
 import CoinIcon from "../../components/ui/coinIcon";
 import TextAlert from "../../components/ui/TextAlert";
 
