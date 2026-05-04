@@ -15,7 +15,7 @@ import Register from "../pages/public/Register.jsx";
 import ForgotPassword from "../pages/public/ForgotPassword.jsx";
 
 import Profile from "../pages/app/Profile.jsx";
-import CoinPage from "@/pages/app/coinPage";
+import CoinPage from "../pages/app/coinPage.jsx";
 
 export default function Router() {
   return (

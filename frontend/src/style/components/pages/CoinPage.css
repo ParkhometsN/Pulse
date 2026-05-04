@@ -298,6 +298,7 @@
     color: #00ffaa;
 }
 .chartUserContainer{
+    flex-direction: column;
     display: flex;
 }
 .ContainerRightINF{
