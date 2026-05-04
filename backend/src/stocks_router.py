@@ -166,7 +166,8 @@ async def get_stock_candles(
     secid: str,
     board: str,
     days: int = 35,
-    date_from: date | None = None
+    date_from: date | None = None,
+    interval: int = 24
 ):
     today = date.today()
     candle_date_from = date_from or today - timedelta(days=days)
@@ -174,13 +175,14 @@ async def get_stock_candles(
     payload = await get_cached_moex_data(
         cache_key=(
             f"candles:{board}:{secid}:{candle_date_from.isoformat()}:"
-            f"{today.isoformat()}"
+            f"{today.isoformat()}:{interval}"
         ),
         loader=lambda: moex_client.get_candles(
             secid=secid,
             board=board,
             date_from=candle_date_from.isoformat(),
-            date_to=today.isoformat()
+            date_to=today.isoformat(),
+            interval=interval
         ),
         ttl_seconds=STOCK_CANDLES_CACHE_TTL_SECONDS
     )
@@ -296,6 +298,31 @@ async def get_stocks_search_index(
         items.sort(key=lambda item: item["turnover24h"], reverse=True)
 
         return {"items": items, "total": len(items)}
+    except Exception as error:
+        handle_moex_error(error)
+
+
+@router.get("/{secid}/chart")
+async def get_stock_chart(
+    secid: str,
+    board: str = Query(default="TQBR"),
+    days: int = Query(default=7, ge=1, le=3650),
+    interval: int = Query(default=24)
+):
+    try:
+        candles = await get_stock_candles(
+            secid=secid,
+            board=board,
+            days=days,
+            interval=interval
+        )
+
+        return {
+            "symbol": secid.upper(),
+            "interval": interval,
+            "days": days,
+            "chart": candles,
+        }
     except Exception as error:
         handle_moex_error(error)
 

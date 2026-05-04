@@ -4,10 +4,10 @@ import SearchIcon from "../../assets/svg/searchicon.svg";
 import PulseSvgTag from "../../assets/svg/tagpulsegray.svg";
 import Buttons from "../../components/ui/buttons";
 import MarketCardBot from "../../components/ui/marketCard.jsx";
-import CointButtonMarket from "@/components/ui/cointmarketButton.jsx";
-import CoinIcon from "@/components/ui/coinIcon.jsx";
+import CointButtonMarket from "../../components/ui/cointmarketButton.jsx";
+import CoinIcon from "../../components/ui/coinIcon.jsx";
 import axios from "axios";
-import LoaderAnimation from "@/components/ui/loaderAnimation.jsx";
+import LoaderAnimation from "../../components/ui/loaderAnimation.jsx";
 import { useNavigate } from "react-router-dom";
 
 const ITEMS_PER_PAGE = 15;

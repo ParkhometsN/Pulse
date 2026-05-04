@@ -224,6 +224,66 @@
     background-color: var(--black-s);
 }
 
+.asset_chart {
+  position: relative;
+}
+
+.asset_chart_loader {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(4px);
+  border-radius: 20px;
+  pointer-events: none;
+}
+
+.asset_chart_scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  cursor: grab;
+  scrollbar-width: thin;
+  scrollbar-color: var(--primary-blue) rgba(255, 255, 255, 0.06);
+}
+
+.asset_chart_scroll:active {
+  cursor: grabbing;
+}
+
+.asset_chart_scroll::-webkit-scrollbar {
+  height: 9px;
+}
+
+.asset_chart_scroll::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 999px;
+}
+
+.asset_chart_scroll::-webkit-scrollbar-thumb {
+  background: var(--primary-blue);
+  border-radius: 999px;
+}
+
+.asset_chart_scroll::-webkit-scrollbar-thumb:hover {
+  background: #4d94ff;
+}
+
+.buttonChart {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.chart_zoom_buttons {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 @keyframes chartLineDraw{
     to{
         stroke-dashoffset: 0;

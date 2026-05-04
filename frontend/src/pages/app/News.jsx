@@ -3,7 +3,10 @@ export default function News() {
     <div className="app_pages">
       <div className="app_content">
         <div className="app_items">
-          <h1>Новости</h1>
+          <div className="news_container">
+              <h1>Новости</h1>
+          </div>
+         
         </div>
       </div>
     </div>

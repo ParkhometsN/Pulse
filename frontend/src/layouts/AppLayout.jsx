@@ -1,10 +1,10 @@
 import { Outlet, useNavigate } from "react-router-dom";
 import Sidebar from "../components/Sidebar";
-import LoaderAnimation from "@/components/ui/loaderAnimation.jsx";
-import CoinIcon from "@/components/ui/coinIcon.jsx";
+import LoaderAnimation from "../components/ui/loaderAnimation.jsx";
+import CoinIcon from "../components/ui/coinIcon.jsx";
 import axios from "axios";
 import { useCallback, useEffect, useState } from "react";
-import AreYouShure from "@/components/ui/DilogShure";
+import AreYouShure from "../components/ui/DilogShure";
 import { Dialog } from "radix-ui";
 import { Link } from "react-router-dom";
 

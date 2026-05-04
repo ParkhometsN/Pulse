@@ -11,6 +11,7 @@
 @import "./style/components/pages/market.css";
 @import "./style/components/loadingAnimation.css";
 @import "./style/components/pages/CoinPage.css";
+@import "./style/components/pages/news.css";
 @import "./style/components/chart.css";
 
 @tailwind base;
@@ -297,6 +298,39 @@ html{
   backdrop-filter: blur(5px);  
 
   z-index: -1; 
+}
+.controolTextAlert{
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.containerTEXtAket{
+  padding: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 20;
+  width: 100%;
+  height: 100%;
+  position: absolute;
+  background-color: #00000075;
+  backdrop-filter: blur(5px);  
+
+}
+.TextAlert-content h1{
+  font-size: 20px;
+  padding-bottom: 10px;
+  font-weight: 600;
+}
+.TextAlert-content{
+  border-radius: 13px;
+  border: 2px solid var(--black-t);
+  padding: 20px;
+  background-color: var(--black);
+  height: 60vh;
+  max-width: 600px;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 .shure_conteuner{
   display: flex;
