@@ -1,4 +1,4 @@
-import Buttons from "./buttons";
+import Buttons from "../UI/buttons";
 
 export default function TextAlert({TextAlertButton}){
     return (

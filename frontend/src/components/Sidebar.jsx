@@ -3,7 +3,7 @@ import LogoSvg from "../assets/svg/pulse_logo.svg";
 import UserIcon from "../assets/svg/user_icon.svg";
 import BagDash from "../assets/svg/bag_icon.svg";
 import BurgerIconSvg from "../assets/svg/burger_icon_svg.svg";
-import Buttons from "./ui/buttons";
+import Buttons from "./UI/buttons";
 import { useCallback, useEffect, useState } from "react";
 
 export default function Sidebar({ButtonExit}) {
