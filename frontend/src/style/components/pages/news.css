@@ -1,1 +1,339 @@
-/* wqe */
+.blockS {
+    min-width: 355px;
+    border-radius: 16px;
+    padding: 10px;
+    width: 100%;
+    height: 160px;
+    background-color: var(--black);
+    border: 2px solid var(--black-t);
+}
+
+.blockMoodSales {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    overflow-y: hidden;
+    overflow-x: auto;
+}
+
+.news_container {
+    padding: 10px;
+}
+
+.blockS h2 {
+    padding-bottom: 4px;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.blockS p {
+    opacity: 0.5;
+    font-size: 12px;
+    font-weight: 400;
+}
+
+.containerNewCard {
+    background-color: var(--black);
+    border: 2px solid var(--black-t);
+    border-radius: 16px;
+    padding: 10px;
+}
+
+.news_blcok {
+    display: flex;
+    gap: 10px;
+}
+
+.blockNewsAnalitycs {
+    min-width: 400px;
+}
+
+.blNew {
+    background-color: var(--black);
+    border: 2px solid var(--black-t);
+    border-radius: 16px;
+    padding: 10px;
+}
+
+.text-block {
+    position: relative;
+    border-radius: 8px;
+}
+
+.text-wrapper {
+    position: relative;
+}
+.n{
+    padding-top: 16px;
+    font-size: 13px;
+    text-align: center;
+    opacity: 0.5;
+}
+.text-container.collapsed {
+    display: -webkit-box;
+    -webkit-line-clamp: 7;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+/* Кнопка "ещё" (внутри текста) */
+.toggle-btn.inline-btn {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(to right, transparent, var(--black) 20px);
+    border: none;
+    color: var(--primary-blue);
+    cursor: pointer;
+    font-size: inherit;
+    font-family: inherit;
+    white-space: nowrap;
+    padding-left: 30px;
+    z-index: 2;
+}
+
+/* Кнопка "свернуть" (под текстом) */
+.closeBitn {
+    margin-top: 8px;
+    background: none;
+    border: none;
+    color: var(--primary-blue);
+    cursor: pointer;
+    transition: all 0.3s ease;
+    font-size: 14px;
+    display: inline-block;
+}
+
+.closeBitn:hover {
+    opacity: 0.5;
+}
+
+.upNews {
+    padding-bottom: 10px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.websiteLink {
+    color: white;
+    transition: all 0.3s ease;
+    text-decoration: none;
+}
+
+.websiteLink:hover {
+    color: var(--primary-blue);
+}
+
+.coinlist {
+    padding-top: 16px;
+    display: flex;
+    gap: 10px;
+    overflow-y: hidden;
+    overflow-x: auto;
+}
+
+.coinList {
+    border-radius: 20px;
+    padding: 10px;
+    background-color: var(--black-t);
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    transition: all 0.3s ease;
+    text-decoration: none;
+    color: white;
+}
+
+.coinList img {
+    width: 16px;
+}
+
+.coinList {
+    font-size: 13px;
+}
+
+.coinList:hover {
+    background-color: var(--primary-blue);
+}
+
+.bannerNewsImg {
+    padding: 0px 0px 16px 0px;
+}
+
+.bannerNewsImg img {
+    border-radius: 16px;
+    border: 2px solid var(--black-t);
+    width: 100%;
+    object-fit: cover;
+}
+.chartindexScare{
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    border-radius: 20px;
+    height: 10px;
+    background-color: var(--green);
+}
+.serlcePoint{
+    border-radius: 50%;
+    height: 20px;
+    width: 20px;
+    border: 5px solid white;
+    background-color: var(--green);
+}
+.newsListBlock {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+.downMood{
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+}
+
+.ioiui{
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+}
+.timeBl{
+    display: flex;
+    gap: 8px;
+    justify-content: space-between;
+    align-items: center;
+}
+.timeBl h4{
+    opacity: 0.5;
+    font-size: 13px;
+    flex-wrap: wrap;
+}
+.timeBl h5{
+    background-color: var(--primary-blue-blur);
+    font-size: 12px;
+}
+.brTimeNews{
+    color: var(--primary-blue);
+    padding: 5px 10px;
+    border-radius: 30px;
+    background-color: #26477d59;
+}
+.sellbad{
+    color: var(--red) !important;
+    background-color: var(--red-blur) !important; 
+}
+.params{
+    height: 100%;
+    gap: 8px;
+    display: flex;
+    justify-content: space-between;
+    flex-direction: column;
+
+}
+.paramsyear{
+    height: 100%;
+    gap: 8px;
+    display: flex;
+    flex-direction: column;
+
+}
+.IndexscareSercle{
+    font-size: 13px;
+    background-color: var(--black-t);
+    border-radius: 50%;
+    padding: 5px 8px;
+}
+.InesscareInformation{ 
+    display: flex;
+    justify-content: space-between;
+}
+
+.linee{
+    margin: 10px 0px 10px 0px;
+    width: 100%;
+    height: 1px;
+    background-color: #7b7b7b;
+}
+
+.listOfSites{
+    display: flex;
+    gap: 8px;
+    flex-direction: column;
+}
+
+.linkItem{
+    border-radius: 16px;
+    background-color: var(--black-s);
+    border: 2px solid var(--black-t);
+    padding: 10px;
+    transition: all 0.3s ease;
+}
+
+.linkItem {
+    display: flex;
+    gap: 11px;
+    align-items: center;
+}
+
+.linkItem img{
+    width: 25px;
+}
+.linkItem:hover{
+    border: 2px solid var(--primary-blue);
+}
+.linkItem p{
+    font-size: 14px;
+}
+.textofLinkNews h5{
+    opacity: 0.5;
+    font-size: 12px;
+}
+
+@container app-container (max-width: 1100px) {
+    .blockNewsAnalitycs {
+        min-width: 25vw;
+    }
+
+
+.blNew{
+    overflow-x: hidden;
+    overflow-y: auto;
+}
+}
+
+@container app-container (max-width: 950px) {
+    .blockNewsAnalitycs {
+        min-width: 100%;
+    }
+    .news_blcok {
+    display: flex;
+    gap: 10px;
+    flex-direction: column-reverse;
+}
+.blNew {
+    background-color: var(--black);
+    border: 2px solid var(--black-t);
+    border-radius: 16px;
+    padding: 10px;
+    height: 200px;
+}
+}
+@media screen and (max-width: 574px) {
+    .blockS {
+        border-radius: 24px;
+    }
+    .blockMoodSales {
+    border-radius: 20px;
+}
+.cardList_marketbot {
+    padding-right: 20px;
+    padding: 10px 0px 24px 0px;
+}
+.cardmarketblocklist {
+    padding-left: 10px;
+    padding-right: 10px;
+}
+}

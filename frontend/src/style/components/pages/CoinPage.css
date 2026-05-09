@@ -131,10 +131,16 @@
     gap: 8px;
 }
 
-.AiPrognathation_content{
-    padding: 10px;
+.AiPrognathation_content {
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+
+    height: 100%;
+    justify-content: space-between;
+    width: 100%;
     background-color: var(--black);
-    border-radius: 12px;
+    border-radius: 14px;
     border: 2px solid var(--black-t);
 }
 .AiPrognathation_content img{
@@ -158,7 +164,7 @@
 }
 .tAI p{
     font-size: 14px;
-    padding-bottom: 8px;
+    padding-bottom: 4px;
     opacity: 0.5;
 }
 .asset_chart_tooltipSVG {
@@ -298,11 +304,10 @@
     color: #00ffaa;
 }
 .chartUserContainer{
-    flex-direction: column;
+    gap: 10px;
     display: flex;
 }
 .ContainerRightINF{
-    padding-left: 10px;
     min-width: 440px;
 }
 .coin_tab_card p,
@@ -320,6 +325,102 @@
     color: white !important;
     font-size: 16px !important;
 }
+.textItems{
+    display: flex;
+    flex-direction: column;
+
+}
+
+.ContainerRightINF{
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.GlassOfBuySell{
+    width: 100%;
+    border-radius: 16px;
+    padding: 12px;
+    background-color: var(--black);
+    border: 2px solid var(--black-t);
+}
+
+
+.priceUpGlass{
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.priceBorder{
+        border-radius: 12px;
+        background-color: var(--black);
+    border: 2px solid var(--black-t);
+    padding: 5px 10px;
+    color: #00ffaa;
+}
+
+.lineHeight{
+    width: 1px;
+    background-color: gray;
+    height: 100%;
+}
+.glassSellBuy{
+    display: flex;
+    gap: 6px;
+}
+.priceBorder p{
+    font-size: 13px;
+}
+
+.sellGlass,
+.buyGlass{
+    width: 100%;
+    gap: 12px;
+    padding-top: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+
+.PriceUSDC {
+
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    align-items: flex-end;
+}
+.PriceUSDCSell{
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    color: var(--red);
+}
+.PriceUSDCSell h5{
+    color: white;
+}
+.PriceUSDC p{
+    color: var(--green);
+}
+
+.QTYBTC p,
+.PriceUSDC h5,
+.PriceUSDCSell h5{
+    font-size: 14px;
+}
+.QTYBTC p,
+.PriceUSDC p,
+.PriceUSDCSell p{
+    font-size: 14px;
+}
+.QTYBTC{
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
 
 @media screen and (max-width: 850px){
 .disabledCpinpage{
@@ -362,9 +463,7 @@
 .fnsizw{
     width: 100%;
 }
-.mini_sparkline{
-    display: none !important;
-}
+
 .disabledCpinpagemobile{
     display: none;
 }
@@ -474,13 +573,19 @@ width: 16vw;
 .buttonChart_container::-webkit-scrollbar{
     display: none;
 }
-
-.chartuser_container{
+.ContainerRightINF{
+    min-width: 100%;
+}
+/* .chartuser_container{
     padding: 14px;
     align-items: flex-start;
     flex-direction: column;
+} */
+.coinStokIMg img, .coinStokIMg .coin_page_icon {
+    width: 12vw;
+    height: 12vw;
+    border-radius: 50%;
 }
-
 .coin_tab_panel{
     min-height: 150px;
     padding: 16px;

@@ -105,7 +105,6 @@ grid-template-columns: repeat(1, 1fr);
 
 /* контейнер карточки */
 .marketcard_container {
-    max-width: 390px;
     min-width: 380px;
 }
 
@@ -312,7 +311,7 @@ grid-template-columns: 100px 100px 100px 100px;
     align-items: center;
     justify-content: center;
     gap: 8px;
-    padding: 10px 0 4px 0;
+    padding: 10px 0 16px 0;
 }
 
 .market_pagination_pages{
@@ -437,12 +436,7 @@ grid-template-columns: 100px 100px 100px 100px;
  flex-direction: column;
 }
 
-@container app-container (max-width: 1216px) {
-    .contentmarketstategy {
-        display: inline !important;  /* временно с !important для теста */
-        background: red; /* добавим для проверки, что правило срабатывает */
-    }
-}
+
 @media screen and (max-width: 1200px) {
 
 .tabletdis{

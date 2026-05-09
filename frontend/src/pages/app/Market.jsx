@@ -528,15 +528,14 @@ export default function Market() {
   const fetchSearchIndex = useCallback(() => {
     const controller = new AbortController();
 
-    api
-      .all([
-        api.get("/cryptocurrencies/search-index", {
-          signal: controller.signal,
-        }),
-        api.get("/stocks/search-index", {
-          signal: controller.signal,
-        }),
-      ])
+    Promise.all([
+      api.get("/cryptocurrencies/search-index", {
+        signal: controller.signal,
+      }),
+      api.get("/stocks/search-index", {
+        signal: controller.signal,
+      }),
+    ])
       .then(([cryptoResponse, stocksResponse]) => {
         const cryptoItems = cryptoResponse.data?.items || [];
         const stockItems = stocksResponse.data?.items || [];

@@ -10,7 +10,7 @@ export default function Profile() {
         <div className="container_settings profilesett">
             <div className="content_settings qwiouefhjioui">
               <div className="title_pages_st">
-                <p>Parkhomets Nikitaя</p>
+                <p>Parkhomets Nikita</p>
                 <h5>Настройки аккаунта</h5>
               </div>
               <div className="line"></div>
@@ -78,9 +78,6 @@ export default function Profile() {
                     Включить Google Auntificator
                 </div>
               </Buttons>
-              <div className="buttons_Log_delete">
-                <Buttons type='text'>Выйти из аккаунта</Buttons>
-              </div>
             </div>
           </div>
         </div>

@@ -141,7 +141,7 @@ export default function Dashboard() {
 
                     <DrawerFooter>
                       <Buttons>Submit</Buttons>
-                      <DrawerClose>
+                      <DrawerClose asChild>
                         <Buttons>Cancel</Buttons>
                       </DrawerClose>
                     </DrawerFooter>
@@ -152,7 +152,7 @@ export default function Dashboard() {
 
             <div className="dashboard_analytycs">
               <div className="containerAnalic">
-                <div className="blockf black_box">
+                <div className="block black_box buyBlock">
                   <Drawer>
                     <DrawerTrigger asChild>
                       <Buttons type="nm_black_prymary">История</Buttons>
@@ -172,16 +172,24 @@ export default function Dashboard() {
 
                       <DrawerFooter>
                         <Buttons>Submit</Buttons>
-                        <DrawerClose>
+                        <DrawerClose asChild>
                           <Buttons>Cancel</Buttons>
                         </DrawerClose>
                       </DrawerFooter>
                     </DrawerContent>
                   </Drawer>
                 </div>
-
-                <div className="blocks black_box"></div>
-                <div className="block black_box"></div>
+                <div className="left_blockDash">
+                  <div className="block black_box sellingBox"></div>
+                  <div className="block black_box"></div>
+                </div>
+              </div>
+              <div className="BlcoksMidleDahs">
+                <div className="AnaBl">
+                  <div className="block black_box"></div>
+                  <div className="block black_box"></div>
+                </div>
+                <div className="block black_box chartBlock"></div>
               </div>
             </div>
           </div>
