@@ -16,7 +16,7 @@ class BybitHTTPClient:
         if self._session is None or self._session.closed:
             self._session = ClientSession(
                 base_url=self.base_url,
-                timeout=ClientTimeout(total=25, connect=8, sock_read=20)
+                timeout=ClientTimeout(total=10, connect=3, sock_read=8)
             )
 
         return self._session
@@ -40,9 +40,9 @@ class BybitHTTPClient:
                     return result["result"]
             except (asyncio.TimeoutError, ClientError) as error:
                 if attempt == 1:
-                    raise UpstreamHTTPError("Bybit request timed out") from error
+                    raise UpstreamHTTPError("Bybit provider unavailable") from error
 
-                await asyncio.sleep(0.4)
+                await asyncio.sleep(0.2)
 
         raise UpstreamHTTPError("Bybit request failed")
 

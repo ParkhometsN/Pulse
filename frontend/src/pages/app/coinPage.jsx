@@ -14,6 +14,7 @@ import LogoSvg from "../../assets/svg/pulse_logo.svg";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useSearchParams } from "react-router-dom";
 import api from "../../lib/api";
+import { readCachedValue, writeCachedValue } from "../../lib/clientCache";
 import { Link} from "react-router-dom";
 
 import LoaderAnimation from "../../components/ui/loaderAnimation";
@@ -21,7 +22,11 @@ import Buttons from "../../components/UI/buttons";
 import CoinIcon from "../../components/ui/coinIcon";
 import TextAlert from "../../components/ui/TextAlert";
 
-const ASSET_REFRESH_INTERVAL = 1000;
+const ASSET_REFRESH_INTERVAL = 15000;
+const ASSET_CACHE_MAX_AGE = 1000 * 60 * 5;
+const CHART_CACHE_MAX_AGE = 1000 * 60 * 10;
+const assetCacheKey = (endpoint) => `pulse:asset:${endpoint}:v1`;
+const chartCacheKey = (key) => `pulse:asset-chart:${key}:v1`;
 const FAVORITES_STORAGE_KEY = "pulse_market_favorites";
 const CHART_RANGES = {
   "1D": { days: 1, interval: "60", stockInterval: 60, points: 24, showTime: true },
@@ -589,6 +594,16 @@ export default function CoinPage() {
       return;
     }
 
+    const cachedAsset = readCachedValue(assetCacheKey(targetEndpoint), ASSET_CACHE_MAX_AGE);
+
+    if (cachedAsset) {
+      setRequestState({
+        endpoint: targetEndpoint,
+        asset: cachedAsset,
+        error: "",
+      });
+    }
+
     const controller = new AbortController();
     const requestId = requestIdRef.current + 1;
 
@@ -611,6 +626,7 @@ export default function CoinPage() {
           asset: response.data,
           error: "",
         });
+        writeCachedValue(assetCacheKey(targetEndpoint), response.data);
       })
       .catch((requestError) => {
         if (requestError.code === "ERR_CANCELED") {
@@ -624,11 +640,13 @@ export default function CoinPage() {
           return;
         }
 
-        setRequestState({
+        setRequestState((currentState) => ({
           endpoint: targetEndpoint,
-          asset: null,
-          error: "Не удалось загрузить актив",
-        });
+          asset: currentState.asset,
+          error: currentState.asset
+            ? "Данные временно не обновились"
+            : "Не удалось загрузить актив",
+        }));
       })
       .finally(() => {
         if (requestId === requestIdRef.current) {
@@ -653,7 +671,7 @@ export default function CoinPage() {
       return;
     }
 
-    fetchAsset(endpoint);
+    const initialFetchTimer = window.setTimeout(() => fetchAsset(endpoint), 0);
 
     const interval = setInterval(() => {
       if (
@@ -670,6 +688,7 @@ export default function CoinPage() {
     pollingIntervalRef.current = interval;
 
     return () => {
+      window.clearTimeout(initialFetchTimer);
       clearInterval(interval);
       if (pollingIntervalRef.current === interval) {
         pollingIntervalRef.current = null;
@@ -876,6 +895,17 @@ export default function CoinPage() {
         days: rangeSettings.points || days,
         interval: rangeSettings.interval || "D",
       };
+    const cachedChart = readCachedValue(chartCacheKey(chartKey), CHART_CACHE_MAX_AGE);
+    let cachedChartTimer = null;
+
+    if (cachedChart) {
+      cachedChartTimer = window.setTimeout(() => {
+        setChartState({
+          key: chartKey,
+          data: cachedChart,
+        });
+      }, 0);
+    }
 
     api
       .get(chartEndpoint, {
@@ -887,6 +917,7 @@ export default function CoinPage() {
           key: chartKey,
           data: response.data?.chart || [],
         });
+        writeCachedValue(chartCacheKey(chartKey), response.data?.chart || []);
       })
       .catch((error) => {
         if (error.code === "ERR_CANCELED") {
@@ -899,7 +930,13 @@ export default function CoinPage() {
         });
       });
 
-    return () => controller.abort();
+    return () => {
+      if (cachedChartTimer) {
+        window.clearTimeout(cachedChartTimer);
+      }
+
+      controller.abort();
+    };
   }, [activeChartRange, assetLoadedKey, chartKey, isOverviewTab, isStock, symbol]);
 
 

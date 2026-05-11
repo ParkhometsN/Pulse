@@ -3,14 +3,20 @@ import Sidebar from "../components/Sidebar";
 import LoaderAnimation from "../components/ui/loaderAnimation";
 import CoinIcon from "../components/ui/coinIcon";
 import api from "../lib/api";
+import { readCachedValue, writeCachedValue } from "../lib/clientCache";
 import { useCallback, useEffect, useState } from "react";
 import AreYouShure from "../components/ui/DilogShure";
 import { Dialog } from "radix-ui";
 import { Link } from "react-router-dom";
 
+const MARQUEE_CACHE_KEY = "pulse:app-layout:marquee:v1";
+const MARQUEE_CACHE_MAX_AGE = 1000 * 60 * 10;
+
 export default function AppLayout() {
-    const [currencies, setCurrencies] = useState([]);
-    const [isCurrenciesLoading, setIsCurrenciesLoading] = useState(true);
+    const [currencies, setCurrencies] = useState(
+      () => readCachedValue(MARQUEE_CACHE_KEY, MARQUEE_CACHE_MAX_AGE) || []
+    );
+    const [isCurrenciesLoading, setIsCurrenciesLoading] = useState(currencies.length === 0);
     const [alertDilog, setalertdilog] = useState(false)
     const navigation = useNavigate();
 
@@ -44,10 +50,12 @@ export default function AppLayout() {
         const data = Array.isArray(response.data)
           ? response.data
           : response.data.items || [];
-        setCurrencies(data.slice(0, 15).map(normalizeCurrency));
+        const nextCurrencies = data.slice(0, 15).map(normalizeCurrency);
+        setCurrencies(nextCurrencies);
+        writeCachedValue(MARQUEE_CACHE_KEY, nextCurrencies);
       })
       .catch(() => {
-        setCurrencies([]);
+        setCurrencies((currentCurrencies) => currentCurrencies);
       })
       .finally(() => {
         setIsCurrenciesLoading(false);

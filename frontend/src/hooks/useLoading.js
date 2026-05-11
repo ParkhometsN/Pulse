@@ -7,17 +7,30 @@ export function useLoading(asyncFunction) {
   const [error, setError] = useState(null);
 
   useEffect(() => {
+    let isMounted = true;
+
     asyncFunction()
       .then(result => {
+        if (!isMounted) {
+          return;
+        }
+
         setData(result);
         setLoading(false);
       })
       .catch(err => {
+        if (!isMounted) {
+          return;
+        }
+
         setError(err);
         setLoading(false);
       });
+
+    return () => {
+      isMounted = false;
+    };
   }, [asyncFunction]);
 
   return { loading, data, error };
 }
-

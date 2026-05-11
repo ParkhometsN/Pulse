@@ -299,6 +299,13 @@ def build_market_response(items: list, total: int, limit: int, offset: int):
     }
 
 
+def raise_crypto_provider_unavailable():
+    raise HTTPException(
+        status_code=502,
+        detail="Cryptocurrency provider is temporarily unavailable"
+    ) from None
+
+
 @router.get("")
 async def get_cryptocurrencies(
     category: str = Query(default="spot"),
@@ -317,11 +324,8 @@ async def get_cryptocurrencies(
                 loader=lambda: bybit_client.get_instruments(category=category)
             )
         )
-    except Exception as error:
-        raise HTTPException(
-            status_code=502,
-            detail=f"Cryptocurrency provider unavailable: {error}"
-        ) from error
+    except Exception:
+        raise_crypto_provider_unavailable()
 
     instruments_map = {
         item["symbol"]: item
@@ -363,11 +367,8 @@ async def get_cryptocurrencies(
             format_coin_with_chart(instrument, ticker)
             for instrument, ticker in page_sources
         ])
-    except Exception as error:
-        raise HTTPException(
-            status_code=502,
-            detail=f"Cryptocurrency data unavailable: {error}"
-        ) from error
+    except Exception:
+        raise_crypto_provider_unavailable()
 
     return build_market_response(items, total, limit, offset)
 
@@ -388,11 +389,8 @@ async def get_cryptocurrencies_search_index(
                 loader=lambda: bybit_client.get_instruments(category=category)
             )
         )
-    except Exception as error:
-        raise HTTPException(
-            status_code=502,
-            detail=f"Cryptocurrency provider unavailable: {error}"
-        ) from error
+    except Exception:
+        raise_crypto_provider_unavailable()
 
     tickers_map = {
         item.get("symbol"): item
@@ -424,7 +422,10 @@ async def get_cryptocurrency(
     currency_id: str,
     category: str = Query(default="spot")
 ):
-    instrument = await find_instrument(currency_id, category)
+    try:
+        instrument = await find_instrument(currency_id, category)
+    except Exception:
+        raise_crypto_provider_unavailable()
 
     if instrument is None:
         raise HTTPException(
@@ -432,10 +433,13 @@ async def get_cryptocurrency(
             detail="Cryptocurrency not found"
         )
 
-    ticker = await bybit_client.get_ticker(
-        symbol=instrument["symbol"],
-        category=category
-    )
+    try:
+        ticker = await bybit_client.get_ticker(
+            symbol=instrument["symbol"],
+            category=category
+        )
+    except Exception:
+        raise_crypto_provider_unavailable()
 
     if ticker is None:
         raise HTTPException(
@@ -458,7 +462,10 @@ async def get_cryptocurrency_chart(
     interval: str = Query(default="D"),
     days: int = Query(default=7)
 ):
-    instrument = await find_instrument(currency_id, category)
+    try:
+        instrument = await find_instrument(currency_id, category)
+    except Exception:
+        raise_crypto_provider_unavailable()
 
     if instrument is None:
         raise HTTPException(
@@ -466,16 +473,19 @@ async def get_cryptocurrency_chart(
             detail="Cryptocurrency not found"
         )
 
-    raw_chart = await get_cached_bybit_list(
-        cache_key=f"kline:{category}:{instrument['symbol']}:{interval}:{days}",
-        loader=lambda: bybit_client.get_kline(
-            symbol=instrument["symbol"],
-            category=category,
-            interval=interval,
-            limit=days
-        ),
-        ttl_seconds=CHART_CACHE_TTL_SECONDS
-    )
+    try:
+        raw_chart = await get_cached_bybit_list(
+            cache_key=f"kline:{category}:{instrument['symbol']}:{interval}:{days}",
+            loader=lambda: bybit_client.get_kline(
+                symbol=instrument["symbol"],
+                category=category,
+                interval=interval,
+                limit=days
+            ),
+            ttl_seconds=CHART_CACHE_TTL_SECONDS
+        )
+    except Exception:
+        raise_crypto_provider_unavailable()
 
     chart = [format_chart_item(item) for item in raw_chart]
     chart.reverse()

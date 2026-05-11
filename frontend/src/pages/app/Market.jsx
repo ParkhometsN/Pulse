@@ -7,12 +7,15 @@ import MarketCardBot from "../../components/ui/marketCard";
 import CointButtonMarket from "../../components/ui/cointmarketButton";
 import CoinIcon from "../../components/ui/coinIcon";
 import api from "../../lib/api";
+import { readCachedValue, writeCachedValue } from "../../lib/clientCache";
 import LoaderAnimation from "../../components/ui/loaderAnimation";
 import { useNavigate } from "react-router-dom";
 
 const ITEMS_PER_PAGE = 15;
-const MARKET_REFRESH_INTERVAL = 3000;
+const MARKET_REFRESH_INTERVAL = 15000;
 const FAVORITES_STORAGE_KEY = "pulse_market_favorites";
+const MARKET_CACHE_MAX_AGE = 1000 * 60 * 5;
+const marketCacheKey = (type, page) => `pulse:market:${type}:page:${page}:v1`;
 
 const getInitialFavorites = () => {
   try {
@@ -27,17 +30,25 @@ const getInitialFavorites = () => {
 
 export default function Market() {
   const [activePage, setActivePage] = useState("strategies");
-  const [currencies, setCurrencies] = useState([]);
+  const [currencies, setCurrencies] = useState(
+    () => readCachedValue(marketCacheKey("crypto", 1), MARKET_CACHE_MAX_AGE)?.items || []
+  );
   const [currenciesError, setCurrenciesError] = useState("");
-  const [isCurrenciesLoading, setIsCurrenciesLoading] = useState(true);
-  const [stocks, setStocks] = useState([]);
+  const [isCurrenciesLoading, setIsCurrenciesLoading] = useState(currencies.length === 0);
+  const [stocks, setStocks] = useState(
+    () => readCachedValue(marketCacheKey("stocks", 1), MARKET_CACHE_MAX_AGE)?.items || []
+  );
   const [stocksError, setStocksError] = useState("");
-  const [isStocksLoading, setIsStocksLoading] = useState(true);
+  const [isStocksLoading, setIsStocksLoading] = useState(stocks.length === 0);
   const [searchQuery, setSearchQuery] = useState("");
   const [cryptoPage, setCryptoPage] = useState(1);
   const [stocksPage, setStocksPage] = useState(1);
-  const [cryptoTotal, setCryptoTotal] = useState(0);
-  const [stocksTotal, setStocksTotal] = useState(0);
+  const [cryptoTotal, setCryptoTotal] = useState(
+    () => readCachedValue(marketCacheKey("crypto", 1), MARKET_CACHE_MAX_AGE)?.total || 0
+  );
+  const [stocksTotal, setStocksTotal] = useState(
+    () => readCachedValue(marketCacheKey("stocks", 1), MARKET_CACHE_MAX_AGE)?.total || 0
+  );
   const [favorites, setFavorites] = useState(getInitialFavorites);
   const [searchIndex, setSearchIndex] = useState([]);
   const [isSearchFocused, setIsSearchFocused] = useState(false);
@@ -435,6 +446,13 @@ export default function Market() {
 
   const fetchCurrency = useCallback(() => {
     cryptoAbortRef.current?.abort();
+    const cachedPage = readCachedValue(marketCacheKey("crypto", cryptoPage), MARKET_CACHE_MAX_AGE);
+
+    if (cachedPage) {
+      setCurrencies(cachedPage.items || []);
+      setCryptoTotal(cachedPage.total || 0);
+      setIsCurrenciesLoading(false);
+    }
 
     const controller = new AbortController();
     const requestId = cryptoRequestIdRef.current + 1;
@@ -458,8 +476,14 @@ export default function Market() {
         const data = Array.isArray(response.data)
           ? response.data
           : response.data.items || [];
-        setCurrencies(data.map(normalizeCurrency));
-        setCryptoTotal(response.data.total || data.length);
+        const nextCurrencies = data.map(normalizeCurrency);
+        const nextTotal = response.data.total || data.length;
+        setCurrencies(nextCurrencies);
+        setCryptoTotal(nextTotal);
+        writeCachedValue(marketCacheKey("crypto", cryptoPage), {
+          items: nextCurrencies,
+          total: nextTotal,
+        });
         setCurrenciesError("");
       })
       .catch((error) => {
@@ -467,7 +491,6 @@ export default function Market() {
           return;
         }
 
-        setCurrencies([]);
         setCurrenciesError("Не удалось загрузить криптовалюты");
       })
       .finally(() => {
@@ -481,6 +504,13 @@ export default function Market() {
 
   const fetchStocks = useCallback(() => {
     stocksAbortRef.current?.abort();
+    const cachedPage = readCachedValue(marketCacheKey("stocks", stocksPage), MARKET_CACHE_MAX_AGE);
+
+    if (cachedPage) {
+      setStocks(cachedPage.items || []);
+      setStocksTotal(cachedPage.total || 0);
+      setIsStocksLoading(false);
+    }
 
     const controller = new AbortController();
     const requestId = stocksRequestIdRef.current + 1;
@@ -504,8 +534,14 @@ export default function Market() {
         const data = Array.isArray(response.data)
           ? response.data
           : response.data.items || [];
-        setStocks(data.map(normalizeStock));
-        setStocksTotal(response.data.total || data.length);
+        const nextStocks = data.map(normalizeStock);
+        const nextTotal = response.data.total || data.length;
+        setStocks(nextStocks);
+        setStocksTotal(nextTotal);
+        writeCachedValue(marketCacheKey("stocks", stocksPage), {
+          items: nextStocks,
+          total: nextTotal,
+        });
         setStocksError("");
       })
       .catch((error) => {
@@ -513,7 +549,6 @@ export default function Market() {
           return;
         }
 
-        setStocks([]);
         setStocksError("Не удалось загрузить акции");
       })
       .finally(() => {
@@ -744,7 +779,7 @@ export default function Market() {
       return;
     }
 
-    fetchCurrency();
+    const initialFetchTimer = window.setTimeout(fetchCurrency, 0);
 
     const interval = setInterval(() => {
       if (document.hidden) {
@@ -755,6 +790,7 @@ export default function Market() {
     }, MARKET_REFRESH_INTERVAL);
 
     return () => {
+      window.clearTimeout(initialFetchTimer);
       clearInterval(interval);
       cryptoAbortRef.current?.abort();
     };
@@ -766,7 +802,7 @@ export default function Market() {
       return;
     }
 
-    fetchStocks();
+    const initialFetchTimer = window.setTimeout(fetchStocks, 0);
 
     const interval = setInterval(() => {
       if (document.hidden) {
@@ -777,6 +813,7 @@ export default function Market() {
     }, MARKET_REFRESH_INTERVAL);
 
     return () => {
+      window.clearTimeout(initialFetchTimer);
       clearInterval(interval);
       stocksAbortRef.current?.abort();
     };

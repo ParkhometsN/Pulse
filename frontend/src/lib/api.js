@@ -11,12 +11,9 @@ const api = axios.create({
   },
 });
 
-// Добавляем перехватчик для обработки ошибок
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    // Можно добавить глобальную обработку ошибок
-    console.error('API Error:', error);
     return Promise.reject(error);
   }
 );

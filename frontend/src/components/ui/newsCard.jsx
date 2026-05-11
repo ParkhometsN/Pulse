@@ -1,77 +1,119 @@
-import React, { useState, useRef, useEffect } from 'react';
 import { Link } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
 
-export default function NewsCard({ text }) {
+const formatNewsDate = (value) => {
+    if (!value) {
+        return "недавно";
+    }
+
+    return new Intl.DateTimeFormat("ru-RU", {
+        day: "numeric",
+        month: "short",
+        hour: "2-digit",
+        minute: "2-digit",
+    }).format(new Date(value));
+};
+
+export default function NewsCard({ news }) {
     const [isExpanded, setIsExpanded] = useState(false);
     const [isLongText, setIsLongText] = useState(false);
     const textRef = useRef(null);
-
-    // Если text не передан через пропсы, используем этот длинный текст для теста
-    const displayText = text || ' Судья санкционировал перевод 71 млн долларов в ETH в пользу Aave, поскольку процесс возврата rsETH вступает в заключительную фазу Федеральный судья США санкционировал перевод примерно 30 765 ETH на сумму около 71 млн долларов на кошелек, контролируемый Aave, устранив тем самым последнее юридическое препятствие в рамках самой сложной на сегодняшний день операции по возвращению средств в сфере децентрализованных финансов. 9 мая судья Маргарет Гарнетт вынесла постановление, изменяющее ранее наложенный арест активов, разрешив Совету безопасности Arbitrum перевести примерно 30 765 ETH на сумму около 71 млн долларов на адрес кошелька, контролируемого Aave LLC. Это постановление также разрешает перевод дополнительных средств.';
+    const displayText = news?.summary || "";
+    const hasExpandableText = isLongText || displayText.length > 180;
 
     useEffect(() => {
-        if (textRef.current) {
-            const lineHeight = parseInt(getComputedStyle(textRef.current).lineHeight);
-            const maxHeight = lineHeight * 7; // 7 строк
-            const scrollHeight = textRef.current.scrollHeight;
-            const isLong = scrollHeight > maxHeight;
-            setIsLongText(isLong);
-            
-            // Отладка - проверьте в консоли браузера
-            console.log('lineHeight:', lineHeight);
-            console.log('maxHeight:', maxHeight);
-            console.log('scrollHeight:', scrollHeight);
-            console.log('isLongText:', isLong);
+        const textNode = textRef.current;
+
+        if (!displayText || !textNode) {
+            return undefined;
         }
+
+        const measureText = () => {
+            const computedStyle = getComputedStyle(textNode);
+            const lineHeight = parseFloat(computedStyle.lineHeight) || 22;
+            const maxHeight = lineHeight * 7; // 7 строк
+            const clone = textNode.cloneNode(true);
+
+            clone.className = "text-container expanded";
+            clone.style.position = "absolute";
+            clone.style.visibility = "hidden";
+            clone.style.pointerEvents = "none";
+            clone.style.height = "auto";
+            clone.style.width = `${textNode.clientWidth}px`;
+            clone.style.left = "-9999px";
+            textNode.parentElement.appendChild(clone);
+
+            const isLong = clone.scrollHeight > maxHeight || displayText.length > 180;
+            clone.remove();
+
+            setIsLongText(isLong);
+        };
+        const frameId = window.requestAnimationFrame(measureText);
+
+        return () => window.cancelAnimationFrame(frameId);
     }, [displayText]); // ← важно: зависимость от displayText, а не от text
 
     return (
         <div className="containerNewCard">
             <div className="containerCardNews">
                 <div className="upNews">
-                    <a href="#" className='websiteLink'><h5>Binance.com</h5></a>
-                    <p style={{opacity: 0.5, fontSize: '13px' }}>сегодня в 10:58</p>
+                    <a href={news?.url} target="_blank" rel="noreferrer" className='websiteLink'>
+                        <h5>{news?.sourceSite || news?.sourceName || "Источник"}</h5>
+                    </a>
+                    <p style={{opacity: 0.5, fontSize: '13px' }}>{formatNewsDate(news?.publishedAt)}</p>
                 </div>
-                <div className="bannerNewsImg">
-                    <img src="https://news.bitcoin.com/_next/image/?url=https%3A%2F%2Fstatic.news.bitcoin.com%2Fwp-content%2Fuploads%2F2026%2F05%2Fjudge-clears-71m-eth-transfer-to-aave-as-rseth-recovery-enters-final-phase-1.jpg&w=1920&q=75" alt="bannerNews" />
+                {news?.image ? (
+                    <div className="bannerNewsImg">
+                        <img
+                            src={news.image}
+                            alt={news.title}
+                            onError={(event) => {
+                                event.currentTarget.closest(".bannerNewsImg")?.classList.add("bannerNewsImg_hidden");
+                            }}
+                        />
+                    </div>
+                ) : null}
+                <div className="newsTitleText">
+                    <h3>{news?.title}</h3>
                 </div>
-                <div className="text-block">
-                    <div className="text-wrapper">
-                        <div
-                            ref={textRef}
-                            className={`text-container ${!isExpanded ? 'collapsed' : 'expanded'}`}
-                        >
-                            {displayText}
-                        </div>
-                        {/* Кнопка "ещё" - появляется если текст длинный И НЕ развернут */}
-                        {isLongText && !isExpanded && (
-                            <button 
-                                onClick={() => setIsExpanded(true)} 
-                                className="toggle-btn inline-btn"
+                {displayText ? (
+                    <div className="text-block">
+                        <div className="text-wrapper">
+                            <div
+                                ref={textRef}
+                                className={`text-container ${!isExpanded ? 'collapsed' : 'expanded'}`}
                             >
-                                ещё
-                            </button>
+                                {displayText}
+                            </div>
+                        </div>
+                        {hasExpandableText && (
+                            <div className="news_text_actions">
+                                <button
+                                    onClick={() => setIsExpanded((value) => !value)}
+                                    className="news_text_toggle"
+                                >
+                                    {isExpanded ? "скрыть" : "ещё"}
+                                </button>
+                            </div>
                         )}
                     </div>
-                    {/* Кнопка "свернуть" - появляется если текст развернут */}
-                    {isExpanded && (
-                        <button 
-                            onClick={() => setIsExpanded(false)} 
-                            className="toggle-btn closeBitn"
-                        >
-                            свернуть
-                        </button>
-                    )}
-                </div>
-                <div className="coinlist">
-                    <Link to='app/market'>
-                        <div className="coinList">
-                            <img src="https://s2.coinmarketcap.com/static/img/coins/64x64/1027.png" alt="" />
-                            <p>Ethereum</p>
-                            <p style={{color: 'var(--green)'}}>3.75%</p>
-                        </div>
-                    </Link>
-                </div>
+                ) : null}
+                {news?.relatedAssets?.length ? (
+                    <div className="coinlist">
+                        {news.relatedAssets.map((asset) => (
+                            <Link
+                                key={`${news.id}-${asset.symbol}`}
+                                to={`/app/market/coin-page?type=${asset.type}&symbol=${encodeURIComponent(asset.routeSymbol || asset.symbol)}`}
+                            >
+                                <div className="coinList">
+                                    {asset.icon ? <img src={asset.icon} alt="" /> : null}
+                                    <p>{asset.name}</p>
+                                    <p style={{color: 'var(--green)'}}>{asset.symbol}</p>
+                                </div>
+                            </Link>
+                        ))}
+                    </div>
+                ) : null}
             </div>
         </div>
     );

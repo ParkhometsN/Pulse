@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from src.router import router as router_crypto
 from src.stocks_router import router as router_stocks
+from src.news_router import router as router_news
 from src.init import bybit_client, coingecko_client, moex_client
 
 
@@ -20,6 +21,7 @@ app = FastAPI(lifespan=lifespan)
 
 app.include_router(router_crypto)
 app.include_router(router_stocks)
+app.include_router(router_news)
 
 # Health check endpoint
 @app.get("/health")

@@ -11,8 +11,15 @@ export default function LoaderAnimation({
             aria-label={label}
             style={{
                 minHeight: height,
+                height,
                 borderRadius: rounded,
             }}
-        />
+        >
+            <span className="loaderAnimation_glow" aria-hidden="true" />
+            <span className="loaderAnimation_line loaderAnimation_lineLarge" aria-hidden="true" />
+            <span className="loaderAnimation_line loaderAnimation_lineMedium" aria-hidden="true" />
+            <span className="loaderAnimation_line loaderAnimation_lineSmall" aria-hidden="true" />
+            <span className="loaderAnimation_orb" aria-hidden="true" />
+        </div>
     )
 }
