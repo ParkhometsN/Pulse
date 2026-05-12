@@ -8,6 +8,7 @@
   font-family: inherit;
   transition: all 0.3s ease;
   cursor: pointer;
+  -webkit-text-size-adjust: 100%;
 }
 
 .input::-webkit-search-decoration,
@@ -104,6 +105,13 @@
   padding-left: 48px !important;
 }
 @media screen and (max-width: 574px){
+  .input,
+  input,
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
+
   .input--market {
     border-radius: 30px;
   }

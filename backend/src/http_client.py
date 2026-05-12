@@ -93,6 +93,21 @@ class BybitHTTPClient:
 
         return result.get("list", [])
 
+    async def get_orderbook(
+        self,
+        symbol: str,
+        category: str = "spot",
+        limit: int = 50
+    ):
+        return await self._get(
+            "/v5/market/orderbook",
+            params={
+                "category": category,
+                "symbol": symbol.upper(),
+                "limit": limit
+            }
+        )
+
     async def close(self):
         if self._session and not self._session.closed:
             await self._session.close()

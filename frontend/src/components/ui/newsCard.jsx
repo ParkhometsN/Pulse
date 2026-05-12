@@ -14,12 +14,13 @@ const formatNewsDate = (value) => {
     }).format(new Date(value));
 };
 
-export default function NewsCard({ news }) {
+export default function NewsCard({ news, isSeen = false, onSeen }) {
     const [isExpanded, setIsExpanded] = useState(false);
     const [isLongText, setIsLongText] = useState(false);
+    const cardRef = useRef(null);
     const textRef = useRef(null);
     const displayText = news?.summary || "";
-    const hasExpandableText = isLongText || displayText.length > 180;
+    const hasExpandableText = isLongText;
 
     useEffect(() => {
         const textNode = textRef.current;
@@ -43,18 +44,63 @@ export default function NewsCard({ news }) {
             clone.style.left = "-9999px";
             textNode.parentElement.appendChild(clone);
 
-            const isLong = clone.scrollHeight > maxHeight || displayText.length > 180;
+            const isLong = clone.scrollHeight > maxHeight + 2;
             clone.remove();
 
             setIsLongText(isLong);
         };
-        const frameId = window.requestAnimationFrame(measureText);
 
-        return () => window.cancelAnimationFrame(frameId);
-    }, [displayText]); // ← важно: зависимость от displayText, а не от text
+        const frameId = window.requestAnimationFrame(measureText);
+        const resizeObserver = new ResizeObserver(() => {
+            window.requestAnimationFrame(measureText);
+        });
+
+        resizeObserver.observe(textNode);
+
+        return () => {
+            window.cancelAnimationFrame(frameId);
+            resizeObserver.disconnect();
+        };
+    }, [displayText]);
+
+    useEffect(() => {
+        const cardNode = cardRef.current;
+
+        if (!cardNode || isSeen || !news?.id || !onSeen) {
+            return undefined;
+        }
+
+        let seenTimer = null;
+        const observer = new IntersectionObserver(
+            ([entry]) => {
+                if (entry.isIntersecting && entry.intersectionRatio >= 0.55) {
+                    seenTimer = window.setTimeout(() => onSeen(news.id), 900);
+                    return;
+                }
+
+                if (seenTimer) {
+                    window.clearTimeout(seenTimer);
+                    seenTimer = null;
+                }
+            },
+            {
+                threshold: [0, 0.55, 1],
+            }
+        );
+
+        observer.observe(cardNode);
+
+        return () => {
+            if (seenTimer) {
+                window.clearTimeout(seenTimer);
+            }
+
+            observer.disconnect();
+        };
+    }, [isSeen, news?.id, onSeen]);
 
     return (
-        <div className="containerNewCard">
+        <div ref={cardRef} className={`containerNewCard ${isSeen ? "is_seen_news" : "is_unseen_news"}`}>
             <div className="containerCardNews">
                 <div className="upNews">
                     <a href={news?.url} target="_blank" rel="noreferrer" className='websiteLink'>
@@ -89,8 +135,10 @@ export default function NewsCard({ news }) {
                         {hasExpandableText && (
                             <div className="news_text_actions">
                                 <button
+                                    type="button"
                                     onClick={() => setIsExpanded((value) => !value)}
                                     className="news_text_toggle"
+                                    aria-expanded={isExpanded}
                                 >
                                     {isExpanded ? "скрыть" : "ещё"}
                                 </button>

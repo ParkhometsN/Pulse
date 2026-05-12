@@ -7,6 +7,7 @@ import { readCachedValue, writeCachedValue } from "../../lib/clientCache";
 
 const NEWS_PAGE_SIZE = 5;
 const NEWS_CACHE_KEY = "pulse:news:feed:v1";
+const NEWS_SEEN_KEY = "pulse:news:seen:v1";
 const MARKET_MOOD_CACHE_KEY = "pulse:news:market-mood:v1";
 const NEWS_CACHE_MAX_AGE = 1000 * 60 * 30;
 const MARKET_MOOD_CACHE_MAX_AGE = 1000 * 60 * 10;
@@ -106,6 +107,7 @@ const getInitialNewsFeed = () => readCachedValue(NEWS_CACHE_KEY, NEWS_CACHE_MAX_
 
 export default function News() {
   const [newsItems, setNewsItems] = useState(() => getInitialNewsFeed().items);
+  const [seenNewsIds, setSeenNewsIds] = useState(() => readCachedValue(NEWS_SEEN_KEY, Infinity) || []);
   const [marketMood, setMarketMood] = useState(
     () => readCachedValue(MARKET_MOOD_CACHE_KEY, MARKET_MOOD_CACHE_MAX_AGE) || DEFAULT_MARKET_MOOD
   );
@@ -116,6 +118,23 @@ export default function News() {
   const offsetRef = useRef(newsItems.length);
   const hasMoreRef = useRef(hasMore);
   const isLoadingRef = useRef(false);
+
+  const markNewsAsSeen = useCallback((newsId) => {
+    if (!newsId) {
+      return;
+    }
+
+    setSeenNewsIds((currentIds) => {
+      if (currentIds.includes(newsId)) {
+        return currentIds;
+      }
+
+      const nextIds = [newsId, ...currentIds].slice(0, 300);
+      writeCachedValue(NEWS_SEEN_KEY, nextIds);
+
+      return nextIds;
+    });
+  }, []);
 
   const loadNews = useCallback(async ({ refresh = false } = {}) => {
     if (isLoadingRef.current || !hasMoreRef.current) {
@@ -129,7 +148,7 @@ export default function News() {
     }
 
     isLoadingRef.current = true;
-    setIsLoading(newsItems.length === 0);
+    setIsLoading(true);
     setError("");
 
     try {
@@ -165,10 +184,7 @@ export default function News() {
         return nextItems;
       });
 
-      if (!refresh) {
-        hasMoreRef.current = nextHasMore;
-      }
-
+      hasMoreRef.current = nextHasMore;
       setHasMore(hasMoreRef.current);
     } catch {
       if (newsItems.length === 0) {
@@ -307,7 +323,12 @@ export default function News() {
               <div className="news_blcok">
                 <div className="newsListBlock">
                   {newsItems.map((news) => (
-                    <NewsCard key={news.id} news={news} />
+                    <NewsCard
+                      key={news.id}
+                      news={news}
+                      isSeen={seenNewsIds.includes(news.id)}
+                      onSeen={markNewsAsSeen}
+                    />
                   ))}
 
                   {isLoading && newsItems.length === 0 ? <NewsListLoader /> : null}

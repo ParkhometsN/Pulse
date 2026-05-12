@@ -85,9 +85,9 @@
 }
 .redLine,
 .greenLine{
-    width: 50px;
-    height: 10px;
-    border-radius: 8px;
+    height: 100%;
+    border-radius: 999px;
+    transition: width 0.28s ease;
 }
 .fnsizw{
     font-size: 14px;
@@ -95,8 +95,14 @@
 
 .moodIndication{
     display: flex;
-    gap: 8px;
+    gap: 0;
     align-items: center;
+    width: 128px;
+    height: 10px;
+    overflow: hidden;
+    border-radius: 999px;
+    background-color: var(--black-s);
+    border: 1px solid var(--black-t);
 }
 .redLine{
     background-color: var(--red);
@@ -139,6 +145,7 @@
 }
 
 .moodCoim{
+    align-items: center;
     display: flex ;
     gap: 10px;
     justify-content: space-between ;
@@ -367,9 +374,27 @@
 .chartUserContainer{
     gap: 10px;
     display: flex;
+    width: 100%;
+    align-items: stretch;
+}
+.usV{
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-width: 0;
+}
+.chart,
+.chartuser{
+    width: 100%;
+    min-width: 0;
+}
+.chart{
+    flex: 1 1 auto;
+    display: flex;
+    min-height: 360px;
 }
 .ContainerRightINF{
-    min-width: 440px;
+    min-width: 0;
 }
 .coin_tab_card p,
 .coin_tab_panel p{
@@ -380,6 +405,124 @@
 
 .coin_info_text{
     justify-content: flex-start;
+}
+
+.coin_info_long{
+    align-items: stretch;
+    gap: 18px;
+}
+
+.coin_info_hero{
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 16px;
+    border-radius: 16px;
+    background-color: var(--black);
+    border: 2px solid var(--black-t);
+}
+
+.coin_info_hero h3{
+    color: white;
+    font-size: 26px;
+    font-weight: 600;
+    padding: 6px 0;
+}
+
+.coin_info_hero span,
+.coin_info_article p,
+.coin_asset_news_header span{
+    color: var(--gray);
+    font-size: 14px;
+    line-height: 1.45;
+}
+
+.coin_info_sentiment{
+    min-width: 170px;
+    padding: 12px;
+    border-radius: 14px;
+    border: 1px solid var(--black-t);
+    background-color: var(--black-s);
+}
+
+.coin_info_sentiment span,
+.coin_info_metric span{
+    color: var(--gray);
+    font-size: 12px;
+}
+
+.coin_info_sentiment p{
+    padding-top: 5px;
+    color: var(--green);
+    font-size: 16px;
+    font-weight: 600;
+}
+
+.coin_info_grid{
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.coin_info_metric{
+    padding: 14px;
+    border-radius: 14px;
+    border: 1px solid var(--black-t);
+    background-color: var(--black);
+}
+
+.coin_info_metric p{
+    padding-top: 6px;
+    color: white;
+    font-size: 15px;
+    font-weight: 600;
+}
+
+.coin_info_article{
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 16px;
+    border-radius: 16px;
+    border: 2px solid var(--black-t);
+    background-color: var(--black);
+}
+
+.coin_asset_news_content{
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.coin_asset_news_header{
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 14px;
+    border-radius: 16px;
+    border: 2px solid var(--black-t);
+    background-color: var(--black);
+}
+
+.coin_asset_news_list{
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.coin_asset_news_list .containerNewCard{
+    width: 100%;
+}
+
+.coin_asset_news_empty{
+    align-items: flex-start;
+    min-height: 140px;
+}
+
+.coin_asset_news_loader{
+    width: 100%;
 }
 
 .coin_tab_title{
@@ -393,10 +536,10 @@
 }
 
 .ContainerRightINF{
-    width: 100%;
-    height: 100%;
+    height: auto;
     display: flex;
-    align-items: center;
+    flex-direction: column;
+    align-items: stretch;
     gap: 10px;
 }
 .GlassOfBuySell{
@@ -412,6 +555,7 @@
     display: flex;
     align-items: center;
     gap: 8px;
+    min-width: 0;
 }
 
 .priceBorder{
@@ -433,6 +577,15 @@
 }
 .priceBorder p{
     font-size: 13px;
+}
+
+.orderbook_rub_price{
+    opacity: 0.5;
+    font-size: 13px;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .sellGlass,
@@ -475,11 +628,209 @@
 .PriceUSDC p,
 .PriceUSDCSell p{
     font-size: 14px;
+    transition: color 0.18s ease, opacity 0.18s ease;
+}
+
+.PriceUSDC p,
+.PriceUSDCSell p{
+    position: relative;
+    isolation: isolate;
+    min-width: 104px;
+    overflow: hidden;
+    border-radius: 7px;
+    padding: 2px 7px;
+}
+
+.glass_depth_row::before{
+    content: "";
+    position: absolute;
+    inset: 0 0 0 auto;
+    z-index: -1;
+    width: var(--depth, 0%);
+    border-radius: inherit;
+    opacity: 0.14;
+    transition: width 0.22s ease;
+    animation: glassDepthFlash 0.36s ease;
+}
+
+.glass_depth_row_bid::before{
+    background-color: var(--green);
+}
+
+.glass_depth_row_ask::before{
+    background-color: var(--red);
+}
+
+@keyframes glassDepthFlash{
+    0%{
+        opacity: 0.05;
+    }
+    45%{
+        opacity: 0.2;
+    }
+    100%{
+        opacity: 0.14;
+    }
 }
 .QTYBTC{
     display: flex;
     flex-direction: column;
     gap: 8px;
+}
+
+.trade_drawer{
+    padding: 0 10px 10px;
+    align-items: center;
+}
+
+.trade_drawer_panel{
+    width: min(100%, 800px);
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+}
+
+.trade_drawer_header{
+    padding: 14px 4px 8px !important;
+    width: 100%;
+}
+
+.trade_drawer_header [data-slot="drawer-title"]{
+    color: white;
+    font-size: 18px;
+}
+
+.trade_drawer_header [data-slot="drawer-description"]{
+    color: var(--gray);
+    line-height: 1.35;
+}
+
+.trade_drawer_body{
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 0 4px;
+    width: 100%;
+}
+
+.trade_side_switch{
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    padding: 6px;
+    border-radius: 16px;
+    border: 1px solid var(--black-t);
+    background-color: var(--black);
+}
+
+.trade_side_switch button{
+    min-height: 42px;
+    border: 0;
+    border-radius: 12px;
+    color: var(--gray);
+    background-color: transparent;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+.trade_side_switch button.active:first-child{
+    color: white;
+    background-color: var(--primary-blue);
+}
+
+.trade_side_switch button.active:last-child{
+    color: white;
+    background-color: var(--red);
+}
+
+.trade_balance_grid,
+.trade_result_card{
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.trade_balance_grid div,
+.trade_result_card div{
+    padding: 12px;
+    border-radius: 14px;
+    border: 1px solid var(--black-t);
+    background-color: var(--black);
+}
+
+.trade_result_card div:first-child{
+    grid-column: 1 / -1;
+}
+
+.trade_balance_grid span,
+.trade_result_card span,
+.trade_input_label span{
+    color: var(--gray);
+    font-size: 12px;
+}
+
+.trade_balance_grid p,
+.trade_result_card p{
+    padding-top: 5px;
+    color: white;
+    font-size: 15px;
+    font-weight: 600;
+}
+
+.trade_input_label{
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+}
+
+.trade_input_label input{
+    width: 100%;
+    min-height: 48px;
+    border-radius: 14px;
+    border: 1px solid var(--black-t);
+    background-color: var(--black);
+    color: white;
+    padding: 0 14px;
+    font-size: 16px;
+    outline: none;
+}
+
+.trade_input_label input:focus{
+    border-color: var(--primary-blue);
+}
+
+.trade_error,
+.trade_hint{
+    font-size: 12px;
+    line-height: 1.35;
+}
+
+.trade_error{
+    color: var(--red);
+}
+
+.trade_hint{
+    color: var(--gray);
+}
+
+.trade_drawer_footer{
+    padding: 12px 4px 4px !important;
+    width: 100%;
+}
+
+.trade_drawer .button--primary-sell{
+    background-color: var(--red);
+    color: white;
+    display: flex;
+    width: 100%;
+    border: 5px solid rgba(255, 59, 48, 0.22);
+    padding: 12px 24px;
+    border-radius: 30px;
+    align-items: center;
+    justify-content: center;
 }
 
 
@@ -515,11 +866,27 @@
     gap: 16px;
     flex-direction: column;
 }
+.chartUserContainer{
+    flex-direction: column;
+}
+.ContainerRightINF{
+    width: 100%;
+    flex: 1 1 auto;
+    min-width: 0;
+}
 .downBlockCoinPage{
     width: 100%;
 }
 .elemetsOfContriroll{
     width: 100%;
+}
+.coin_info_grid{
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.coin_info_hero,
+.coin_asset_news_header{
+    flex-direction: column;
+    align-items: stretch;
 }
 .midleBlockOfCoin {
     gap: 13px;
@@ -548,9 +915,7 @@
     display: none;
 }
 .redLine, .greenLine {
-width: 16vw;
-    height: 10px;
-    border-radius: 8px;
+    height: 100%;
 }
 .PriceBlock h1 {
         font-weight: 600;
@@ -618,6 +983,15 @@ width: 16vw;
     padding-top: 12px;
     align-items: center;
 }
+.coin_info_grid{
+    grid-template-columns: 1fr;
+}
+.coin_info_hero h3{
+    font-size: 22px;
+}
+.coin_info_sentiment{
+    min-width: 0;
+}
 .button--primary-buy {
     background-color: var(--primary-blue);
     color: white;
@@ -654,7 +1028,9 @@ width: 16vw;
     display: none;
 }
 .ContainerRightINF{
-    min-width: 100%;
+    width: 100%;
+    flex: 1 1 auto;
+    min-width: 0;
 }
 /* .chartuser_container{
     padding: 14px;

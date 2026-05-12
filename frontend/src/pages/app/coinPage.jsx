@@ -21,13 +21,18 @@ import LoaderAnimation from "../../components/ui/loaderAnimation";
 import Buttons from "../../components/UI/buttons";
 import CoinIcon from "../../components/ui/coinIcon";
 import TextAlert from "../../components/ui/TextAlert";
+import NewsCard from "@/components/ui/newsCard";
 
-const ASSET_REFRESH_INTERVAL = 15000;
+const ASSET_REFRESH_INTERVAL = 1000;
 const ASSET_CACHE_MAX_AGE = 1000 * 60 * 5;
 const CHART_CACHE_MAX_AGE = 1000 * 60 * 10;
+const ASSET_NEWS_CACHE_MAX_AGE = 1000 * 60 * 15;
 const assetCacheKey = (endpoint) => `pulse:asset:${endpoint}:v1`;
 const chartCacheKey = (key) => `pulse:asset-chart:${key}:v1`;
+const assetNewsCacheKey = (key) => `pulse:asset-news:${key}:v1`;
 const FAVORITES_STORAGE_KEY = "pulse_market_favorites";
+const NEWS_SEEN_KEY = "pulse:news:seen:v1";
+const ASSET_NEWS_PAGE_SIZE = 20;
 const CHART_RANGES = {
   "1D": { days: 1, interval: "60", stockInterval: 60, points: 24, showTime: true },
   "5D": { days: 5, interval: "60", stockInterval: 60, points: 120, showTime: true },
@@ -38,6 +43,45 @@ const CHART_RANGES = {
   "5Y": { days: 365 * 5, interval: "D", stockInterval: 24 },
   ALL: { all: true, interval: "D", stockInterval: 24 },
 };
+const USD_TO_RUB_RATE = 92;
+
+const getPriceDecimals = (value) => {
+  const number = Math.abs(Number(value));
+
+  if (!Number.isFinite(number) || number === 0) {
+    return 2;
+  }
+
+  if (number >= 1000) {
+    return 2;
+  }
+
+  if (number >= 100) {
+    return 3;
+  }
+
+  if (number >= 1) {
+    return 5;
+  }
+
+  if (number >= 0.01) {
+    return 6;
+  }
+
+  return 8;
+};
+
+const formatNumber = (value, maximumFractionDigits = getPriceDecimals(value)) => {
+  const number = Number(value);
+
+  if (!Number.isFinite(number)) {
+    return "0";
+  }
+
+  return number.toLocaleString("ru-RU", {
+    maximumFractionDigits,
+  });
+};
 
 const formatMoney = (value, currencySymbol) => {
   const number = Number(value);
@@ -46,9 +90,63 @@ const formatMoney = (value, currencySymbol) => {
     return `${currencySymbol}0`;
   }
 
-  return `${currencySymbol}${number.toLocaleString("ru-RU", {
-    maximumFractionDigits: 2,
-  })}`;
+  return `${currencySymbol}${formatNumber(number)}`;
+};
+
+const formatRubleEquivalent = (value, quoteCurrency) => {
+  const number = Number(value);
+
+  if (!Number.isFinite(number)) {
+    return "≈₽0";
+  }
+
+  const normalizedQuoteCurrency = String(quoteCurrency || "").toUpperCase();
+  const rubValue = normalizedQuoteCurrency === "RUB"
+    ? number
+    : number * USD_TO_RUB_RATE;
+
+  return `${normalizedQuoteCurrency === "RUB" ? "" : "≈"}${formatMoney(rubValue, "₽")}`;
+};
+
+const normalizeSearchText = (value) => String(value || "").trim().toLowerCase();
+
+const getAssetNewsAliases = (asset, symbol, shortName, assetName, baseCurrency) => {
+  return [
+    symbol,
+    asset?.symbol,
+    asset?.baseCoin,
+    asset?.shortName,
+    shortName,
+    assetName,
+    baseCurrency,
+  ]
+    .map(normalizeSearchText)
+    .filter(Boolean);
+};
+
+const newsMatchesAsset = (news, aliases) => {
+  if (!news || !aliases.length) {
+    return false;
+  }
+
+  const relatedAssets = Array.isArray(news.relatedAssets) ? news.relatedAssets : [];
+  const hasRelatedAsset = relatedAssets.some((relatedAsset) => {
+    const relatedValues = [
+      relatedAsset.symbol,
+      relatedAsset.routeSymbol,
+      relatedAsset.name,
+    ].map(normalizeSearchText);
+
+    return relatedValues.some((value) => value && aliases.includes(value));
+  });
+
+  if (hasRelatedAsset) {
+    return true;
+  }
+
+  const text = normalizeSearchText(`${news.title || ""} ${news.summary || ""}`);
+
+  return aliases.some((alias) => alias.length >= 3 && text.includes(alias));
 };
 
 const formatPercent = (value) => {
@@ -61,21 +159,24 @@ const formatSignedMoney = (value, currencySymbol) => {
   const number = Number(value) || 0;
   const sign = number > 0 ? "+" : number < 0 ? "-" : "";
 
-  return `${sign}${currencySymbol}${Math.abs(number).toLocaleString("ru-RU", {
-    maximumFractionDigits: 2,
-  })}`;
+  return `${sign}${currencySymbol}${formatNumber(Math.abs(number))}`;
 };
 
-const formatChartValue = (value, currencySymbol) => {
+const formatChartValue = (value, currencySymbol, options = {}) => {
   const number = Number(value);
 
   if (!Number.isFinite(number)) {
     return "-";
   }
 
-  return `${currencySymbol}${number.toLocaleString("ru-RU", {
-    maximumFractionDigits: 2,
-  })}`;
+  if (options.compact && Math.abs(number) >= 1000) {
+    return `${currencySymbol}${Intl.NumberFormat("ru-RU", {
+      notation: "compact",
+      maximumFractionDigits: 1,
+    }).format(number)}`;
+  }
+
+  return `${currencySymbol}${formatNumber(number, options.maximumFractionDigits ?? getPriceDecimals(number))}`;
 };
 
 const formatDateTime = (value) => {
@@ -178,13 +279,18 @@ const getInitialFavorites = () => {
 };
 
 function AssetChart({ data, currencySymbol, activeRange, currentPrice }) {
-  const height = 300;
+  const [chartSize, setChartSize] = useState({
+    width: 640,
+    height: 320,
+  });
+  const height = Math.max(300, chartSize.height);
   const padding = {
-    top: 18,
-    right: 18,
-    bottom: 22,
-    left: 18,
+    top: 14,
+    right: 96,
+    bottom: 34,
+    left: 12,
   };
+  const chartContainerRef = useRef(null);
   const scrollRef = useRef(null);
   const dragRef = useRef({
     active: false,
@@ -227,6 +333,42 @@ function AssetChart({ data, currencySymbol, activeRange, currentPrice }) {
   const rawMax = Math.max(...prices);
 
   useEffect(() => {
+    const element = chartContainerRef.current;
+
+    if (!element) {
+      return;
+    }
+
+    const updateChartSize = () => {
+      const rect = element.getBoundingClientRect();
+      const nextSize = {
+        width: Math.max(320, Math.round(rect.width || 640)),
+        height: Math.max(300, Math.round(rect.height || 320)),
+      };
+
+      setChartSize((currentSize) => {
+        if (
+          currentSize.width === nextSize.width &&
+          currentSize.height === nextSize.height
+        ) {
+          return currentSize;
+        }
+
+        return nextSize;
+      });
+    };
+
+    updateChartSize();
+
+    const resizeObserver = new ResizeObserver(updateChartSize);
+    resizeObserver.observe(element);
+
+    return () => {
+      resizeObserver.disconnect();
+    };
+  }, [chartData.length]);
+
+  useEffect(() => {
     const element = scrollRef.current;
 
     if (!element) {
@@ -247,10 +389,11 @@ function AssetChart({ data, currencySymbol, activeRange, currentPrice }) {
     );
   }
 
-  const pointWidth = CHART_RANGES[activeRange]?.showTime ? 14 : 34;
-  const width = Math.min(Math.max(760, chartData.length * pointWidth), 6200);
+  const pointWidth = CHART_RANGES[activeRange]?.showTime ? 13 : 30;
+  const width = Math.min(Math.max(chartSize.width, chartData.length * pointWidth), 6200);
   const chartHeight = height - padding.top - padding.bottom;
   const chartWidth = width - padding.left - padding.right;
+  const axisRight = width - padding.right;
   const rawRange = rawMax - rawMin;
   const visualPadding = rawRange > 0
     ? rawRange * 0.12
@@ -273,7 +416,7 @@ function AssetChart({ data, currencySymbol, activeRange, currentPrice }) {
   ) * chartHeight;
   const hasCurrentPrice = Number.isFinite(currentPriceNumber);
   const linePath = getLinePath(points);
-  const areaPath = `${linePath} L ${width - padding.right} ${height - padding.bottom} L ${padding.left} ${height - padding.bottom} Z`;
+  const areaPath = `${linePath} L ${axisRight} ${height - padding.bottom} L ${padding.left} ${height - padding.bottom} Z`;
   const firstPrice = points[0].close;
   const lastPrice = points[points.length - 1].close;
   const color = lastPrice >= firstPrice ? "#00e0a4" : "#ff3b30";
@@ -291,7 +434,7 @@ function AssetChart({ data, currencySymbol, activeRange, currentPrice }) {
 
     return points[pointIndex];
   });
-  const tooltipGoesLeft = hoveredPoint ? hoveredPoint.x > width - 210 : false;
+  const tooltipGoesLeft = hoveredPoint ? hoveredPoint.x > width - 226 : false;
   const tooltipTop = hoveredPoint
     ? Math.min(Math.max(hoveredPoint.y, 78), height - 64)
     : 0;
@@ -338,7 +481,7 @@ function AssetChart({ data, currencySymbol, activeRange, currentPrice }) {
   };
 
   return (
-    <div className="asset_chart">
+    <div className="asset_chart" ref={chartContainerRef}>
       <div
         className="asset_chart_scroll"
         ref={scrollRef}
@@ -350,11 +493,13 @@ function AssetChart({ data, currencySymbol, activeRange, currentPrice }) {
           setHoveredPoint(null);
         }}
       >
-        <div className="asset_chart_inner" style={{ width }}>
+        <div className="asset_chart_inner" style={{ width, minWidth: width, height }}>
           <svg
             className="asset_chart_svg"
+            width={width}
+            height={height}
             viewBox={`0 0 ${width} ${height}`}
-            preserveAspectRatio="none"
+            preserveAspectRatio="xMinYMin meet"
             onPointerMove={updateHoveredPoint}
           >
             <defs>
@@ -367,20 +512,43 @@ function AssetChart({ data, currencySymbol, activeRange, currentPrice }) {
               <line
                 key={line.label}
                 x1={padding.left}
-                x2={width - padding.right}
+                x2={axisRight}
                 y1={line.y}
                 y2={line.y}
                 className="asset_chart_grid_line"
               />
             ))}
+            {gridLines.map((line, index) => (
+              <text
+                key={`price-label-${line.label}-${index}`}
+                x={axisRight + 8}
+                y={line.y + 4}
+                className="asset_chart_axis_label asset_chart_price_label"
+              >
+                {formatChartValue(line.label, currencySymbol, { compact: true })}
+              </text>
+            ))}
+            {dateLabels.map((point, index) => (
+              <text
+                key={`date-label-${point?.time?.toISOString() || index}`}
+                x={point?.x || padding.left}
+                y={height - 9}
+                className="asset_chart_axis_label asset_chart_date_label"
+                textAnchor={index === 0 ? "start" : index === dateLabels.length - 1 ? "end" : "middle"}
+              >
+                {formatChartDate(point?.time, showTime)}
+              </text>
+            ))}
             {hasCurrentPrice && (
-              <line
-                x1={padding.left}
-                x2={width - padding.right}
-                y1={currentPriceY}
-                y2={currentPriceY}
-                className="asset_chart_current_price_line"
-              />
+              <>
+                <line
+                  x1={padding.left}
+                  x2={axisRight}
+                  y1={currentPriceY}
+                  y2={currentPriceY}
+                  className="asset_chart_current_price_line"
+                />
+              </>
             )}
             <path className="asset_chart_area" d={areaPath} fill={`url(#${gradientId})`} />
             <path
@@ -442,34 +610,212 @@ function AssetChart({ data, currencySymbol, activeRange, currentPrice }) {
               )}
             </div>
           )}
-
-          <div className="asset_chart_dates">
-            {dateLabels.map((point, index) => (
-              <span key={`${point?.time?.toISOString() || index}`}>
-                {formatChartDate(point?.time, showTime)}
-              </span>
-            ))}
-          </div>
         </div>
       </div>
+      {hasCurrentPrice && (
+        <span
+          className="asset_chart_fixed_price"
+          style={{ top: `${clamp((currentPriceY / height) * 100, 7, 93)}%` }}
+        >
+          {formatChartValue(currentPriceNumber, currencySymbol)}
+        </span>
+      )}
+    </div>
+  );
+}
 
-      <div className="asset_chart_prices">
-        {hasCurrentPrice && (
-          <span
-            className="asset_chart_current_price_badge"
-            style={{
-              top: currentPriceY,
-            }}
-          >
-            {formatChartValue(currentPriceNumber, currencySymbol)}
-          </span>
-        )}
-        {priceLabels.map((label, index) => (
-          <span key={`${label}-${index}`}>
-            {currencySymbol}
-            {label.toLocaleString("ru-RU", { maximumFractionDigits: 2 })}
-          </span>
-        ))}
+const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
+
+const parseOrderbookNumber = (value) => {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  const number = Number(String(value).replace(",", "."));
+
+  return Number.isFinite(number) ? number : null;
+};
+
+const normalizeOrderbookRow = (row) => {
+  if (Array.isArray(row)) {
+    const price = parseOrderbookNumber(row[0]);
+    const quantity = parseOrderbookNumber(row[1]);
+
+    return price && quantity ? { price, quantity } : null;
+  }
+
+  if (!row || typeof row !== "object") {
+    return null;
+  }
+
+  const price = parseOrderbookNumber(
+    row.price ?? row.PRICE ?? row.Price ?? row.p
+  );
+  const quantity = parseOrderbookNumber(
+    row.quantity ?? row.QUANTITY ?? row.qty ?? row.QTY ?? row.volume ?? row.VOLUME ?? row.size
+  );
+
+  return price && quantity ? { price, quantity } : null;
+};
+
+const getOrderbookSide = (row, currentPrice) => {
+  const rawSide = String(
+    row?.side ?? row?.SIDE ?? row?.BUYSELL ?? row?.buySell ?? row?.type ?? ""
+  ).toLowerCase();
+
+  if (["buy", "bid", "b", "покупка"].some((side) => rawSide.includes(side))) {
+    return "bid";
+  }
+
+  if (["sell", "ask", "s", "продажа"].some((side) => rawSide.includes(side))) {
+    return "ask";
+  }
+
+  const normalizedRow = normalizeOrderbookRow(row);
+
+  if (!normalizedRow || !Number.isFinite(currentPrice) || currentPrice <= 0) {
+    return null;
+  }
+
+  return normalizedRow.price <= currentPrice ? "bid" : "ask";
+};
+
+const normalizeOrderbook = (asset, currentPrice) => {
+  const rawOrderbook = asset?.orderbook;
+  const bidsSource = rawOrderbook?.b || rawOrderbook?.bids || rawOrderbook?.bid || [];
+  const asksSource = rawOrderbook?.a || rawOrderbook?.asks || rawOrderbook?.ask || [];
+  let bids = [];
+  let asks = [];
+
+  if (Array.isArray(bidsSource) || Array.isArray(asksSource)) {
+    bids = (Array.isArray(bidsSource) ? bidsSource : [])
+      .map(normalizeOrderbookRow)
+      .filter(Boolean);
+    asks = (Array.isArray(asksSource) ? asksSource : [])
+      .map(normalizeOrderbookRow)
+      .filter(Boolean);
+  }
+
+  if (!bids.length && !asks.length && Array.isArray(rawOrderbook)) {
+    rawOrderbook.forEach((row) => {
+      const normalizedRow = normalizeOrderbookRow(row);
+      const side = getOrderbookSide(row, currentPrice);
+
+      if (!normalizedRow || !side) {
+        return;
+      }
+
+      if (side === "bid") {
+        bids.push(normalizedRow);
+      } else {
+        asks.push(normalizedRow);
+      }
+    });
+  }
+
+  const bidPrice = parseOrderbookNumber(asset?.bidPrice);
+  const askPrice = parseOrderbookNumber(asset?.askPrice);
+  const fallbackQuantity = Math.max(parseOrderbookNumber(asset?.volume24h) || 0, 1);
+
+  if (!bids.length && bidPrice) {
+    bids = [{ price: bidPrice, quantity: fallbackQuantity }];
+  }
+
+  if (!asks.length && askPrice) {
+    asks = [{ price: askPrice, quantity: fallbackQuantity }];
+  }
+
+  bids = bids
+    .filter((row) => Number.isFinite(row.price) && Number.isFinite(row.quantity))
+    .sort((firstRow, secondRow) => secondRow.price - firstRow.price)
+    .slice(0, 12);
+
+  asks = asks
+    .filter((row) => Number.isFinite(row.price) && Number.isFinite(row.quantity))
+    .sort((firstRow, secondRow) => firstRow.price - secondRow.price)
+    .slice(0, 12);
+
+  const totalBid = bids.reduce((sum, row) => sum + row.quantity, 0);
+  const totalAsk = asks.reduce((sum, row) => sum + row.quantity, 0);
+
+  return {
+    bids,
+    asks,
+    totalBid,
+    totalAsk,
+    hasRows: Boolean(bids.length || asks.length),
+  };
+};
+
+function OrderBook({ orderbook, currentPrice, currencySymbol, baseCurrency, quoteCurrency }) {
+  const asks = orderbook.asks.slice(0, 7);
+  const bids = orderbook.bids.slice(0, 7);
+  const maxQuantity = Math.max(
+    ...asks.map((row) => row.quantity),
+    ...bids.map((row) => row.quantity),
+    1
+  );
+
+  const renderRows = (rows, keyPrefix, field, side) => {
+    const filledRows = rows.length
+      ? rows
+      : Array.from({ length: 7 }, () => null);
+
+    return filledRows.slice(0, 7).map((row, index) => {
+      const depth = row
+        ? clamp((row.quantity / maxQuantity) * 100, 5, 100)
+        : 0;
+      const isPriceField = field === "price";
+
+      return (
+        <p
+          key={`${keyPrefix}-${row?.price || index}`}
+          className={isPriceField ? `glass_depth_row glass_depth_row_${side}` : ""}
+          style={isPriceField ? { "--depth": `${depth}%` } : undefined}
+        >
+          {row
+            ? isPriceField
+              ? formatChartValue(row.price, currencySymbol)
+              : formatNumber(row.quantity, 6)
+            : "-"}
+        </p>
+      );
+    });
+  };
+
+  return (
+    <div className="GlassOfBuySell">
+      <div className="priceUpGlass">
+        <div className="priceBorder">
+          <p>{formatChartValue(currentPrice, currencySymbol)}</p>
+        </div>
+        <p className="orderbook_rub_price">
+          {formatRubleEquivalent(currentPrice, quoteCurrency)}
+        </p>
+      </div>
+
+      <div className="glassSellBuy">
+        <div className="buyGlass">
+          <div className="QTYBTC">
+            <p style={{ opacity: 0.5 }}>QTY({baseCurrency})</p>
+            {renderRows(bids, "bid-qty", "quantity", "bid")}
+          </div>
+          <div className="PriceUSDC">
+            <h5 style={{ opacity: 0.5 }}>Price({quoteCurrency})</h5>
+            {renderRows(bids, "bid-price", "price", "bid")}
+          </div>
+        </div>
+        <div className="lineHeight"></div>
+        <div className="sellGlass">
+          <div className="PriceUSDCSell">
+            <h5 style={{ opacity: 0.5 }}>Price({quoteCurrency})</h5>
+            {renderRows(asks, "ask-price", "price", "ask")}
+          </div>
+          <div className="QTYBTC">
+            <p style={{ opacity: 0.5 }}>QTY({baseCurrency})</p>
+            {renderRows(asks, "ask-qty", "quantity", "ask")}
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -606,6 +952,12 @@ export default function CoinPage() {
   const isCoinPageRoute = location.pathname.endsWith("/market/coin-page");
 
   const [textAlert, setTesxtAlert] = useState(false);
+  const [tradeSide, setTradeSide] = useState("buy");
+  const [tradeAmount, setTradeAmount] = useState("");
+  const [assetNews, setAssetNews] = useState([]);
+  const [isAssetNewsLoading, setIsAssetNewsLoading] = useState(false);
+  const [assetNewsError, setAssetNewsError] = useState("");
+  const [seenNewsIds, setSeenNewsIds] = useState(() => readCachedValue(NEWS_SEEN_KEY, Infinity) || []);
 
   const getTextAlert = () => {
     setTesxtAlert(true)
@@ -763,11 +1115,63 @@ export default function CoinPage() {
     : currentPrice / (1 + changePercent / 100);
   const todayChange = currentPrice - previousPrice;
   const todayChangeText = `${formatSignedMoney(todayChange, currencySymbol)} (${formatPercent(changePercent)})`;
+  const orderbook = useMemo(() => {
+    return normalizeOrderbook(asset, currentPrice);
+  }, [asset, currentPrice]);
   const sentiment = asset?.sentiment || asset?.mood;
-  const positiveMood = sentiment?.positive ?? sentiment?.bullish;
-  const negativeMood = sentiment?.negative ?? sentiment?.bearish;
-  const hasMood = Number.isFinite(Number(positiveMood)) && Number.isFinite(Number(negativeMood));
+  const derivedSentiment = useMemo(() => {
+    const directPositive = Number(sentiment?.positive ?? sentiment?.bullish);
+    const directNegative = Number(sentiment?.negative ?? sentiment?.bearish);
+
+    if (Number.isFinite(directPositive) && Number.isFinite(directNegative)) {
+      const total = directPositive + directNegative || 100;
+      const positive = Math.round((directPositive / total) * 100);
+
+      return {
+        positive: clamp(positive, 0, 100),
+        negative: clamp(100 - positive, 0, 100),
+      };
+    }
+
+    const totalDepth = orderbook.totalBid + orderbook.totalAsk;
+    const depthBias = totalDepth
+      ? ((orderbook.totalBid - orderbook.totalAsk) / totalDepth) * 24
+      : 0;
+    const momentumBias = clamp(changePercent * 1.8, -24, 24);
+    const positive = Math.round(clamp(50 + depthBias + momentumBias, 5, 95));
+
+    return {
+      positive,
+      negative: 100 - positive,
+    };
+  }, [changePercent, orderbook, sentiment]);
+  const positiveMood = derivedSentiment.positive;
+  const negativeMood = derivedSentiment.negative;
+  const hasMood = Boolean(asset);
+  const rawAvailableMoney = Number(asset?.availableMoney ?? asset?.availableBalance ?? 0);
+  const rawAvailableAssetAmount = Number(asset?.availableAssetAmount ?? asset?.positionAmount ?? 0);
+  const availableMoney = Number.isFinite(rawAvailableMoney) ? rawAvailableMoney : 0;
+  const availableAssetAmount = Number.isFinite(rawAvailableAssetAmount) ? rawAvailableAssetAmount : 0;
+  const tradeAmountNumber = Number(String(tradeAmount).replace(",", "."));
+  const normalizedTradeAmount = Number.isFinite(tradeAmountNumber) ? Math.max(tradeAmountNumber, 0) : 0;
+  const estimatedTradeQuantity = currentPrice > 0
+    ? normalizedTradeAmount / currentPrice
+    : 0;
+  const maxBuyQuantity = currentPrice > 0 ? availableMoney / currentPrice : 0;
+  const maxSellValue = availableAssetAmount * currentPrice;
+  const tradeButtonText = tradeSide === "buy"
+    ? `Купить ${shortName}`
+    : `Продать ${shortName}`;
+  const tradeAmountError = tradeSide === "buy" && normalizedTradeAmount > availableMoney
+    ? "Сумма больше доступных средств"
+    : tradeSide === "sell" && estimatedTradeQuantity > availableAssetAmount
+      ? "Количество больше позиции"
+      : "";
+  const assetNewsAliases = useMemo(() => {
+    return getAssetNewsAliases(asset, symbol, shortName, assetName, baseCurrency);
+  }, [asset, assetName, baseCurrency, shortName, symbol]);
   const favoriteSymbol = asset?.symbol || symbol;
+  const assetNewsKey = `${assetType}:${String(favoriteSymbol || symbol || "").toUpperCase()}`;
   const favoriteKey = `${assetType}:${String(favoriteSymbol || "").toUpperCase()}`;
   const isFavoriteAsset = favorites.some((item) => item.favoriteKey === favoriteKey);
 
@@ -816,6 +1220,23 @@ export default function CoinPage() {
     shortName,
   ]);
 
+  const markNewsAsSeen = useCallback((newsId) => {
+    if (!newsId) {
+      return;
+    }
+
+    setSeenNewsIds((currentIds) => {
+      if (currentIds.includes(newsId)) {
+        return currentIds;
+      }
+
+      const nextIds = [newsId, ...currentIds].slice(0, 300);
+      writeCachedValue(NEWS_SEEN_KEY, nextIds);
+
+      return nextIds;
+    });
+  }, []);
+
   const getRightColor = (value) => {
     if (value < 0) return 'var(--red)';
     if (value > 0) return 'var(--green)';
@@ -824,6 +1245,69 @@ export default function CoinPage() {
 
   const [activeButton, setActiveButton] = useState('Обзор');
   const isOverviewTab = activeButton === "Обзор";
+  useEffect(() => {
+    if (activeButton !== "Новости" || !assetNewsKey || !assetNewsAliases.length) {
+      return undefined;
+    }
+
+    const cachedNews = readCachedValue(assetNewsCacheKey(assetNewsKey), ASSET_NEWS_CACHE_MAX_AGE);
+    const controller = new AbortController();
+    let isActive = true;
+    const stateTimer = window.setTimeout(() => {
+      if (!isActive) {
+        return;
+      }
+
+      if (cachedNews) {
+        setAssetNews(cachedNews);
+      } else {
+        setAssetNews([]);
+      }
+
+      setIsAssetNewsLoading(true);
+      setAssetNewsError("");
+    }, 0);
+
+    api
+      .get("/news", {
+        params: {
+          limit: ASSET_NEWS_PAGE_SIZE,
+          offset: 0,
+        },
+        signal: controller.signal,
+      })
+      .then((response) => {
+        if (!isActive) {
+          return;
+        }
+
+        const items = response.data?.items || [];
+        const filteredItems = items
+          .filter((news) => newsMatchesAsset(news, assetNewsAliases))
+          .slice(0, 8);
+
+        setAssetNews(filteredItems);
+        writeCachedValue(assetNewsCacheKey(assetNewsKey), filteredItems);
+      })
+      .catch((error) => {
+        if (error.code === "ERR_CANCELED" || !isActive) {
+          return;
+        }
+
+        setAssetNewsError("Не получилось загрузить новости по активу");
+      })
+      .finally(() => {
+        if (isActive) {
+          setIsAssetNewsLoading(false);
+        }
+      });
+
+    return () => {
+      isActive = false;
+      window.clearTimeout(stateTimer);
+      controller.abort();
+    };
+  }, [activeButton, assetNewsAliases, assetNewsKey]);
   const chartKey = `${assetType}:${symbol}:${activeChartRange}`;
   const assetLoadedKey = requestState.endpoint === endpoint && requestState.asset
     ? endpoint
@@ -868,12 +1352,59 @@ export default function CoinPage() {
   }, [chartData]);
   const rangeStatsText = `${formatSignedMoney(selectedRangeStats.money, currencySymbol)} (${formatPercent(selectedRangeStats.percent)})`;
   const renderContent = useMemo(() => {
+    const assetKind = isStock ? "акция" : "криптовалюта";
+    const infoMetrics = [
+      { label: "Текущая цена", value: price },
+      { label: "Изменение за 24 часа", value: formatPercent(changePercent) },
+      { label: "Максимум 24ч", value: formatMoney(asset?.highPrice24h, currencySymbol) },
+      { label: "Минимум 24ч", value: formatMoney(asset?.lowPrice24h, currencySymbol) },
+      { label: "Объем 24ч", value: formatNumber(asset?.volume24h, 2) },
+      { label: "Оборот 24ч", value: formatMoney(asset?.turnover24h, currencySymbol) },
+      { label: "Лучшая покупка", value: formatMoney(asset?.bidPrice, currencySymbol) },
+      { label: "Лучшая продажа", value: formatMoney(asset?.askPrice, currencySymbol) },
+    ];
+
     if (activeButton === "Новости") {
       return (
-        <div className="coin_tab_content">
-          <div className="coin_tab_panel">
-            <p className="coin_tab_title">Новости</p>
-            <span>Новостей по этому активу пока нет</span>
+        <div className="coin_tab_content coin_asset_news_content">
+          <div className="coin_asset_news_header">
+            <div>
+              <p className="coin_tab_title">Новости по активу</p>
+              <span>
+                Подбираем материалы, где упоминается {assetName} или тикер {shortName}.
+              </span>
+            </div>
+            <Link to="/app/news">
+              <Buttons type="text">Вся лента</Buttons>
+            </Link>
+          </div>
+
+          <div className="coin_asset_news_list">
+            {assetNews.map((news) => (
+              <NewsCard
+                key={news.id}
+                news={news}
+                isSeen={seenNewsIds.includes(news.id)}
+                onSeen={markNewsAsSeen}
+              />
+            ))}
+
+            {isAssetNewsLoading ? (
+              <div className="coin_asset_news_loader">
+                <LoaderAnimation height={150} rounded="16px" />
+              </div>
+            ) : null}
+
+            {!isAssetNewsLoading && !assetNews.length ? (
+              <div className="coin_tab_panel coin_asset_news_empty">
+                <p className="coin_tab_title">Пока нет точных новостей</p>
+                <span>
+                  В общей ленте новости есть, но по текущему активу совпадений пока не нашлось.
+                </span>
+              </div>
+            ) : null}
+
+            {assetNewsError ? <div className="news_error">{assetNewsError}</div> : null}
           </div>
         </div>
       );
@@ -893,14 +1424,48 @@ export default function CoinPage() {
     if (activeButton === "Информация") {
       return (
         <div className="coin_tab_content">
-          <div className="coin_tab_panel coin_info_text">
-            <p className="coin_tab_title">Информация</p>
-            <span>
-              {assetName} ({shortName}) - {isStock ? "акция" : "криптовалюта"} с
-              тикером {asset?.symbol || symbol}. Текущая цена: {price}.
-              Валюта расчета: {quoteCurrency}. Статус: {asset?.status || "нет данных"}.
-              Изменение за 24 часа: {formatPercent(changePercent)}.
-            </span>
+          <div className="coin_tab_panel coin_info_text coin_info_long">
+            <div className="coin_info_hero">
+              <div>
+                <p className="coin_tab_title">О активе</p>
+                <h3>{assetName}</h3>
+                <span>
+                  {shortName} · {assetKind} · расчеты в {quoteCurrency}
+                </span>
+              </div>
+              <div className="coin_info_sentiment">
+                <span>Настроение</span>
+                <p>{positiveMood}% покупателей</p>
+              </div>
+            </div>
+
+            <div className="coin_info_grid">
+              {infoMetrics.map((item) => (
+                <div className="coin_info_metric" key={item.label}>
+                  <span>{item.label}</span>
+                  <p>{item.value}</p>
+                </div>
+              ))}
+            </div>
+
+            <div className="coin_info_article">
+              <p>
+                {assetName} ({shortName}) сейчас торгуется по цене {price}. За последние 24 часа
+                изменение составило {formatPercent(changePercent)}, а текущая динамика по выбранному
+                периоду: {rangeStatsText}. Эти данные помогают быстро понять, где находится актив:
+                в импульсе, коррекции или спокойном боковом движении.
+              </p>
+              <p>
+                {isStock
+                  ? "Для акций особенно важны ликвидность, обороты, корпоративные события, дивиденды, отчеты и общий фон российского рынка. Перед покупкой стоит смотреть не только цену, но и объем торгов, новости эмитента и состояние сектора."
+                  : "Для криптовалют особенно важны ликвидность пары, глубина стакана, волатильность, объем торгов и новостной фон вокруг сети или токена. Сильный перекос заявок в стакане может показывать краткосрочное давление покупателей или продавцов."}
+              </p>
+              <p>
+                Стакан справа показывает ближайшие заявки на покупку и продажу. Зеленая сторона
+                отражает спрос, красная - предложение. Чем шире заливка за ценой, тем больше объем
+                заявки относительно других уровней в текущем стакане.
+              </p>
+            </div>
           </div>
         </div>
       );
@@ -911,12 +1476,19 @@ export default function CoinPage() {
     activeButton,
     asset,
     assetName,
+    assetNews,
+    assetNewsError,
     changePercent,
+    currencySymbol,
+    isAssetNewsLoading,
     isStock,
+    markNewsAsSeen,
+    positiveMood,
     price,
     quoteCurrency,
+    rangeStatsText,
+    seenNewsIds,
     shortName,
-    symbol,
   ]);
 
   useEffect(() => {
@@ -1036,7 +1608,7 @@ export default function CoinPage() {
                   <div className="uPContainerPageCoin disabledCpinpage">
 
 
-                    <Link to ='/app/market'>
+                    <Link to={`/app/market?tab=${isStock ? "stocks" : "crypto"}`}>
                       <Buttons type='text'>
                           <p style={{opacity: 0.5}}>
                             {isStock ? "Акция " : "Криптовалюта "} 
@@ -1062,12 +1634,12 @@ export default function CoinPage() {
                               <path d="M0.75 11.7502L7.29003 5.27288L11.4621 9.40496C12.6683 7.05023 14.658 5.17992 17.0952 4.10984L19.75 2.93911M19.75 2.93911L13.9948 0.750244M19.75 2.93911L17.5409 8.63919" stroke="#00FFAA" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
                             </svg>
                           </span>
-                          {Number(positiveMood)}%
+                          {positiveMood}%
                         </p>
                         
                         <div className="moodIndication">
-                            <div className="greenLine"></div>
-                            <div className="redLine"></div>
+                            <div className="greenLine" style={{ width: `${positiveMood}%` }}></div>
+                            <div className="redLine" style={{ width: `${negativeMood}%` }}></div>
                         </div>
 
                         <p style={{color: 'var(--red)'}} className="bordeInf flex items-center gap-[5px]">
@@ -1076,7 +1648,7 @@ export default function CoinPage() {
                               <path d="M0.75 0.75L7.29003 7.22736L11.4621 3.09529C12.6683 5.45001 14.658 7.32033 17.0952 8.39041L19.75 9.56113M19.75 9.56113L13.9948 11.75M19.75 9.56113L17.5409 3.86105" stroke="#FF3B30" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
                             </svg>
                           </span>
-                          {Number(negativeMood)}%
+                          {negativeMood}%
                         </p>
                       </div>
                       
@@ -1157,7 +1729,8 @@ export default function CoinPage() {
 
                       
                       <Drawer>
-                        <DrawerTrigger asChild>
+                        <div className="ContwainerBagsAdd">
+                          <DrawerTrigger asChild>
                           <Buttons type='primary-buy' >
 
                             <div className="flex">
@@ -1172,25 +1745,111 @@ export default function CoinPage() {
                           </Buttons>
                         </DrawerTrigger>
 
-                        <DrawerContent className="bg-black-s text-white border border-black-t rounded-t-2xl">
-                          <center>
+                        <DrawerContent className="bg-black-s text-white border border-black-t rounded-t-2xl trade_drawer ">
+                          <div className="trade_drawer_panel">
+                            <center>
                             <div className="lineDrawer"></div>
-                          </center>
+                            </center>
 
-                          <DrawerHeader>
-                            <DrawerTitle>Are you absolutely sure?</DrawerTitle>
-                            <DrawerDescription>
-                              This action cannot be undone.
-                            </DrawerDescription>
-                          </DrawerHeader>
+                            <DrawerHeader className="trade_drawer_header">
+                              <DrawerTitle>Сделка с {shortName}</DrawerTitle>
+                              <DrawerDescription>
+                                Выберите действие и сумму. Итоговое исполнение зависит от стакана и подключенного брокера.
+                              </DrawerDescription>
+                            </DrawerHeader>
 
-                          <DrawerFooter>
-                            <Buttons>Submit</Buttons>
-                            <DrawerClose asChild>
-                              <Buttons>Cancel</Buttons>
-                            </DrawerClose>
-                          </DrawerFooter>
+                            <div className="trade_drawer_body">
+                              <div className="trade_side_switch">
+                                <button
+                                  type="button"
+                                  className={tradeSide === "buy" ? "active" : ""}
+                                  onClick={() => setTradeSide("buy")}
+                                  aria-pressed={tradeSide === "buy"}
+                                >
+                                  Купить
+                                </button>
+                                <button
+                                  type="button"
+                                  className={tradeSide === "sell" ? "active" : ""}
+                                  onClick={() => setTradeSide("sell")}
+                                  aria-pressed={tradeSide === "sell"}
+                                >
+                                  Продать
+                                </button>
+                              </div>
+
+                              <div className="trade_balance_grid">
+                                <div>
+                                  <span>Доступные деньги</span>
+                                  <p>{formatMoney(availableMoney, currencySymbol)}</p>
+                                </div>
+                                <div>
+                                  <span>В позиции</span>
+                                  <p>{formatNumber(availableAssetAmount, 8)} {baseCurrency}</p>
+                                </div>
+                              </div>
+
+                              <label className="trade_input_label">
+                                <span>Сумма сделки, {quoteCurrency}</span>
+                                <input
+                                  type="text"
+                                  inputMode="decimal"
+                                  value={tradeAmount}
+                                  onChange={(event) => setTradeAmount(event.target.value)}
+                                  placeholder="0"
+                                />
+                              </label>
+
+                              <div className="trade_result_card">
+                                <div>
+                                  <span>Текущая цена</span>
+                                  <p>{formatMoney(currentPrice, currencySymbol)}</p>
+                                </div>
+                                <div>
+                                  <span>{tradeSide === "buy" ? "Можно купить" : "Будет списано"}</span>
+                                  <p>
+                                    {formatNumber(estimatedTradeQuantity, 8)} {baseCurrency}
+                                  </p>
+                                </div>
+                                <div>
+                                  <span>{tradeSide === "buy" ? "Максимум к покупке" : "Максимум к продаже"}</span>
+                                  <p>
+                                    {tradeSide === "buy"
+                                      ? `${formatNumber(maxBuyQuantity, 8)} ${baseCurrency}`
+                                      : `${formatMoney(maxSellValue, currencySymbol)}`}
+                                  </p>
+                                </div>
+                              </div>
+
+                              {tradeAmountError ? (
+                                <p className="trade_error">{tradeAmountError}</p>
+                              ) : (
+                                <p className="trade_hint">
+                                  Комиссия и финальное количество уточняются при реальном исполнении заявки.
+                                </p>
+                              )}
+                            </div>
+
+                            <DrawerFooter className="trade_drawer_footer">
+                              <Buttons
+                                type={tradeSide === "buy" ? "primary-buy" : "primary-sell"}
+                                disabled={Boolean(tradeAmountError) || normalizedTradeAmount <= 0}
+                                onClick={() => {
+                                  if (!tradeAmountError && normalizedTradeAmount > 0) {
+                                    getTextAlert();
+                                  }
+                                }}
+                              >
+                                {tradeButtonText}
+                              </Buttons>
+                              {/* <DrawerClose asChild>
+                                <Buttons type="text">Закрыть</Buttons>
+                              </DrawerClose> */}
+                            </DrawerFooter>
+                          </div>
                         </DrawerContent>
+                        </div>
+                        
                       </Drawer>
 
                     </div>
@@ -1339,61 +1998,13 @@ export default function CoinPage() {
                       {/* <div className="AiPrognathation">
                         
                       </div> */}
-                      <div className="GlassOfBuySell">
-                        <div className="priceUpGlass">
-                          <div className="priceBorder">
-                            <p>68,322.0</p>
-                          </div>
-                          <p style={{opacity: 0.5, fontSize: '13px'}}>≈5,245,266.54 RUB</p>
-                        </div>
-                        <div className="glassSellBuy">
-                          <div className="buyGlass">
-                            <div className="QTYBTC">
-                              <p style={{opacity: 0.5}}>QTY(BTC)</p>
-                              <p>0.030249</p>
-                              <p>0.030249</p>
-                              <p>0.030249</p>
-                              <p>0.030249</p>
-                              <p>0.030249</p>
-                              <p>0.030249</p>
-                              <p>0.030249</p>
-                            </div>
-                            <div className="PriceUSDC">
-                              <h5 style={{opacity: 0.5}}>Price(USDC)</h5>
-                              <p>68,322.0</p>
-                              <p>68,322.0</p>
-                              <p>68,322.0</p>
-                              <p>68,322.0</p>
-                              <p>68,322.0</p>
-                              <p>68,322.0</p>
-                              <p>68,322.0</p>
-                            </div>
-                          </div>
-                          <div className="lineHeight"></div>
-                          <div className="sellGlass">
-                            <div className="PriceUSDCSell">
-                              <h5 style={{opacity: 0.5}}>Price(USDC)</h5>
-                              <p>68,322.0</p>
-                              <p>68,322.0</p>
-                              <p>68,322.0</p>
-                              <p>68,322.0</p>
-                              <p>68,322.0</p>
-                              <p>68,322.0</p>
-                              <p>68,322.0</p>
-                            </div>
-                            <div className="QTYBTC">
-                              <p style={{opacity: 0.5}}>QTY(BTC)</p>
-                              <p>0.030249</p>
-                              <p>0.030249</p>
-                              <p>0.030249</p>
-                              <p>0.030249</p>
-                              <p>0.030249</p>
-                              <p>0.030249</p>
-                              <p>0.030249</p>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
+                      <OrderBook
+                        orderbook={orderbook}
+                        currentPrice={currentPrice}
+                        currencySymbol={currencySymbol}
+                        baseCurrency={baseCurrency}
+                        quoteCurrency={quoteCurrency}
+                      />
                     </div>
                 </div>
                   

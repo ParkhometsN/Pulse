@@ -144,10 +144,12 @@ align-items: flex-end;
     width: 100%;
     height: 100%;
 }
+.data-\[vaul-drawer-direction\=bottom\]\:mt-24[data-vaul-drawer-direction="bottom"] {
+    margin-top: 0rem !important;
+}
 
 .block{
     width: 100%;
-    height: 100%;
     padding: 10px;
 }
 .sellingBox{
@@ -1356,37 +1358,14 @@ display: flex;
     padding-top: 20px;
 }
 
-@media screen and (max-width: 1240px){
-    .containerAnalic,
-    .dashboard_container{
-        flex-direction: column;
+
+@container app-container (max-width: 1216px) {
+.ContainerRightINF {
+
+    flex-direction: row !important;
 }
-/* .left_blockDash{
-    display: flex;
-    gap: 10px;
-} */
-.blockf{
-    width: 100%;
-    max-width: 100%;
-}
-.BlcoksMidleDahs {
-    padding-top: 10px;
-    display: flex;
-    gap: 10px;
-    flex-direction: column;
-}
-.blocks{
-    width: 100%;
-    max-width: 100%;
-    min-height: 250px;
 }
 
-.block{
-    width: 100%;
-    max-width: 100%;
-    min-height: 250px;
-}
-}
 @media screen and (max-width: 574px){
     .dashboard_container{
       border-radius: 28px;

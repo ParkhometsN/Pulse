@@ -9,13 +9,267 @@ import CoinIcon from "../../components/ui/coinIcon";
 import api from "../../lib/api";
 import { readCachedValue, writeCachedValue } from "../../lib/clientCache";
 import LoaderAnimation from "../../components/ui/loaderAnimation";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 
 const ITEMS_PER_PAGE = 15;
 const MARKET_REFRESH_INTERVAL = 15000;
 const FAVORITES_STORAGE_KEY = "pulse_market_favorites";
 const MARKET_CACHE_MAX_AGE = 1000 * 60 * 5;
 const marketCacheKey = (type, page) => `pulse:market:${type}:page:${page}:v1`;
+
+const MARKET_STRATEGIES = [
+  {
+    id: "ai-short",
+    title: "ИИ торговля Short",
+    description:
+      "Автоматическая торговля с помощью ИИ, оптимизированная для получения прибыли в условиях падающего рынка.",
+    tag: "Short",
+    direction: "Падает",
+    chartColor: "var(--red)",
+    chart: [100000, 101800, 100900, 103400, 105200, 104700, 108300, 109900, 111600, 113200, 115800, 117400],
+    stats: [
+      { label: "Модель", value: "Bear AI" },
+      { label: "Сделок за 30 дней", value: "38" },
+      { label: "Точность сигналов", value: "67%" },
+      { label: "Просадка", value: "-4.8%" },
+    ],
+    history: [
+      { date: "12 мая, 15:10", asset: "BTCUSDT", side: "Short", result: "+1.8%" },
+      { date: "12 мая, 11:42", asset: "ETHUSDT", side: "Short", result: "+0.9%" },
+      { date: "11 мая, 18:24", asset: "SOLUSDT", side: "Short", result: "-0.4%" },
+    ],
+    aggression: 42,
+    note: "Лучше подходит для периодов высокой волатильности и слабого тренда рынка.",
+  },
+  {
+    id: "ai-long",
+    title: "ИИ торговля Long",
+    description:
+      "Портфель сбалансирован по отраслям экономики, а фокус внимания на недооцененных бумагах с перспективой улучшения кредитного качества.",
+    tag: "Long",
+    direction: "Растет",
+    chartColor: "var(--green)",
+    chart: [150000, 151200, 153800, 152900, 156400, 159700, 161900, 166300, 169400, 172600, 176200, 181800],
+    stats: [
+      { label: "Модель", value: "Growth AI" },
+      { label: "Сделок за 30 дней", value: "24" },
+      { label: "Точность сигналов", value: "72%" },
+      { label: "Просадка", value: "-3.1%" },
+    ],
+    history: [
+      { date: "12 мая, 14:36", asset: "SBER", side: "Long", result: "+1.2%" },
+      { date: "12 мая, 10:05", asset: "GAZP", side: "Long", result: "+0.6%" },
+      { date: "10 мая, 16:50", asset: "LKOH", side: "Long", result: "+1.5%" },
+    ],
+    aggression: 58,
+    note: "Сценарий для спокойного набора позиции, когда рынок показывает устойчивый спрос.",
+  },
+  {
+    id: "ai-short-long",
+    title: "ИИ торговля Short + long",
+    description:
+      "Портфель сбалансирован по отраслям экономики, а фокус внимания на недооцененных бумагах с перспективой улучшения кредитного качества.",
+    tag: "Hybrid",
+    direction: "Смешанный",
+    chartColor: "#95959C",
+    chart: [120000, 122400, 121700, 125800, 127100, 130900, 132400, 136300, 135700, 139200, 142800, 146100],
+    stats: [
+      { label: "Модель", value: "Hybrid AI" },
+      { label: "Сделок за 30 дней", value: "51" },
+      { label: "Точность сигналов", value: "69%" },
+      { label: "Просадка", value: "-5.2%" },
+    ],
+    history: [
+      { date: "12 мая, 16:02", asset: "BTCUSDT", side: "Long", result: "+0.8%" },
+      { date: "12 мая, 13:18", asset: "NVTK", side: "Short", result: "+0.5%" },
+      { date: "11 мая, 19:40", asset: "ETHUSDT", side: "Long", result: "-0.2%" },
+    ],
+    aggression: 50,
+    note: "Комбинированный режим переключает направление при смене рыночного импульса.",
+  },
+];
+
+const formatStrategyMoney = (value) => (
+  new Intl.NumberFormat("ru-RU", {
+    style: "currency",
+    currency: "RUB",
+    maximumFractionDigits: 0,
+  }).format(value)
+);
+
+const formatSignedStrategyMoney = (value) => `${value >= 0 ? "+" : ""}${formatStrategyMoney(value)}`;
+
+const getStrategyCapital = (strategy) => {
+  const initial = strategy.chart[0] || 0;
+  const current = strategy.chart[strategy.chart.length - 1] || initial;
+  const profit = current - initial;
+  const roi = initial ? (profit / initial) * 100 : 0;
+
+  return {
+    current,
+    initial,
+    profit,
+    roi,
+  };
+};
+
+function StrategyLineChart({ values = [], color = "var(--primary-blue)", size = "compact" }) {
+  const chartValues = values.length > 1 ? values : [0, 1];
+  const width = size === "hero" ? 520 : 340;
+  const height = size === "hero" ? 150 : 100;
+  const padding = size === "hero" ? 18 : 12;
+  const min = Math.min(...chartValues);
+  const max = Math.max(...chartValues);
+  const range = max - min || 1;
+  const chartPoints = chartValues.map((value, index) => {
+      const x = padding + (index / Math.max(chartValues.length - 1, 1)) * (width - padding * 2);
+      const y = height - padding - ((value - min) / range) * (height - padding * 2);
+
+      return { x, y };
+    });
+  const linePath = chartPoints
+    .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x.toFixed(1)} ${point.y.toFixed(1)}`)
+    .join(" ");
+  const areaPath = `${linePath} L ${width - padding} ${height - padding} L ${padding} ${height - padding} Z`;
+  const lastPoint = chartPoints[chartPoints.length - 1];
+  const gradientId = `strategy-chart-gradient-${size}-${String(color).replace(/[^a-zA-Z0-9]/g, "")}`;
+
+  return (
+    <svg
+      className={`strategy_line_chart strategy_line_chart_${size}`}
+      viewBox={`0 0 ${width} ${height}`}
+      role="img"
+      aria-label="График капитала стратегии"
+      preserveAspectRatio="none"
+    >
+      <defs>
+        <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={color} stopOpacity="0.22" />
+          <stop offset="100%" stopColor={color} stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      <path className="strategy_chart_area" d={areaPath} fill={`url(#${gradientId})`} />
+      <path
+        className="strategy_chart_line"
+        d={linePath}
+        fill="none"
+        stroke={color}
+        strokeWidth={size === "hero" ? "3" : "2.6"}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        pathLength="1"
+      />
+      <g className="strategy_chart_last_point">
+        <circle cx={lastPoint.x} cy={lastPoint.y} r={size === "hero" ? "6" : "4.5"} fill={color} />
+        <circle cx={lastPoint.x} cy={lastPoint.y} r={size === "hero" ? "3" : "2.4"} fill="white" />
+      </g>
+    </svg>
+  );
+}
+
+function StrategyDrawer({ strategy, isOpen, aggression, onAggressionChange, onClose }) {
+  if (!strategy) {
+    return null;
+  }
+
+  const capital = getStrategyCapital(strategy);
+  const capitalTone = capital.profit >= 0 ? "positive" : "negative";
+  const strategyStats = [
+    { label: "Стартовый капитал", value: formatStrategyMoney(capital.initial) },
+    { label: "Текущий капитал", value: formatStrategyMoney(capital.current), tone: capitalTone },
+    { label: "Заработано", value: formatSignedStrategyMoney(capital.profit), accent: true },
+    ...strategy.stats.filter((item) => item.label !== "Модель"),
+  ];
+
+  return (
+    <div
+      className={`strategy_drawer_overlay ${isOpen ? "strategy_drawer_overlay_open" : ""}`}
+      onMouseDown={onClose}
+    >
+      <aside
+        className={`strategy_drawer ${isOpen ? "strategy_drawer_open" : ""}`}
+        aria-label={`Стратегия ${strategy.title}`}
+        aria-hidden={!isOpen}
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="strategy_drawer_hero">
+          <StrategyLineChart values={strategy.chart} color={strategy.chartColor} size="hero" />
+          <button className="strategy_drawer_close" type="button" onClick={onClose} aria-label="Закрыть стратегию">
+            ×
+          </button>
+        </div>
+
+        <div className="strategy_drawer_intro">
+          <div className="flex items-center gap-[10px]">
+            <span>{strategy.tag}</span>
+            <h2>{strategy.title}</h2>
+          </div>
+          <p>{strategy.description}</p>
+        </div>
+
+        <div className="strategy_stats_grid">
+          {strategyStats.map((item) => (
+            <div
+              className={[
+                "strategy_stat_card",
+                item.accent ? "strategy_stat_card_accent" : "",
+                item.tone ? `strategy_stat_card_${item.tone}` : "",
+              ].filter(Boolean).join(" ")}
+              key={`${strategy.id}-${item.label}`}
+            >
+              <p>{item.label}</p>
+              <h4>{item.value}</h4>
+            </div>
+          ))}
+        </div>
+
+        <div className="strategy_drawer_section">
+          <div className="strategy_section_title">
+            <h3>История торговли</h3>
+            <p>Последние сигналы стратегии</p>
+          </div>
+          <div className="strategy_history_list">
+            {strategy.history.map((item) => (
+              <div className="strategy_history_item" key={`${strategy.id}-${item.date}-${item.asset}`}>
+                <div>
+                  <h4>{item.asset}</h4>
+                  <p>{item.date}</p>
+                </div>
+                <span>{item.side}</span>
+                <strong>{item.result}</strong>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="strategy_drawer_section">
+          <div className="strategy_section_title">
+            <h3>Настройки торговли</h3>
+            <p>{strategy.note}</p>
+          </div>
+          <label className="strategy_slider_box">
+            <span>Агрессивность торговли</span>
+            <strong>{aggression}%</strong>
+            <input
+              type="range"
+              min="0"
+              max="100"
+              value={aggression}
+              onChange={(event) => onAggressionChange(Number(event.target.value))}
+            />
+          </label>
+        </div>
+
+        <Buttons type="primary-full" className="strategy_connect_button">
+          Подключить стратегию
+        </Buttons>
+        <p className="strategy_warning">
+          Информация не является инвестиционной рекомендацией. Решение о подключении стратегии вы принимаете самостоятельно.
+        </p>
+      </aside>
+    </div>
+  );
+}
 
 const getInitialFavorites = () => {
   try {
@@ -29,7 +283,13 @@ const getInitialFavorites = () => {
 
 
 export default function Market() {
-  const [activePage, setActivePage] = useState("strategies");
+  const [searchParams] = useSearchParams();
+  const initialTab = searchParams.get("tab");
+  const [activePage, setActivePage] = useState(
+    ["crypto", "stocks", "favorites", "strategies"].includes(initialTab)
+      ? initialTab
+      : "strategies"
+  );
   const [currencies, setCurrencies] = useState(
     () => readCachedValue(marketCacheKey("crypto", 1), MARKET_CACHE_MAX_AGE)?.items || []
   );
@@ -52,10 +312,14 @@ export default function Market() {
   const [favorites, setFavorites] = useState(getInitialFavorites);
   const [searchIndex, setSearchIndex] = useState([]);
   const [isSearchFocused, setIsSearchFocused] = useState(false);
+  const [selectedStrategy, setSelectedStrategy] = useState(null);
+  const [isStrategyDrawerOpen, setIsStrategyDrawerOpen] = useState(false);
+  const [strategyAggression, setStrategyAggression] = useState(MARKET_STRATEGIES[0].aggression);
   const cryptoAbortRef = useRef(null);
   const stocksAbortRef = useRef(null);
   const cryptoRequestIdRef = useRef(0);
   const stocksRequestIdRef = useRef(0);
+  const strategyCloseTimerRef = useRef(null);
   const navigate = useNavigate();
 
   const pages = [
@@ -125,6 +389,28 @@ export default function Market() {
     openAssetPage(asset.type, asset.symbol);
   }, [openAssetPage]);
 
+  const openStrategy = useCallback((strategy) => {
+    if (strategyCloseTimerRef.current) {
+      window.clearTimeout(strategyCloseTimerRef.current);
+    }
+
+    setSelectedStrategy(strategy);
+    setStrategyAggression(strategy.aggression);
+    window.requestAnimationFrame(() => setIsStrategyDrawerOpen(true));
+  }, []);
+
+  const closeStrategy = useCallback(() => {
+    setIsStrategyDrawerOpen(false);
+
+    if (strategyCloseTimerRef.current) {
+      window.clearTimeout(strategyCloseTimerRef.current);
+    }
+
+    strategyCloseTimerRef.current = window.setTimeout(() => {
+      setSelectedStrategy(null);
+    }, 260);
+  }, []);
+
   const renderInformationBlock = () => {
     switch (activePage) {
       case "strategies":
@@ -137,28 +423,27 @@ export default function Market() {
                   <img src={PulseSvgTag} alt="tag" />
                 </div>
 
-                <div className="cardList_marketbot">
-                  <div className="cardmarketblocklist">
-                    <MarketCardBot
-                    titleCardstrategi = 'Фавориты 2026 года'
-                    desritioncardStrategy = 'Портфель сбалансирован по отраслям экономики, а фокус внимания на недооцененных бумагах с перспективой улучшения кредитного качества.'
-                    onClick={null}
-                    contentBottomCard={null}
-                    />
-                    <MarketCardBot
-                    titleCardstrategi = 'Фавориты 2026 года'
-                    desritioncardStrategy = 'Портфель сбалансирован по отраслям экономики, а фокус внимания на недооцененных бумагах с перспективой улучшения кредитного качества.'
-                    onClick={null}
-                    contentBottomCard={null}
-                    />
-                    <MarketCardBot
-                    titleCardstrategi = 'Фавориты 2026 года'
-                    desritioncardStrategy = 'Портфель сбалансирован по отраслям экономики, а фокус внимания на недооцененных бумагах с перспективой улучшения кредитного качества.'
-                    onClick={null}
-                    contentBottomCard={null}
-                    />
-                  </div>
-                </div>
+	                <div className="cardList_marketbot">
+	                  <div className="cardmarketblocklist">
+	                    {MARKET_STRATEGIES.map((strategy) => (
+	                      <MarketCardBot
+	                        key={strategy.id}
+	                        titleCardstrategi={strategy.title}
+	                        desritioncardStrategy={strategy.description}
+	                        onClick={() => openStrategy(strategy)}
+		                        contentBottomCard={null}
+			                        ImgContentCard={
+			                          <div className="strategy_chart_preview">
+			                            <StrategyLineChart
+			                              values={strategy.chart}
+			                              color={strategy.chartColor}
+			                            />
+			                          </div>
+			                        }
+	                      />
+	                    ))}
+	                  </div>
+	                </div>
 
                 <div className="titlemarket">
                   <p>Пассивный доход</p>
@@ -819,6 +1104,14 @@ export default function Market() {
     };
   }, [activePage, fetchStocks]);
 
+  useEffect(() => {
+    return () => {
+      if (strategyCloseTimerRef.current) {
+        window.clearTimeout(strategyCloseTimerRef.current);
+      }
+    };
+  }, []);
+
   return (
     <div className="app_pages">
       <div className="app_content">
@@ -901,12 +1194,13 @@ export default function Market() {
                         : "page_choise"
                     }
                     disabled={page.disabled}
-                    onClick={() => {
-                      setActivePage(page.id);
-                      setCryptoPage(1);
-                      setStocksPage(1);
-                    }}
-                  >
+	                    onClick={() => {
+	                      setActivePage(page.id);
+	                      setCryptoPage(1);
+	                      setStocksPage(1);
+	                      closeStrategy();
+	                    }}
+	                  >
                     {page.label}
                   </Buttons>
                 ))}
@@ -916,11 +1210,18 @@ export default function Market() {
                 <div className="line io"></div>
               </div>
 
-              <div className="renderInformationBlcok">
-                {renderInformationBlock()}
-              </div>
-            </div>
-          </div>
+	              <div className="renderInformationBlcok">
+	                {renderInformationBlock()}
+	              </div>
+	              <StrategyDrawer
+	                strategy={selectedStrategy}
+	                isOpen={isStrategyDrawerOpen}
+	                aggression={strategyAggression}
+	                onAggressionChange={setStrategyAggression}
+	                onClose={closeStrategy}
+	              />
+	            </div>
+	          </div>
         </div>
       </div>
     </div>

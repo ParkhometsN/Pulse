@@ -1,7 +1,5 @@
 export default function BuysellCardMinicard({
   sourceLabel = "Bybit",
-  sourceIcon,
-  action = "Покупка",
   name = "Ethereum",
   symbol = "ETH",
   icon = "https://s2.coinmarketcap.com/static/img/coins/64x64/1027.png",
@@ -39,7 +37,6 @@ export default function BuysellCardMinicard({
         </div>
 
         <div className="sellbuyChange">
-          {sourceIcon ? <img className="sellbuy_source_icon" src={sourceIcon} alt={sourceLabel} /> : null}
           <p style={{ opacity: 0.5 }}>{priceFrom}</p>
           <span className="arrow-right">
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="8" viewBox="0 0 16 8" fill="none">
@@ -55,7 +52,6 @@ export default function BuysellCardMinicard({
         </div>
 
         <div className="pricecoinBuy">
-          <p>{action}</p>
           <p style={{ fontSize: "11px", color: "var(--green)" }}>{change}</p>
           <p className="pricecoinBuy_source">{sourceLabel}</p>
         </div>

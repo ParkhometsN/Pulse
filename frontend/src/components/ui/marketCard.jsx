@@ -29,7 +29,7 @@ export default function MarketCardBot({
                 </Buttons>
             </div>
             <div className="wejwedf">
-              <div className="linee"></div>
+              <div className="lineeeeeee"></div>
             </div>
             <div className="tagcardMarket">
                 <div className="miniifcard">

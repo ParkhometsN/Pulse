@@ -162,7 +162,7 @@ const TRADE_HISTORY = [
 const pieData = [
   { name: "Криптовалюта", value: 38 },
   { name: "Акции", value: 34 },
-  { name: "Металлы", value: 28 },
+  { name: "металлы", value: 28 },
 ];
 
 const CHART_YEARS = [2024, 2025, 2026, 2027];

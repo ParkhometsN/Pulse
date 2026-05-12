@@ -8,6 +8,7 @@ from src.init import bybit_client, coingecko_client
 router = APIRouter(prefix="/cryptocurrencies")
 CACHE_TTL_SECONDS = 10
 CHART_CACHE_TTL_SECONDS = 60
+ORDERBOOK_CACHE_TTL_SECONDS = 1
 ICON_CACHE_TTL_SECONDS = 60 * 60 * 24
 _market_cache: dict[str, dict] = {}
 _market_cache_locks: dict[str, asyncio.Lock] = {}
@@ -237,6 +238,21 @@ async def get_coin_chart(symbol: str, category: str):
     return chart
 
 
+async def get_coin_orderbook(symbol: str, category: str):
+    try:
+        return await get_cached_bybit_list(
+            cache_key=f"orderbook:{category}:{symbol}:50",
+            loader=lambda: bybit_client.get_orderbook(
+                symbol=symbol,
+                category=category,
+                limit=50
+            ),
+            ttl_seconds=ORDERBOOK_CACHE_TTL_SECONDS
+        )
+    except Exception:
+        return {}
+
+
 async def find_instrument(currency_id: str, category: str = "spot"):
     instruments = await get_cached_bybit_list(
         cache_key=f"instruments:{category}",
@@ -447,12 +463,16 @@ async def get_cryptocurrency(
             detail="Ticker not found"
         )
 
-    chart, icon_url = await asyncio.gather(
+    chart, icon_url, orderbook = await asyncio.gather(
         get_coin_chart(instrument["symbol"], category),
-        get_icon_url(instrument.get("baseCoin"))
+        get_icon_url(instrument.get("baseCoin")),
+        get_coin_orderbook(instrument["symbol"], category)
     )
 
-    return format_coin(instrument, ticker, chart, icon_url)
+    return {
+        **format_coin(instrument, ticker, chart, icon_url),
+        "orderbook": orderbook,
+    }
 
 
 @router.get("/{currency_id}/chart")

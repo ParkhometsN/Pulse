@@ -38,13 +38,19 @@
     border: 2px solid var(--black-t);
     border-radius: 16px;
     padding: 10px;
-    transition: border-color 0.25s ease, transform 0.25s ease, background 0.25s ease;
+    transition: border-color 0.25s ease, box-shadow 0.25s ease, transform 0.25s ease, background 0.25s ease;
 }
 
-.containerNewCard:hover {
-    border-color: rgba(30, 117, 255, 0.42);
-   
+.containerNewCard.is_unseen_news {
+    border-color: var(--primary-blue);
+    box-shadow: 0 0 0 1px rgba(30, 117, 255, 0.14), 0 14px 40px rgba(30, 117, 255, 0.08);
 }
+
+.containerNewCard.is_seen_news {
+    border-color: var(--black-t);
+    box-shadow: none;
+}
+
 
 .containerCardNews {
     display: flex;
@@ -139,6 +145,9 @@
 .upNews h5,
 .upNews p {
     margin: 0;
+}
+.upNews h5{
+    color: var(--primary-blue);
 }
 
 .websiteLink {
