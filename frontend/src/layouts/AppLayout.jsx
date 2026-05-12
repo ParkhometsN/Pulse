@@ -4,10 +4,9 @@ import LoaderAnimation from "../components/ui/loaderAnimation";
 import CoinIcon from "../components/ui/coinIcon";
 import api from "../lib/api";
 import { readCachedValue, writeCachedValue } from "../lib/clientCache";
+import { clearAuthSession, getAccessToken, saveStoredUser } from "../lib/auth";
 import { useCallback, useEffect, useState } from "react";
 import AreYouShure from "../components/ui/DilogShure";
-import { Dialog } from "radix-ui";
-import { Link } from "react-router-dom";
 
 const MARQUEE_CACHE_KEY = "pulse:app-layout:marquee:v1";
 const MARQUEE_CACHE_MAX_AGE = 1000 * 60 * 10;
@@ -18,6 +17,7 @@ export default function AppLayout() {
     );
     const [isCurrenciesLoading, setIsCurrenciesLoading] = useState(currencies.length === 0);
     const [alertDilog, setalertdilog] = useState(false)
+    const [isAuthChecking, setIsAuthChecking] = useState(true);
     const navigation = useNavigate();
 
 
@@ -63,9 +63,48 @@ export default function AppLayout() {
     }, [normalizeCurrency]);
 
     useEffect(() => {
+      if (!getAccessToken()) {
+        clearAuthSession();
+        navigation('/login', { replace: true });
+        return;
+      }
+
+      let isMounted = true;
+
+      api.get('/auth/me')
+        .then((response) => {
+          if (!isMounted) {
+            return;
+          }
+
+          saveStoredUser(response.data.user);
+          setIsAuthChecking(false);
+        })
+        .catch(() => {
+          if (!isMounted) {
+            return;
+          }
+
+          clearAuthSession();
+          navigation('/login', { replace: true });
+        });
+
+      return () => {
+        isMounted = false;
+      };
+    }, [navigation]);
+
+    useEffect(() => {
       fetchCurrency();
     }, [fetchCurrency]);
 
+  if (isAuthChecking) {
+    return (
+      <div className="route_auth_check">
+        <LoaderAnimation className="route_auth_loader" variant="spinner" label="Проверяем сессию" />
+      </div>
+    );
+  }
 
   return (
     <div className="MainAppScreen">
@@ -78,7 +117,10 @@ export default function AppLayout() {
           BackButtonAlertText = "Отмена"
           ShureButtonAlertText = "Выход"
           onClickBackAlert = {() => setalertdilog(false)}
-          onClickShureAlert = {() => navigation('/')}
+          onClickShureAlert = {() => {
+            clearAuthSession();
+            navigation('/login', { replace: true });
+          }}
       />}
       <main className="MainContentApp">
         <div className="marquee">

@@ -454,6 +454,31 @@ display: flex;
     width: 25px;
     height: 25px;
 }
+
+.sellbuy_asset_icon {
+    position: relative;
+    display: grid;
+    place-items: center;
+    flex: 0 0 auto;
+    width: 25px;
+    height: 25px;
+    overflow: hidden;
+    border-radius: 50%;
+    background: var(--black-t);
+    color: #fff;
+    font-size: 9px;
+    font-weight: 700;
+    line-height: 1;
+}
+
+.sellbuy_asset_icon img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: inherit;
+}
 .name_coinbuysell h1{
     margin: 0;
     font-size: 13px;
@@ -854,6 +879,9 @@ display: flex;
 }
 
 .trade_filter_active {
+    padding: 5px 10px 5px 10px;
+    background-color: #1e74ff2c;
+    border-radius: 8px;
     color: var(--primary-blue) !important;
 }
 

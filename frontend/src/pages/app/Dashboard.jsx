@@ -76,7 +76,7 @@ const TRADE_FEED = [
     priceTo: "286,80 ₽",
     change: "+0,95%",
     time: "11:42",
-    icon: "https://i.postimg.cc/wB1M9rN1/sber.png",
+    icon: null,
   },
   {
     id: "sol-1",
@@ -105,7 +105,7 @@ const TRADE_FEED = [
     priceTo: "6 834 ₽",
     change: "+1,92%",
     time: "08:35",
-    icon: "https://i.postimg.cc/Pr0qzTqj/lukoil.png",
+    icon: null,
   },
 ];
 
@@ -160,9 +160,9 @@ const TRADE_HISTORY = [
 ];
 
 const pieData = [
-  { name: "Крипта", value: 38 },
+  { name: "Криптовалюта", value: 38 },
   { name: "Акции", value: 34 },
-  { name: "Рубли", value: 28 },
+  { name: "Металлы", value: 28 },
 ];
 
 const CHART_YEARS = [2024, 2025, 2026, 2027];

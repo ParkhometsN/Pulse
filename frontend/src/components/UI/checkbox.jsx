@@ -1,12 +1,22 @@
-import React from 'react';
+import React, { useId } from 'react';
 import styled from 'styled-components';
 
-const Checkbox = ({textCheckbox}) => {
+const Checkbox = ({textCheckbox, checked, onChange, required = false, id}) => {
+  const generatedId = useId();
+  const checkboxId = id || `checkbox-${generatedId}`;
+
   return (
     <StyledWrapper>
       <div className="flex items-center gap-[8px]">
-        <input type="checkbox" id="cbx" style={{display: 'none'}} />
-        <label htmlFor="cbx" className="check">
+        <input
+          type="checkbox"
+          id={checkboxId}
+          checked={checked}
+          onChange={onChange}
+          required={required}
+          style={{display: 'none'}}
+        />
+        <label htmlFor={checkboxId} className="check">
           <svg width="18px" height="18px" viewBox="0 0 18 18">
             <path d="M1,9 L1,3.5 C1,2 2,1 3.5,1 L14.5,1 C16,1 17,2 17,3.5 L17,14.5 C17,16 16,17 14.5,17 L3.5,17 C2,17 1,16 1,14.5 L1,9 Z" />
             <polyline points="1 9 7 14 15 4" />
@@ -75,16 +85,16 @@ const StyledWrapper = styled.div`
     stroke: #4285f4;
   }
 
-  #cbx:checked + .check svg {
+  input:checked + .check svg {
     stroke: #4285f4;
   }
 
-  #cbx:checked + .check svg path {
+  input:checked + .check svg path {
     stroke-dashoffset: 60;
     transition: all 0.3s linear;
   }
 
-  #cbx:checked + .check svg polyline {
+  input:checked + .check svg polyline {
     stroke-dashoffset: 42;
     transition: all 0.2s linear;
     transition-delay: 0.15s;

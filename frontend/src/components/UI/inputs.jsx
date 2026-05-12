@@ -11,7 +11,9 @@ const Inputs = ({
   name,
   disabled, 
   placeholder,
-  icon
+  icon,
+  autoComplete,
+  required,
 }) => {
 
   const inputclass = `
@@ -34,6 +36,8 @@ const Inputs = ({
     onBlur={onBlur}
     disabled={disabled}
     placeholder={placeholder}
+    autoComplete={autoComplete}
+    required={required}
   />
 
   {icon && (

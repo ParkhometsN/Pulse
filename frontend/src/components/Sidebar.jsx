@@ -5,13 +5,34 @@ import BagDash from "../assets/svg/bag_icon.svg";
 import BurgerIconSvg from "../assets/svg/burger_icon_svg.svg";
 import Buttons from "./UI/buttons";
 import { useCallback, useEffect, useState } from "react";
+import api from "../lib/api";
+import { getStoredUser, saveStoredUser } from "../lib/auth";
 
 export default function Sidebar({ButtonExit}) {
 
 
-  const Location = useLocation();
+  const location = useLocation();
   const [isopen, setIsopen] = useState(true);
+  const [user, setUser] = useState(() => getStoredUser());
 
+  const userName = user
+    ? `${user.firstName || ""} ${user.lastName || ""}`.trim() || user.email
+    : "Pulse Investor";
+
+
+  useEffect(() => {
+    const syncUser = () => setUser(getStoredUser());
+    window.addEventListener("pulse:user-updated", syncUser);
+
+    api.get("/auth/me")
+      .then((response) => {
+        saveStoredUser(response.data.user);
+        setUser(response.data.user);
+      })
+      .catch(() => {});
+
+    return () => window.removeEventListener("pulse:user-updated", syncUser);
+  }, []);
 
   useEffect(() => {
       const handleResize = () => {
@@ -72,8 +93,8 @@ export default function Sidebar({ButtonExit}) {
                   <div className="account_item">
                       <img src={UserIcon} alt="UserIcon" />
                       <div className={['text_account', 'DisabledItemsSideBar'].join(' ')}>
-                        <p className="Name_Account">Parkhomets nikita</p>
-                        <p className="Destination">Доходность за 12 месяцев</p>
+                        <p className="Name_Account">{userName}</p>
+                        <p className="Destination">{user?.email || "Аккаунт Pulse"}</p>
                         <p className="PersentMoney">+0,87%</p>
                       </div>
                   </div>

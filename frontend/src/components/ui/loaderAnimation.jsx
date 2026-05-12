@@ -3,7 +3,20 @@ export default function LoaderAnimation({
     height,
     rounded = "16px",
     label = "Загрузка",
+    variant = "skeleton",
 }){
+    if (variant === "spinner") {
+        return (
+            <div
+                className={`loaderSpinner_wrap ${className}`.trim()}
+                role="status"
+                aria-label={label}
+            >
+                <span className="loaderSpinner" aria-hidden="true" />
+            </div>
+        )
+    }
+
     return (
         <div
             className={`container_loading_element ${className}`.trim()}
@@ -15,7 +28,6 @@ export default function LoaderAnimation({
                 borderRadius: rounded,
             }}
         >
-            <span className="loaderAnimation_glow" aria-hidden="true" />
             <span className="loaderAnimation_line loaderAnimation_lineLarge" aria-hidden="true" />
             <span className="loaderAnimation_line loaderAnimation_lineMedium" aria-hidden="true" />
             <span className="loaderAnimation_line loaderAnimation_lineSmall" aria-hidden="true" />

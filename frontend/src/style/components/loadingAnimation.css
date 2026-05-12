@@ -1,102 +1,49 @@
 .container_loading_element{
     position: relative;
-    --loader-base: #121214;
-    --loader-panel: #17171a;
-    --loader-line: rgba(255, 255, 255, 0.075);
-    --loader-line-strong: rgba(255, 255, 255, 0.13);
-    --loader-line-soft: rgba(255, 255, 255, 0.035);
     display: block;
     overflow: hidden;
     width: 100%;
     min-height: 64px;
-    border: 2px solid var(--black-t);
-    background:
-      radial-gradient(circle at 14% 18%, rgba(255, 255, 255, 0.055), transparent 24%),
-      radial-gradient(circle at 92% 82%, rgba(255, 255, 255, 0.035), transparent 26%),
-      linear-gradient(135deg, var(--loader-panel), var(--loader-base) 68%);
-    background-size: 130% 130%, 130% 130%, 100% 100%;
     border-radius: 16px;
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.035),
-      0 16px 36px rgba(0, 0, 0, 0.08);
-    isolation: isolate;
-    animation: pulseLoaderSurface 4s ease-in-out infinite;
+    background: var(--black);
+    border: 2px solid var(--black-t);
 }
 
-.container_loading_element::before{
-    content: "";
-    position: absolute;
-    inset: -45% -80%;
-    background:
-      linear-gradient(
-        100deg,
-        transparent 0%,
-        transparent 35%,
-        rgba(255, 255, 255, 0.025) 43%,
-        rgba(255, 255, 255, 0.115) 50%,
-        rgba(255, 255, 255, 0.025) 57%,
-        transparent 65%,
-        transparent 100%
-      );
-    transform: translateX(-36%) rotate(8deg);
-    animation: pulseLoaderSweep 1.8s cubic-bezier(0.5, 0, 0.25, 1) infinite;
-    will-change: transform;
-    z-index: 1;
+.loaderSpinner_wrap{
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
-.container_loading_element::after{
-    content: "";
-    position: absolute;
-    inset: 0;
-    border-radius: inherit;
-    border: 1px solid rgba(255, 255, 255, 0.028);
-    background:
-      linear-gradient(180deg, rgba(255, 255, 255, 0.032), transparent 38%),
-      repeating-linear-gradient(
-        90deg,
-        transparent 0,
-        transparent 19px,
-        rgba(255, 255, 255, 0.012) 20px,
-        transparent 21px
-      );
-    opacity: 0.75;
-    pointer-events: none;
-    z-index: 2;
+.loaderSpinner{
+    display: block;
+    width: 38px;
+    height: 38px;
+    border-radius: 50%;
+    border: 4px solid var(--black-t);
+    border-left-color: transparent;
+    opacity: 0.78;
+    animation: loaderSpinnerSpin .82s linear infinite;
 }
 
-.loaderAnimation_glow,
 .loaderAnimation_line,
 .loaderAnimation_orb{
     position: absolute;
     display: block;
     pointer-events: none;
-    z-index: 3;
-}
-
-.loaderAnimation_glow{
-    inset: auto 18px 16px 18px;
-    height: 1px;
-    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.16), transparent);
-    opacity: 0.42;
-    animation: pulseLoaderGlow 2.4s ease-in-out infinite;
+    background: var(--black-t);
+    opacity: 0.08;
+    will-change: opacity;
+    animation-name: loaderOpacityWave;
+    animation-duration: .95s;
+    animation-timing-function: ease-in-out;
+    animation-iteration-count: infinite;
 }
 
 .loaderAnimation_line{
-    left: 20px;
-    height: 10px;
+    left: 18px;
+    height: 12px;
     border-radius: 999px;
-    background:
-      linear-gradient(
-        90deg,
-        var(--loader-line-soft) 0%,
-        var(--loader-line) 34%,
-        var(--loader-line-strong) 50%,
-        var(--loader-line) 66%,
-        var(--loader-line-soft) 100%
-      );
-    background-size: 220% 100%;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
-    animation: pulseLoaderLine 1.55s ease-in-out infinite;
 }
 
 .loaderAnimation_lineLarge{
@@ -105,19 +52,16 @@
 }
 
 .loaderAnimation_lineMedium{
-    top: 44px;
+    top: 46px;
     width: min(42%, 190px);
-    animation-delay: 0.14s;
-    opacity: 0.82;
+    animation-delay: .12s;
 }
 
 .loaderAnimation_lineSmall{
-    right: 22px;
+    left: 18px;
     bottom: 22px;
-    left: auto;
-    width: min(24%, 120px);
-    animation-delay: 0.28s;
-    opacity: 0.68;
+    width: min(28%, 130px);
+    animation-delay: .24s;
 }
 
 .loaderAnimation_orb{
@@ -126,20 +70,18 @@
     width: 34px;
     height: 34px;
     border-radius: 50%;
-    background:
-      radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0.055) 46%, rgba(255, 255, 255, 0.02) 68%);
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.08),
-      0 0 0 1px rgba(255, 255, 255, 0.025);
-    animation: pulseLoaderOrb 2s ease-in-out infinite;
+    animation-delay: .36s;
 }
+
 .maxHei{
     width: 100%;
     height: 61vh;
 }
+
 .favorite_Container{
     padding: 20px;
 }
+
 .market_error{
     width: 100%;
     height: 65vh;
@@ -153,69 +95,31 @@
     border: 1.5px dashed var(--primary-blue);
 }
 
-@keyframes pulseLoaderSurface {
+@keyframes loaderOpacityWave {
   0% {
-    background-position: 0% 0%, 100% 100%, 0 0;
+    opacity: 0.08;
   }
-  50% {
-    background-position: 10% 6%, 88% 92%, 0 0;
-  }
-  100% {
-    background-position: 0% 0%, 100% 100%, 0 0;
-  }
-}
-
-@keyframes pulseLoaderSweep {
-  0% {
-    transform: translateX(-42%) rotate(8deg);
-  }
-  100% {
-    transform: translateX(42%) rotate(8deg);
-  }
-}
-
-@keyframes pulseLoaderLine {
-  0% {
-    background-position: 120% 0;
-    opacity: 0.52;
-  }
-  45% {
+  45%, 55% {
     opacity: 1;
   }
   100% {
-    background-position: -120% 0;
-    opacity: 0.58;
+    opacity: 0.08;
   }
 }
 
-@keyframes pulseLoaderGlow {
-  0%, 100% {
-    transform: scaleX(0.72);
-    opacity: 0.18;
-  }
-  50% {
-    transform: scaleX(1);
-    opacity: 0.5;
-  }
-}
-
-@keyframes pulseLoaderOrb {
-  0%, 100% {
-    transform: scale(0.92);
-    opacity: 0.45;
-  }
-  50% {
-    transform: scale(1);
-    opacity: 0.92;
+@keyframes loaderSpinnerSpin {
+  to {
+    transform: rotate(360deg);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .container_loading_element,
-  .container_loading_element::before,
-  .loaderAnimation_glow,
   .loaderAnimation_line,
   .loaderAnimation_orb {
-    animation: none;
+    animation-duration: 1.8s;
+  }
+
+  .loaderSpinner {
+    animation-duration: 1.8s;
   }
 }

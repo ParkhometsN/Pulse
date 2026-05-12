@@ -11,11 +11,24 @@ export default function BuysellCardMinicard({
   time = "",
   onClick,
 }) {
+  const fallbackLabel = (symbol || name || "?").slice(0, 2).toUpperCase();
+
   return (
     <button type="button" className="containerbuttonbusell" onClick={onClick}>
       <div className="idificatorCointbuysell">
         <div className="itemtitleimg">
-          <img src={icon} alt="coinicon" />
+          <span className="sellbuy_asset_icon" aria-hidden="true">
+            <span>{fallbackLabel}</span>
+            {icon ? (
+              <img
+                src={icon}
+                alt=""
+                onError={(event) => {
+                  event.currentTarget.style.display = "none";
+                }}
+              />
+            ) : null}
+          </span>
           <div className="name_coinbuysell">
             <h1>{name}</h1>
             <p className="NMC">

@@ -48,6 +48,27 @@ font-size: 23px;
     opacity: 0.5;
 }
 
+.auth_alert {
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--black-t);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.auth_alert_error {
+  color: #ffb4ae;
+  background: rgba(255, 59, 48, 0.1);
+  border-color: rgba(255, 59, 48, 0.28);
+}
+
+.auth_alert_success {
+  color: #b8ffe9;
+  background: rgba(0, 255, 171, 0.08);
+  border-color: rgba(0, 255, 171, 0.2);
+}
+
 
 .hero_content_login {
   position: absolute;

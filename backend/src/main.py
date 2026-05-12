@@ -6,12 +6,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from src.router import router as router_crypto
 from src.stocks_router import router as router_stocks
 from src.news_router import router as router_news
+from src.auth_router import router as router_auth
+from src.database import close_database, connect_database, ensure_auth_schema
 from src.init import bybit_client, coingecko_client, moex_client
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    await connect_database()
+    await ensure_auth_schema()
     yield
+    await close_database()
     await bybit_client.close()
     await moex_client.close()
     await coingecko_client.close()
@@ -22,6 +27,7 @@ app = FastAPI(lifespan=lifespan)
 app.include_router(router_crypto)
 app.include_router(router_stocks)
 app.include_router(router_news)
+app.include_router(router_auth)
 
 # Health check endpoint
 @app.get("/health")

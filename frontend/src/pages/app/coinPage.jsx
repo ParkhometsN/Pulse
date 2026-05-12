@@ -536,6 +536,47 @@ function MiniSparkline({ data }) {
   );
 }
 
+function CoinPageHeroLoader() {
+  return (
+    <div className="coin_page_loader_hero" aria-hidden="true">
+      <div className="coin_page_loader_hero_top">
+        <LoaderAnimation height={36} rounded="12px" />
+        <LoaderAnimation height={36} rounded="12px" />
+      </div>
+      <div className="coin_page_loader_hero_main">
+        <LoaderAnimation className="coin_page_loader_icon" height={96} rounded="50%" />
+        <div className="coin_page_loader_hero_text">
+          <LoaderAnimation height={58} rounded="18px" />
+          <LoaderAnimation height={74} rounded="18px" />
+        </div>
+        <div className="coin_page_loader_actions">
+          <LoaderAnimation height={48} rounded="999px" />
+          <LoaderAnimation height={48} rounded="999px" />
+          <LoaderAnimation height={48} rounded="999px" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CoinPageOverviewLoader() {
+  return (
+    <div className="coin_page_overview_loader" aria-hidden="true">
+      <div className="coin_page_loader_chart_side">
+        <div className="coin_page_loader_controls">
+          <LoaderAnimation height={56} rounded="16px" />
+          <LoaderAnimation height={56} rounded="16px" />
+        </div>
+        <LoaderAnimation className="coin_page_loader_chart" height={370} rounded="18px" />
+      </div>
+      <div className="coin_page_loader_info_side">
+        <LoaderAnimation height={260} rounded="18px" />
+        <LoaderAnimation height={210} rounded="18px" />
+      </div>
+    </div>
+  );
+}
+
 export default function CoinPage() {
   const location = useLocation();
   const [searchParams] = useSearchParams();
@@ -554,6 +595,7 @@ export default function CoinPage() {
   const [chartState, setChartState] = useState({
     key: "",
     data: [],
+    isLoading: false,
   });
   const [favorites, setFavorites] = useState(getInitialFavorites);
   const requestIdRef = useRef(0);
@@ -706,6 +748,7 @@ export default function CoinPage() {
       ? requestState.error
       : "";
   const isLoading = Boolean(endpoint && requestState.endpoint !== endpoint);
+  const isBlockingError = Boolean(error && !asset);
   const isStock = assetType === "stock";
   const assetName = asset?.name || asset?.baseCoin || symbol;
   const shortName = asset?.shortName || asset?.baseCoin || asset?.symbol || symbol;
@@ -794,6 +837,13 @@ export default function CoinPage() {
   const chartData = baseChartData.length > 0
     ? baseChartData
     : filterChartByRange(asset?.chart7d || [], "5D");
+  const isChartLoading = Boolean(
+    isOverviewTab &&
+    asset &&
+    chartState.key === chartKey &&
+    chartState.isLoading &&
+    chartData.length < 2
+  );
   const selectedRangeStats = useMemo(() => {
     const preparedData = (Array.isArray(chartData) ? chartData : [])
       .map((point) => ({
@@ -897,12 +947,28 @@ export default function CoinPage() {
       };
     const cachedChart = readCachedValue(chartCacheKey(chartKey), CHART_CACHE_MAX_AGE);
     let cachedChartTimer = null;
+    let chartLoadingTimer = null;
 
     if (cachedChart) {
       cachedChartTimer = window.setTimeout(() => {
         setChartState({
           key: chartKey,
           data: cachedChart,
+          isLoading: false,
+        });
+      }, 0);
+    } else {
+      chartLoadingTimer = window.setTimeout(() => {
+        setChartState((currentState) => {
+          if (currentState.key === chartKey && currentState.data.length > 0) {
+            return currentState;
+          }
+
+          return {
+            key: chartKey,
+            data: [],
+            isLoading: true,
+          };
         });
       }, 0);
     }
@@ -916,6 +982,7 @@ export default function CoinPage() {
         setChartState({
           key: chartKey,
           data: response.data?.chart || [],
+          isLoading: false,
         });
         writeCachedValue(chartCacheKey(chartKey), response.data?.chart || []);
       })
@@ -927,12 +994,17 @@ export default function CoinPage() {
         setChartState({
           key: chartKey,
           data: [],
+          isLoading: false,
         });
       });
 
     return () => {
       if (cachedChartTimer) {
         window.clearTimeout(cachedChartTimer);
+      }
+
+      if (chartLoadingTimer) {
+        window.clearTimeout(chartLoadingTimer);
       }
 
       controller.abort();
@@ -952,8 +1024,8 @@ export default function CoinPage() {
         <div className="app_items Pagecoin_cpntainer">
           <div className="dashboard_container coin_page_container ">
             {isLoading ? (
-              <LoaderAnimation />
-            ) : error ? (
+              <CoinPageHeroLoader />
+            ) : isBlockingError ? (
               <div className="market_error">
                 <p>{error}</p>
               </div>
@@ -1131,6 +1203,9 @@ export default function CoinPage() {
               
             )}
           </div>
+          {isLoading ? (
+            <CoinPageOverviewLoader />
+          ) : isBlockingError ? null : (
           <div className="containerInformaton_about_coin">
             <div className="containerInformaton_about_coin_content">
               <div className="buttons_loader_contentIn_container">
@@ -1192,13 +1267,17 @@ export default function CoinPage() {
                       <div className="container-Chart">
                         <div className="chart_content">
                           <div className="lineChart">
-                            <AssetChart
-                              key={`${chartKey}:${chartData.length}`}
-                              data={chartData}
-                              currencySymbol={currencySymbol}
-                              activeRange={activeChartRange}
-                              currentPrice={currentPrice}
-                            />
+                            {isChartLoading ? (
+                              <LoaderAnimation height={320} rounded="18px" />
+                            ) : (
+                              <AssetChart
+                                key={`${chartKey}:${chartData.length}`}
+                                data={chartData}
+                                currencySymbol={currencySymbol}
+                                activeRange={activeChartRange}
+                                currentPrice={currentPrice}
+                              />
+                            )}
                           </div>
                         </div>
                       </div>
@@ -1324,6 +1403,7 @@ export default function CoinPage() {
               )}
             </div>
           </div>
+          )}
         </div>
       </div>
     </div>

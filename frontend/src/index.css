@@ -196,6 +196,54 @@ html{
 .deleteAccount{
   padding-top: 90px;
 }
+
+.route_auth_check {
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--black);
+}
+
+.route_auth_loader {
+  width: min(360px, calc(100vw - 40px));
+}
+
+.profile_form_action {
+  display: flex;
+  align-items: end;
+  min-height: 76px;
+}
+
+.settings_api_key {
+  min-width: min(100%, 320px);
+}
+
+.delete_account_form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 460px;
+  padding: 16px;
+  border: 1px solid rgba(255, 59, 48, 0.28);
+  border-radius: 18px;
+  background: rgba(255, 59, 48, 0.06);
+}
+
+.delete_account_form p {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.68);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.delete_account_actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
 .title_pages_st p{
   font-size: 32px;
   font-weight: 500;
