@@ -54,7 +54,7 @@ export default function Settings() {
         JSON.stringify({ aiProvider, aiApiKey })
       );
       setIsSavingSettings(false);
-      setAlert({ type: "success", text: "Настройки сохранены." });
+      setAlert({ type: "success", text: "API сохранен." });
     }, 250);
   };
 
@@ -139,7 +139,7 @@ export default function Settings() {
                   </div>
                 </div>
                 <Buttons type="primary-full" htmlType="submit" disabled={isSavingSettings}>
-                  {isSavingSettings ? "Сохраняем..." : "Сохранить настройки"}
+                  {isSavingSettings ? "Загрузка..." : "Сохранить API"}
                 </Buttons>
               </form>
               <div className="line"></div>

@@ -1376,6 +1376,12 @@ display: flex;
     gap: 10px;
     flex-direction: column;
 }
+.containerAnalic, .BlcoksMidleDahs {
+    gap: 10px;
+    padding-top: 10px;
+    display: flex;
+    flex-direction: column !important; 
+}
 .buyBlock {
     min-width: 100%;
 }

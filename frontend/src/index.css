@@ -196,6 +196,9 @@ html{
 .deleteAccount{
   padding-top: 90px;
 }
+    .deleteAccount .button--primary-danger{
+      width: 100%;
+    }
 
 .route_auth_check {
   width: 100vw;
@@ -257,6 +260,7 @@ html{
 }
 .dinamic_buttons{
   padding-top: 16px;
+  padding-bottom: 16px;
   display: flex;
   justify-content: space-between;
     align-items: center;

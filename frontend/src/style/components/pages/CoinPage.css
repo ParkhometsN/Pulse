@@ -982,6 +982,7 @@
     width: 100%;
     padding-top: 12px;
     align-items: center;
+    justify-content: space-between;
 }
 .coin_info_grid{
     grid-template-columns: 1fr;
@@ -1031,6 +1032,7 @@
     width: 100%;
     flex: 1 1 auto;
     min-width: 0;
+    flex-direction: column !important;
 }
 /* .chartuser_container{
     padding: 14px;
