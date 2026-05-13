@@ -69,6 +69,14 @@
     align-items: center;
     gap: 8px;
 }
+.changes_negative p,
+.scoreBag_negative p{
+    color: var(--red) !important;
+}
+.changes_neutral p,
+.scoreBag_neutral p{
+    color: var(--gray) !important;
+}
 .changes_to_day{
     display: flex;
 flex-direction: column;
@@ -324,6 +332,9 @@ align-items: flex-end;
     border-radius: 10px;
     padding: 10px;
 }
+.bagCard_error{
+    border-color: rgba(239, 68, 68, 0.45);
+}
 .Right_block_dsh{
     display: flex;
 }
@@ -343,6 +354,24 @@ align-items: flex-end;
     padding: 10px;
     background-color: var(--black-t);
     border-radius: 16px;
+}
+.scoreBag_positive p{
+    color: var(--green);
+}
+.wallet_card_error{
+    display: block;
+    margin-top: 6px;
+    max-width: 210px;
+    color: var(--red);
+    font-size: 11px;
+    line-height: 1.35;
+    opacity: 0.86;
+}
+.dashboard_portfolio_error{
+    margin: 10px 0 0;
+    color: var(--red);
+    font-size: 12px !important;
+    font-weight: 400 !important;
 }
 .upcardBag{
     display: flex;
@@ -748,6 +777,28 @@ display: flex;
 
 .drawer_provider_shell {
     padding: 0 16px 12px;
+}
+
+.wallet_connection_alert {
+    margin: 0 16px 12px;
+    padding: 10px 12px;
+    border-radius: 14px;
+    font-size: 13px;
+    line-height: 1.4;
+    border: 1px solid var(--black-t);
+    background: var(--black);
+}
+
+.wallet_connection_alert_success {
+    color: var(--green);
+    border-color: rgba(16, 185, 129, 0.36);
+    background: rgba(16, 185, 129, 0.08);
+}
+
+.wallet_connection_alert_error {
+    color: var(--red);
+    border-color: rgba(239, 68, 68, 0.34);
+    background: rgba(239, 68, 68, 0.08);
 }
 
 .drawer_provider_panel {
@@ -1365,7 +1416,39 @@ display: flex;
     flex-direction: row !important;
 }
 }
+@container app-container (max-width: 1050px) {
+.BlcoksMidleDahs {
+    padding-top: 10px;
+    display: flex;
+    gap: 10px;
+    flex-direction: column;
+}
+.containerAnalic {
+    display: flex;
+    padding-top: 10px;
+    gap: 10px;
+    flex-direction: column;
+}
+}
+@container app-container (max-width: 867px) {
 
+.containerAnalic {
+    display: flex;
+    padding-top: 10px;
+    gap: 10px;
+    flex-direction: column;
+}
+.dashboard_container {
+    background-color: var(--black);
+    border: 1.5px solid var(--black-t);
+    border-radius: 16px;
+    padding: 16px;
+    display: flex;
+    justify-content: space-between;
+    gap: 20px;
+    flex-direction: column;
+}
+}
 @media screen and (max-width: 574px){
     .dashboard_container{
       border-radius: 28px;

@@ -112,7 +112,7 @@ export default function Login() {
                         htmlType="submit"
                         disabled={isSubmitting}
                       >
-                        {isSubmitting ? "Входим..." : "Войти"}
+                        {isSubmitting ? "Загрузка..." : "Войти"}
                       </Buttons>
                       <div className="line"></div>
                       <Buttons disabled="disabled" onClick={() => window.alert('Войти с помощью Google')} type="black_prymary-widht">

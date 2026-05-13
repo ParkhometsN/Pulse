@@ -510,10 +510,25 @@
     display: flex;
     flex-direction: column;
     gap: 12px;
+    min-height: 320px;
 }
 
 .coin_asset_news_list .containerNewCard{
     width: 100%;
+    box-sizing: border-box;
+    contain: layout paint;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
+}
+
+.coin_asset_news_list .bannerNewsImg{
+    aspect-ratio: 16 / 7;
+    overflow: hidden;
+}
+
+.coin_asset_news_list .bannerNewsImg img{
+    height: 100%;
+    max-height: none;
+    display: block;
 }
 
 .coin_asset_news_empty{
@@ -802,6 +817,34 @@
     border-color: var(--primary-blue);
 }
 
+.trade_quick_amounts{
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.trade_quick_amounts button{
+    min-height: 38px;
+    border: 1px solid var(--black-t);
+    border-radius: 12px;
+    background-color: var(--black);
+    color: white;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: border-color 0.2s ease, color 0.2s ease, background-color 0.2s ease;
+}
+
+.trade_quick_amounts button:hover:not(:disabled){
+    border-color: var(--primary-blue);
+    color: var(--primary-blue);
+}
+
+.trade_quick_amounts button:disabled{
+    cursor: not-allowed;
+    opacity: 0.45;
+}
+
 .trade_error,
 .trade_hint{
     font-size: 12px;
@@ -831,6 +874,321 @@
     border-radius: 30px;
     align-items: center;
     justify-content: center;
+}
+
+/* Coin page bento layout */
+.Pagecoin_cpntainer{
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.coin_page_container{
+    display: block;
+    width: 100%;
+    min-height: auto;
+    overflow: hidden;
+}
+
+.coin_page_container > div{
+    width: 100%;
+}
+
+.containerInformaton_about_coin{
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.containerInformaton_about_coin_content{
+    position: sticky;
+    top: 0;
+    z-index: 9;
+    padding: 10px 10px 0;
+    margin: -10px -10px 0;
+    background: linear-gradient(180deg, var(--black-s) 0%, rgba(28, 28, 30, 0.92) 78%, rgba(28, 28, 30, 0) 100%);
+    backdrop-filter: blur(14px);
+}
+
+.buttons_loader_contentIn_container{
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding-bottom: 8px;
+    scrollbar-width: none;
+}
+
+.buttons_loader_contentIn_container::-webkit-scrollbar{
+    display: none;
+}
+
+.buttons_loader_contentIn_container .button{
+    flex: 0 0 auto;
+    min-height: 40px;
+}
+
+.content_container{
+    gap: 14px;
+}
+
+.uPContainerPageCoin{
+    min-width: 0;
+    flex-wrap: wrap;
+}
+
+.NameCoin{
+    color: var(--gray);
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.fnsizw{
+    flex: 0 0 auto;
+}
+
+.ourBlockdown{
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: stretch;
+    gap: 16px;
+}
+
+.midleBlockOfCoin{
+    min-width: 0;
+}
+
+.titleBlockCoinPage{
+    min-width: 0;
+    max-width: 100%;
+}
+
+.textinfCoun{
+    min-width: 0;
+}
+
+.ttcoin{
+    max-width: 100%;
+    min-width: 0;
+}
+
+.ttcoin h1,
+.ttcoin p{
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.PriceBlock{
+    align-items: flex-end;
+}
+
+.PriceBlock h1{
+    line-height: 1;
+}
+
+
+.downBlockCoinPage{
+    display: flex;
+    align-items: flex-start;
+    justify-content: flex-end;
+}
+
+.elemetsOfContriroll{
+    padding-top: 0;
+    align-items: center;
+}
+
+.ContwainerBagsAdd{
+    min-width: 0;
+}
+
+.renderContent{
+    min-width: 0;
+}
+
+.chartUserContainer{
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(320px, 390px);
+    gap: 10px;
+    align-items: stretch;
+}
+
+.usV{
+    min-width: 0 !important;
+    width: 100%;
+}
+
+.chartuser{
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: stretch;
+}
+
+.chartuser_container{
+    min-width: 0;
+    min-height: 64px;
+}
+
+.buttonChart{
+    min-width: 0;
+}
+
+.buttonChart_container{
+    min-height: 64px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+}
+
+.buttonChart_container::-webkit-scrollbar{
+    display: none;
+}
+
+.buttonChart_container .button{
+    flex: 0 0 auto;
+}
+
+.chart{
+    min-height: clamp(370px, 48vh, 560px);
+}
+
+.container-Chart{
+    min-height: inherit;
+}
+
+.ContainerRightINF{
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: stretch !important;
+    width: 100%;
+    min-width: 0;
+}
+
+.AiPrognathation_content,
+.GlassOfBuySell{
+    min-width: 0;
+}
+
+.AiPrognathation_content{
+    gap: 16px;
+}
+
+.modleBlock{
+    gap: 14px;
+}
+
+.textItems{
+    min-width: 0;
+    gap: 12px;
+}
+
+.tAI h5{
+    font-size: 15px;
+    line-height: 1.3;
+}
+
+.SecleChartContainer{
+    width: clamp(112px, 9vw, 150px);
+    height: clamp(112px, 9vw, 150px);
+    border-width: clamp(11px, 1.1vw, 16px);
+    flex: 0 0 auto;
+}
+
+.midleSercle{
+    width: 100px;
+    height: 100px;
+}
+
+.centerPersent{
+    padding: 12px;
+}
+
+.glassSellBuy{
+    min-width: 0;
+}
+
+.sellGlass,
+.buyGlass{
+    min-width: 0;
+}
+
+.PriceUSDC,
+.PriceUSDCSell,
+.QTYBTC{
+    min-width: 0;
+}
+
+.QTYBTC{
+    color: var(--gray);
+    text-align: right;
+}
+
+.PriceUSDC p,
+.PriceUSDCSell p{
+    min-width: 92px;
+    max-width: 116px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.coin_tab_content{
+    min-width: 0;
+}
+
+.coin_info_grid{
+    grid-template-columns: repeat(auto-fit, minmax(155px, 1fr));
+}
+
+.coin_asset_news_list .containerNewCard{
+    box-sizing: border-box;
+}
+
+.trade_drawer{
+    padding-bottom: max(10px, env(safe-area-inset-bottom));
+}
+
+@container app-container (max-width: 1216px) {
+    .Pagecoin_cpntainer .chartUserContainer{
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .Pagecoin_cpntainer .ContainerRightINF{
+        display: grid !important;
+        grid-template-columns: minmax(0, 1fr) minmax(300px, 390px);
+        flex-direction: initial !important;
+    }
+}
+@container app-container (max-width: 900px) {
+.chartuser {
+    display: flex;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: stretch;
+    justify-content: space-between;
+    flex-direction: column;
+}
+.buttonChart_container {
+    min-height: 64px;
+    width: 100%;
+    display: flex;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    justify-content: space-between;
+}
+}
+
+
+@container app-container (max-width: 860px) {
+    .Pagecoin_cpntainer .ContainerRightINF{
+        display: flex !important;
+        flex-direction: column !important;
+    }
 }
 
 
@@ -863,22 +1221,28 @@
     flex-direction: column;
 }
 .ourBlockdown{
+    display: flex;
     gap: 16px;
     flex-direction: column;
 }
 .chartUserContainer{
-    flex-direction: column;
+    display: grid;
+    grid-template-columns: 1fr;
 }
 .ContainerRightINF{
     width: 100%;
     flex: 1 1 auto;
     min-width: 0;
+    display: flex !important;
+    flex-direction: column !important;
 }
 .downBlockCoinPage{
     width: 100%;
+    justify-content: stretch;
 }
 .elemetsOfContriroll{
     width: 100%;
+    justify-content: flex-start;
 }
 .coin_info_grid{
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -895,6 +1259,31 @@
     justify-content: space-between;
     align-items: flex-start;
     flex-direction: column;
+}
+
+.Pagecoin_cpntainer{
+    padding: 8px;
+}
+
+.coin_page_container{
+    border-radius: 20px;
+    padding: 14px;
+}
+
+.content_container{
+    padding-bottom: 4px;
+}
+
+.fnsizw{
+    width: 100%;
+}
+
+.moodCoim{
+    width: 100%;
+}
+
+.elemetsOfContriroll .ContwainerBagsAdd{
+    flex: 1 1 auto;
 }
 
 
@@ -918,17 +1307,17 @@
     height: 100%;
 }
 .PriceBlock h1 {
-        font-weight: 600;
-        height: 100%;
-        font-size: 6vw;
-    }
-.PriceBlock {
-        padding-top: 0px;
-    display: flex;
-    gap: 0px;
-    align-items: center;
-    flex-direction: column;
+    font-weight: 600;
+    font-size: clamp(30px, 10vw, 42px);
 }
+    .PriceBlock {
+        padding-top: 0;
+        display: flex;
+        gap: 8px;
+        align-items: flex-end;
+        flex-direction: column;
+    }
+
 /* .PersentChanges{
     background-color: var(--black-s);
     padding: 10px;
@@ -939,7 +1328,18 @@
     border-radius: 20px;
 } */
 .ttcoin h1 {
-    font-size: 26px;
+    font-size: 21px;
+}
+.moodIndication {
+    display: flex;
+    gap: 0;
+    align-items: center;
+    width: 128px;
+    height: 10px;
+    overflow: hidden;
+    border-radius: 999px;
+    background-color: var(--black-s);
+    border: 1px solid var(--black-t);
 }
 .ttcoin p {
     opacity: 0.5;
@@ -949,15 +1349,15 @@
     width: 54px;
     border-radius: 50%;
 }
-    .midleBlockOfCoin {
-        gap: 13px;
-        padding-bottom: 16px;
-        display: flex;
-        flex-direction: row;
-        width: 100%;
-        align-items: center;
-        justify-content: space-between;
-    }
+.midleBlockOfCoin {
+    gap: 13px;
+    padding-bottom: 10px;
+    display: flex;
+flex-direction: row;
+    width: 100%;
+    align-items: stretch;
+    justify-content: space-between;
+}
 .ttcoin {
     gap: 0px;
     flex-direction: column;
@@ -978,9 +1378,9 @@
 }
 .elemetsOfContriroll {
     display: flex;
-    gap: 14px;
+    gap: 10px;
     width: 100%;
-    padding-top: 12px;
+    padding-top: 0;
     align-items: center;
     justify-content: space-between;
 }
@@ -993,7 +1393,7 @@
 .coin_info_sentiment{
     min-width: 0;
 }
-.button--primary-buy {
+.elemetsOfContriroll .button--primary-buy {
     background-color: var(--primary-blue);
     color: white;
     display: flex;
@@ -1010,6 +1410,7 @@
 }
 
 .chartuser{
+    display: flex;
     flex-direction: column;
 }
 
@@ -1050,6 +1451,96 @@
 }
 
 .coin_tab_grid{
+    grid-template-columns: 1fr;
+}
+.dashboard_container {
+
+    flex-direction: column;
+}
+
+.containerInformaton_about_coin_content{
+    padding: 8px 8px 0;
+    margin: -8px -8px 0;
+}
+
+.buttons_loader_contentIn_container{
+    gap: 6px;
+}
+
+.buttons_loader_contentIn_container .button{
+    min-height: 38px;
+    padding-inline: 12px;
+    font-size: 13px;
+}
+
+.titleBlockCoinPage{
+    padding: 0;
+    align-items: flex-start;
+}
+
+.coinStokIMg img,
+.coinStokIMg .coin_page_icon {
+    width: 54px;
+    height: 54px;
+}
+
+.PersentChanges{
+    box-sizing: border-box;
+}
+
+.chartuser_container{
+    padding: 14px;
+    align-items: flex-start;
+}
+
+.chart{
+    min-height: 360px;
+}
+
+.AiPrognathation_content,
+.GlassOfBuySell{
+    border-radius: 16px;
+    padding: 14px;
+}
+
+.modleBlock{
+    align-items: flex-start;
+}
+
+.SecleChartContainer{
+    width: 104px;
+    height: 104px;
+    border-width: 10px;
+}
+
+.downAIBlock{
+    gap: 12px;
+}
+
+.priceUpGlass{
+    flex-wrap: wrap;
+}
+
+.glassSellBuy{
+    overflow-x: auto;
+    padding-bottom: 2px;
+}
+
+.PriceUSDC p,
+.PriceUSDCSell p{
+    min-width: 86px;
+    max-width: 100px;
+    font-size: 12px;
+}
+
+.QTYBTC p,
+.PriceUSDC h5,
+.PriceUSDCSell h5{
+    font-size: 12px;
+}
+
+.trade_balance_grid,
+.trade_result_card{
     grid-template-columns: 1fr;
 }
 }

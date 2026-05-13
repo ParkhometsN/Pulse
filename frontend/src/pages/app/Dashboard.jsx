@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Drawer,
   DrawerClose,
@@ -21,6 +21,7 @@ import { Link, useNavigate } from "react-router-dom";
 import Buttons from "../../components/UI/buttons";
 import Inputs from "../../components/UI/inputs";
 import LoaderAnimation from "../../components/ui/loaderAnimation";
+import AreYouShure from "../../components/ui/DilogShure";
 import KebabMenu from "@/components/ui/cebab";
 import RadioButtins from "@/components/ui/radioButton";
 import BuysellCardMinicard from "@/components/ui/buysellCardMinicard";
@@ -33,12 +34,36 @@ import BybitIcon from "../../assets/svg/bybiticon.svg";
 
 import axios from "axios";
 import api from "../../lib/api";
+import { getApiErrorMessage } from "../../lib/apiError";
 import { readCachedValue, writeCachedValue } from "../../lib/clientCache";
 
 const GUIDE_PDF_URL = "/docs/bybitisruction.pdf";
-const TOTAL_CAPITAL = 17430021.12;
+const TBANK_GUIDE_PDF_URL = "/docs/TBANKAPIINSTUCTIONS.pdf";
 const DASHBOARD_TOP_GROWTH_CACHE_KEY = "pulse:dashboard:top-growth:v1";
+const DASHBOARD_PORTFOLIO_CACHE_KEY = "pulse:dashboard:portfolio-summary:v1";
+const DASHBOARD_ANALYTICS_CACHE_KEY = "pulse:dashboard:portfolio-analytics:v1";
 const DASHBOARD_TOP_GROWTH_CACHE_MAX_AGE = 1000 * 60 * 5;
+const DASHBOARD_PORTFOLIO_CACHE_MAX_AGE = 1000 * 30;
+const DASHBOARD_ANALYTICS_CACHE_MAX_AGE = 1000 * 60;
+const DASHBOARD_PORTFOLIO_REFRESH_INTERVAL = 1000 * 15;
+
+const EMPTY_PORTFOLIO_SUMMARY = {
+  totalValueRub: 0,
+  changeRub: 0,
+  changePercent: 0,
+  wallets: [],
+  updatedAt: null,
+};
+
+const EMPTY_PORTFOLIO_ANALYTICS = {
+  activityGrid: [],
+  chart: {
+    month: [],
+    week: [],
+    day: [],
+  },
+  updatedAt: null,
+};
 
 const ACTIVITY_GRID = [
   0, 1, 0, 2, 1, 3, 0, 1,
@@ -159,7 +184,7 @@ const TRADE_HISTORY = [
   },
 ];
 
-const pieData = [
+const FALLBACK_PIE_DATA = [
   { name: "Криптовалюта", value: 38 },
   { name: "Акции", value: 34 },
   { name: "металлы", value: 28 },
@@ -197,17 +222,30 @@ const BASE_YEAR_SERIES = {
   ],
 };
 
-const formatCurrency = (value) =>
-  value.toLocaleString("ru-RU", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
-
 const formatRub = (value) =>
   Number(value).toLocaleString("ru-RU", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
+
+const formatSignedMoney = (value, symbol = "₽") => {
+  const number = Number(value) || 0;
+  const sign = number > 0 ? "+" : number < 0 ? "-" : "";
+
+  return `${sign}${formatRub(Math.abs(number))} ${symbol}`;
+};
+
+const formatCompactNumber = (value) => {
+  const number = Number(value);
+
+  if (!Number.isFinite(number)) {
+    return "0";
+  }
+
+  return number.toLocaleString("ru-RU", {
+    maximumFractionDigits: number >= 10 ? 2 : 6,
+  });
+};
 
 const formatPercent = (value) => {
   const number = Number(value);
@@ -232,6 +270,36 @@ const CustomPieTooltip = ({ active, payload }) => {
       <div className="pieTooltip__value">{item.value}%</div>
     </div>
   );
+};
+
+const getProviderIcon = (provider) => {
+  if (provider === "tbank") {
+    return Tbankicon;
+  }
+
+  return BybitIcon;
+};
+
+const getChangeTone = (value) => {
+  const number = Number(value) || 0;
+
+  if (number > 0) {
+    return "positive";
+  }
+
+  if (number < 0) {
+    return "negative";
+  }
+
+  return "neutral";
+};
+
+const getAssetRouteType = (asset) => {
+  if (asset.provider === "bybit" || asset.type === "crypto") {
+    return "crypto";
+  }
+
+  return "stock";
 };
 
 function SectionLoader({ height = 160, className = "" }) {
@@ -274,22 +342,80 @@ export default function Dashboard() {
   const [chartPeriod, setChartPeriod] = useState("month");
   const [chartYearIndex, setChartYearIndex] = useState(2);
   const [dashboardReady, setDashboardReady] = useState(false);
-  const [selectedProvider, setSelectedProvider] = useState("bybit");
+  const [selectedProvider, setSelectedProvider] = useState("tbank");
   const [selectedWalletStep, setSelectedWalletStep] = useState(null);
   const [walletDrawerOpen, setWalletDrawerOpen] = useState(false);
   const [tradeSourceFilter, setTradeSourceFilter] = useState("all");
+  const [portfolioSummary, setPortfolioSummary] = useState(
+    () => readCachedValue(DASHBOARD_PORTFOLIO_CACHE_KEY, DASHBOARD_PORTFOLIO_CACHE_MAX_AGE)
+      || EMPTY_PORTFOLIO_SUMMARY
+  );
+  const [portfolioAnalytics, setPortfolioAnalytics] = useState(
+    () => readCachedValue(DASHBOARD_ANALYTICS_CACHE_KEY, DASHBOARD_ANALYTICS_CACHE_MAX_AGE)
+      || EMPTY_PORTFOLIO_ANALYTICS
+  );
+  const [isPortfolioLoading, setIsPortfolioLoading] = useState(
+    () => !readCachedValue(DASHBOARD_PORTFOLIO_CACHE_KEY, DASHBOARD_PORTFOLIO_CACHE_MAX_AGE)
+  );
+  const [portfolioError, setPortfolioError] = useState("");
   const [topGrowthAssets, setTopGrowthAssets] = useState(
     () => readCachedValue(DASHBOARD_TOP_GROWTH_CACHE_KEY, DASHBOARD_TOP_GROWTH_CACHE_MAX_AGE) || []
   );
   const [isTopGrowthLoading, setIsTopGrowthLoading] = useState(topGrowthAssets.length === 0);
   const [apiKey, setApiKey] = useState("");
   const [apiSecret, setApiSecret] = useState("");
+  const [tbankToken, setTbankToken] = useState("");
+  const [isWalletConnecting, setIsWalletConnecting] = useState(false);
+  const [isWalletDeleting, setIsWalletDeleting] = useState(false);
+  const [walletPendingDelete, setWalletPendingDelete] = useState(null);
+  const [walletConnectMessage, setWalletConnectMessage] = useState(null);
   const [currency, setCurrency] = useState({
-    code: "USD",
-    symbol: "$",
+    code: "RUB",
+    symbol: "₽",
   });
   const navigate = useNavigate();
-  const baseMoneyInRub = 17430021.12;
+
+  const fetchPortfolioSummary = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) {
+      setIsPortfolioLoading(true);
+    }
+
+    try {
+      const response = await api.get("/portfolio/summary");
+      const nextSummary = {
+        ...EMPTY_PORTFOLIO_SUMMARY,
+        ...response.data,
+        wallets: response.data?.wallets || [],
+      };
+
+      setPortfolioSummary(nextSummary);
+      writeCachedValue(DASHBOARD_PORTFOLIO_CACHE_KEY, nextSummary);
+      setPortfolioError("");
+    } catch (error) {
+      setPortfolioError(getApiErrorMessage(error, "Не удалось загрузить портфель."));
+    } finally {
+      setIsPortfolioLoading(false);
+    }
+  }, []);
+
+  const fetchPortfolioAnalytics = useCallback(async () => {
+    try {
+      const response = await api.get("/portfolio/analytics");
+      const nextAnalytics = {
+        ...EMPTY_PORTFOLIO_ANALYTICS,
+        ...response.data,
+        chart: {
+          ...EMPTY_PORTFOLIO_ANALYTICS.chart,
+          ...(response.data?.chart || {}),
+        },
+      };
+
+      setPortfolioAnalytics(nextAnalytics);
+      writeCachedValue(DASHBOARD_ANALYTICS_CACHE_KEY, nextAnalytics);
+    } catch {
+      setPortfolioAnalytics((currentAnalytics) => currentAnalytics);
+    }
+  }, []);
 
   useEffect(() => {
     axios
@@ -309,6 +435,43 @@ export default function Dashboard() {
 
     return () => window.clearTimeout(timer);
   }, []);
+
+  useEffect(() => {
+    const refreshPortfolioData = async ({ silent = false } = {}) => {
+      await fetchPortfolioSummary({ silent });
+      await fetchPortfolioAnalytics();
+    };
+
+    const initialRefresh = window.setTimeout(() => {
+      refreshPortfolioData();
+    }, 0);
+
+    const refreshInterval = window.setInterval(() => {
+      refreshPortfolioData({ silent: true });
+    }, DASHBOARD_PORTFOLIO_REFRESH_INTERVAL);
+
+    return () => {
+      window.clearTimeout(initialRefresh);
+      window.clearInterval(refreshInterval);
+    };
+  }, [fetchPortfolioAnalytics, fetchPortfolioSummary]);
+
+  useEffect(() => {
+    const refreshVisiblePortfolio = async () => {
+      if (document.visibilityState === "visible") {
+        await fetchPortfolioSummary({ silent: true });
+        await fetchPortfolioAnalytics();
+      }
+    };
+
+    window.addEventListener("focus", refreshVisiblePortfolio);
+    document.addEventListener("visibilitychange", refreshVisiblePortfolio);
+
+    return () => {
+      window.removeEventListener("focus", refreshVisiblePortfolio);
+      document.removeEventListener("visibilitychange", refreshVisiblePortfolio);
+    };
+  }, [fetchPortfolioAnalytics, fetchPortfolioSummary]);
 
   useEffect(() => {
     let isMounted = true;
@@ -381,37 +544,140 @@ export default function Dashboard() {
   }, []);
 
   const chartYear = CHART_YEARS[chartYearIndex] || CHART_YEARS[0];
-  const chartData = (BASE_YEAR_SERIES[chartPeriod] || BASE_YEAR_SERIES.month).map(
-    (point, index) => ({
-      ...point,
-      value: point.value + (chartYearIndex * 0.5) + (index * 0.08),
-    })
+  const connectedWallets = portfolioSummary.wallets || [];
+  const connectedProviders = Array.from(
+    new Set(
+      connectedWallets
+        .filter((wallet) => wallet.status === "active")
+        .map((wallet) => wallet.provider)
+    )
   );
-  const filteredTrades =
-    tradeSourceFilter === "all"
-      ? TRADE_FEED
-      : TRADE_FEED.filter((item) => item.source === tradeSourceFilter);
+  const portfolioAssets = connectedWallets.flatMap((wallet) =>
+    (wallet.assets || []).map((asset) => ({
+      ...asset,
+      walletId: wallet.id,
+      provider: asset.provider || wallet.provider,
+      providerLabel: asset.providerLabel || wallet.providerLabel,
+    }))
+  );
+  const activeTradeSourceFilter =
+    tradeSourceFilter !== "all" && !connectedProviders.includes(tradeSourceFilter)
+      ? "all"
+      : tradeSourceFilter;
+  const portfolioValueRub = Number(portfolioSummary.totalValueRub) || 0;
+  const portfolioChangeRub = Number(portfolioSummary.changeRub) || 0;
+  const portfolioChangePercent = Number(portfolioSummary.changePercent) || 0;
+  const convertRubAmount = useCallback(
+    (valueRub) => {
+      if (currency.code === "RUB" || !rates?.RUB || !rates?.[currency.code]) {
+        return Number(valueRub) || 0;
+      }
+
+      const moneyInUSD = (Number(valueRub) || 0) / rates.RUB;
+      return moneyInUSD * rates[currency.code];
+    },
+    [currency.code, rates]
+  );
   const convertedMoney = useMemo(() => {
-    if (!rates) {
-      return null;
+    return formatRub(convertRubAmount(portfolioValueRub));
+  }, [convertRubAmount, portfolioValueRub]);
+  const convertedPortfolioChange = useMemo(
+    () => convertRubAmount(portfolioChangeRub),
+    [convertRubAmount, portfolioChangeRub]
+  );
+  const analyticsChartData = portfolioAnalytics.chart?.[chartPeriod] || [];
+  const chartData = analyticsChartData.length
+    ? analyticsChartData
+    : (BASE_YEAR_SERIES[chartPeriod] || BASE_YEAR_SERIES.month).map(
+      (point, index) => ({
+        ...point,
+        value: portfolioValueRub
+          ? portfolioValueRub * (0.96 + index * 0.008)
+          : point.value + (chartYearIndex * 0.5) + (index * 0.08),
+      })
+    );
+  const activityGrid = portfolioAnalytics.activityGrid?.length
+    ? portfolioAnalytics.activityGrid
+    : ACTIVITY_GRID;
+  const filteredPortfolioAssets =
+    activeTradeSourceFilter === "all"
+      ? portfolioAssets
+      : portfolioAssets.filter((item) => item.provider === activeTradeSourceFilter);
+  const boughtAssetsList = filteredPortfolioAssets
+    .filter((asset) => Number(asset.valueRub) > 0)
+    .sort((firstAsset, secondAsset) => Number(secondAsset.valueRub) - Number(firstAsset.valueRub));
+  const portfolioPieData = (() => {
+    const groups = portfolioAssets.reduce((acc, asset) => {
+      const label = getAssetRouteType(asset) === "crypto" ? "Криптовалюта" : "Акции";
+      acc[label] = (acc[label] || 0) + (Number(asset.valueRub) || 0);
+      return acc;
+    }, {});
+    const total = Object.values(groups).reduce((sum, value) => sum + value, 0);
+
+    if (!total) {
+      return FALLBACK_PIE_DATA;
     }
 
-    if (currency.code === "RUB") {
-      return formatRub(baseMoneyInRub);
-    }
+    return Object.entries(groups).map(([name, value]) => ({
+      name,
+      value: Math.round((value / total) * 100),
+    }));
+  })();
 
-    const moneyInUSD = baseMoneyInRub / rates.RUB;
-    const converted = moneyInUSD * rates[currency.code];
-
-    return formatRub(converted);
-  }, [currency.code, rates]);
+  const portfolioChangeTone = getChangeTone(portfolioChangeRub);
+  const portfolioChangeText = `${formatSignedMoney(convertedPortfolioChange, currency.symbol)} (${formatPercent(portfolioChangePercent)})`;
+  const dashboardTopLoading = !dashboardReady || (isPortfolioLoading && !portfolioSummary.updatedAt);
 
   const menuItems = [
-    { id: 1, label: "Удалить кошелек", danger: true },
+    { id: "delete-wallet", label: "Удалить кошелек", danger: true },
   ];
 
-  const handleMenuClick = (item) => {
-    console.log("Выбран:", item.label);
+  const handleMenuClick = async (item, wallet) => {
+    if (item.id !== "delete-wallet" || !wallet?.id) {
+      return;
+    }
+
+    setWalletPendingDelete(wallet);
+  };
+
+  const confirmDeleteWallet = async () => {
+    if (!walletPendingDelete?.id) {
+      setWalletPendingDelete(null);
+      return;
+    }
+
+    setIsWalletDeleting(true);
+
+    try {
+      await api.delete(`/wallets/${walletPendingDelete.id}`);
+      setPortfolioSummary((currentSummary) => {
+        const nextWallets = (currentSummary.wallets || []).filter(
+          (wallet) => wallet.id !== walletPendingDelete.id
+        );
+        const nextSummary = {
+          ...currentSummary,
+          wallets: nextWallets,
+          totalValueRub: nextWallets.reduce(
+            (sum, wallet) => sum + (Number(wallet.totalValueRub) || 0),
+            0
+          ),
+          changeRub: nextWallets.reduce(
+            (sum, wallet) => sum + (Number(wallet.changeRub) || 0),
+            0
+          ),
+        };
+
+        writeCachedValue(DASHBOARD_PORTFOLIO_CACHE_KEY, nextSummary);
+        return nextSummary;
+      });
+      setWalletPendingDelete(null);
+      await fetchPortfolioSummary({ silent: true });
+      await fetchPortfolioAnalytics();
+    } catch (error) {
+      setPortfolioError(getApiErrorMessage(error, "Не удалось удалить кошелек."));
+    } finally {
+      setIsWalletDeleting(false);
+    }
   };
 
   const handleChooseProvider = () => {
@@ -425,6 +691,72 @@ export default function Dashboard() {
 
   const handleBackToProviders = () => {
     setSelectedWalletStep(null);
+    setWalletConnectMessage(null);
+  };
+
+  const handleConnectWallet = async () => {
+    setWalletConnectMessage(null);
+
+    if (selectedWalletStep === "bybit") {
+      if (!apiKey.trim() || !apiSecret.trim()) {
+        setWalletConnectMessage({
+          type: "error",
+          text: "Введите API key и API secret Bybit.",
+        });
+        return;
+      }
+    } else if (!tbankToken.trim()) {
+      setWalletConnectMessage({
+        type: "error",
+        text: "Вставьте токен T-Invest API.",
+      });
+      return;
+    }
+
+    setIsWalletConnecting(true);
+
+    try {
+      if (selectedWalletStep === "bybit") {
+        await api.post("/wallets/bybit/connect", {
+          api_key: apiKey.trim(),
+          api_secret: apiSecret.trim(),
+        });
+      } else {
+        await api.post("/wallets/tbank/connect", {
+          api_token: tbankToken.trim(),
+        });
+      }
+
+      setWalletConnectMessage({
+        type: "success",
+        text: selectedWalletStep === "bybit"
+          ? "Bybit подключен. Обновляю портфель."
+          : "Т Банк подключен. Обновляю портфель.",
+      });
+      setApiKey("");
+      setApiSecret("");
+      setTbankToken("");
+      await fetchPortfolioSummary({ silent: true });
+      await fetchPortfolioAnalytics();
+      window.setTimeout(() => {
+        setWalletDrawerOpen(false);
+        setSelectedWalletStep(null);
+        setSelectedProvider("tbank");
+        setWalletConnectMessage(null);
+      }, 450);
+    } catch (error) {
+      setWalletConnectMessage({
+        type: "error",
+        text: getApiErrorMessage(
+          error,
+          selectedWalletStep === "bybit"
+            ? "Не удалось подключить Bybit."
+            : "Не удалось подключить Т Банк."
+        ),
+      });
+    } finally {
+      setIsWalletConnecting(false);
+    }
   };
 
   const changeCurrency = () => {
@@ -453,13 +785,38 @@ export default function Dashboard() {
     navigate(`/app/market/coin-page?type=${asset.type}&symbol=${encodeURIComponent(asset.symbol)}`);
   };
 
+  const openPortfolioAsset = (asset) => {
+    const routeType = getAssetRouteType(asset);
+    const symbol = asset.symbol || asset.shortName || asset.coin || asset.figi;
+
+    if (!symbol) {
+      return;
+    }
+
+    navigate(`/app/market/coin-page?type=${routeType}&symbol=${encodeURIComponent(symbol)}`);
+  };
+
   return (
     <div className="app_pages">
+      {walletPendingDelete ? (
+        <AreYouShure
+          TitledilogAlert="Удалить портфель?"
+          Descriptionactive={`Портфель ${walletPendingDelete.providerLabel || "кошелька"} будет отключен от Pulse. Данные счета перестанут обновляться на дашборде.`}
+          BackButtonAlertText="Отмена"
+          ShureButtonAlertText={isWalletDeleting ? "Удаляем..." : "Удалить"}
+          onClickBackAlert={() => {
+            if (!isWalletDeleting) {
+              setWalletPendingDelete(null);
+            }
+          }}
+          onClickShureAlert={confirmDeleteWallet}
+        />
+      ) : null}
       <div className="app_content">
         <div className="app_items">
           <div className="dashboard_content">
             <div className="dashboard_container">
-              {!dashboardReady ? (
+              {dashboardTopLoading ? (
                 <SectionLoader height={220} className="dashboard_top_loader" />
               ) : (
                 <>
@@ -473,69 +830,67 @@ export default function Dashboard() {
 
                     <div className="moneyAll">
                       <p className="titlePriceDAsh">
-                        {convertedMoney ? `${convertedMoney} ${currency.symbol}` : ""}
+                        {`${convertedMoney} ${currency.symbol}`}
                       </p>
 
                       <div className="changes_to_day">
-                        <p className="changes_to_day_label">за сегодня</p>
-                        <div className="changes">
+                        <p className="changes_to_day_label">рост активов</p>
+                        <div className={`changes changes_${portfolioChangeTone}`}>
                           <img src={ChartUP} alt="chartup" />
-                          <p>+0,58 ₽ (0,87%)</p>
+                          <p>{portfolioChangeText}</p>
                         </div>
                       </div>
                     </div>
+
+                    {portfolioError ? (
+                      <p className="dashboard_portfolio_error">{portfolioError}</p>
+                    ) : null}
                   </div>
 
                   <div className="Right_block_dsh">
-                    <div className="bagCard">
-                      <div className="upcardBag">
-                        <div className="titlebag">
-                          <div className="iconCard">
-                            <img src={Tbankicon} alt="bankIcon" />
-                          </div>
-                          <p>Т Банк</p>
-                        </div>
-                        <div className="scoreBag">
-                          <p style={{ color: "var(--green)" }}>+0,58 ₽ (0,87%)</p>
-                        </div>
-                      </div>
-                      <div className="downCardBag">
-                        <div className="scoreBagDown">
-                          <p>брокерский счет</p>
-                          <h4>12 763,9 ₽</h4>
-                        </div>
-                        <KebabMenu
-                          items={menuItems}
-                          onItemClick={handleMenuClick}
-                          position="bottom-right"
-                        />
-                      </div>
-                    </div>
+                    {connectedWallets.map((wallet) => {
+                      const walletTone = getChangeTone(wallet.changeRub);
+                      const convertedWalletChange = convertRubAmount(wallet.changeRub);
+                      const convertedWalletValue = convertRubAmount(wallet.totalValueRub);
+                      const walletChangeText = wallet.status === "error"
+                        ? "ошибка синхронизации"
+                        : `${formatSignedMoney(convertedWalletChange, currency.symbol)} (${formatPercent(wallet.changePercent)})`;
 
-                    <div className="bagCard">
-                      <div className="upcardBag">
-                        <div className="titlebag">
-                          <div className="iconCard">
-                            <img src={BybitIcon} alt="bankIcon" />
+                      return (
+                        <div
+                          className={`bagCard bagCard_${wallet.status || "active"}`}
+                          key={wallet.id}
+                        >
+                          <div className="upcardBag">
+                            <div className="titlebag">
+                              <div className="iconCard">
+                                <img src={getProviderIcon(wallet.provider)} alt={wallet.providerLabel} />
+                              </div>
+                              <p>{wallet.providerLabel}</p>
+                            </div>
+                            <div className={`scoreBag scoreBag_${walletTone}`}>
+                              <p>{walletChangeText}</p>
+                            </div>
                           </div>
-                          <p>Bybit</p>
+                          <div className="downCardBag">
+                            <div className="scoreBagDown">
+                              <p>
+                                {wallet.accountTypeLabel}
+                              </p>
+                              <h4>{formatRub(convertedWalletValue)} {currency.symbol}</h4>
+                              {wallet.status === "error" && wallet.error ? (
+                                <span className="wallet_card_error">{wallet.error}</span>
+                              ) : null}
+                            </div>
+                            <KebabMenu
+                              items={menuItems}
+                              onItemClick={(item) => handleMenuClick(item, wallet)}
+                              position="bottom-right"
+                            />
+                          </div>
                         </div>
-                        <div className="scoreBag">
-                          <p style={{ color: "var(--green)" }}>+0,58 ₽ (0,87%)</p>
-                        </div>
-                      </div>
-                      <div className="downCardBag">
-                        <div className="scoreBagDown">
-                          <p>биржевой счет</p>
-                          <h4>9 840,2 ₽</h4>
-                        </div>
-                        <KebabMenu
-                          items={menuItems}
-                          onItemClick={handleMenuClick}
-                          position="bottom-right"
-                        />
-                      </div>
-                    </div>
+                      );
+                    })}
 
                     <Drawer
                         open={walletDrawerOpen}
@@ -543,9 +898,11 @@ export default function Dashboard() {
                           setWalletDrawerOpen(open);
                           if (!open) {
                             setSelectedWalletStep(null);
-                            setSelectedProvider("bybit");
+                            setSelectedProvider("tbank");
                             setApiKey("");
                             setApiSecret("");
+                            setTbankToken("");
+                            setWalletConnectMessage(null);
                           }
                         }}
                       >
@@ -569,16 +926,22 @@ export default function Dashboard() {
                                 ? "Выберите портфели"
                                 : selectedWalletStep === "bybit"
                                   ? "Введите ключи Bybit"
-                                  : "Подключение Т Банк"}
+                                  : "Введите токен Т Банка"}
                             </DrawerTitle>
                             <DrawerDescription className="drawer_description_dashboard">
                               {!selectedWalletStep
                                 ? "Подключите тот сервис, из которого мы будем подтягивать активы."
                                 : selectedWalletStep === "bybit"
                                   ? "Так мы получим данные о вашем портфеле и покажем их в портфеле. Доступ можно закрыть в любой момент."
-                                  : "Для этого сервиса форма подключения появится позже."}
+                                  : "Нужен токен T-Invest API с доступом к чтению портфеля. Доступ можно закрыть в личном кабинете Т Банка."}
                             </DrawerDescription>
                           </DrawerHeader>
+
+                          {walletConnectMessage ? (
+                            <div className={`wallet_connection_alert wallet_connection_alert_${walletConnectMessage.type}`}>
+                              {walletConnectMessage.text}
+                            </div>
+                          ) : null}
 
                           {!selectedWalletStep ? (
                             <div className="drawer_provider_shell">
@@ -595,18 +958,26 @@ export default function Dashboard() {
                                   <h3>Введите ключи Bybit</h3>
                                   <p>
                                     Так мы получим данные о вашем портфеле и покажем их в портфеле.
-                                    Доступ можно закрыть в любой момент.
+                                    Доступ можно закрыть в любой момент. Для Pulse достаточно прав чтения.
                                   </p>
                                 </div>
                               </div>
 
-                              <div className="wallet_form">
+                              <form
+                                id="wallet-connect-form"
+                                className="wallet_form"
+                                onSubmit={(event) => {
+                                  event.preventDefault();
+                                  handleConnectWallet();
+                                }}
+                              >
                                 <Inputs
                                   variant="primary"
                                   type="text"
                                   value={apiKey}
                                   onChange={(event) => setApiKey(event.target.value)}
                                   placeholder="API key"
+                                  autoComplete="off"
                                 />
                                 <Inputs
                                   variant="primary"
@@ -614,6 +985,7 @@ export default function Dashboard() {
                                   value={apiSecret}
                                   onChange={(event) => setApiSecret(event.target.value)}
                                   placeholder="API secret"
+                                  autoComplete="off"
                                 />
 
                                 <div className="wallet_steps_box">
@@ -651,21 +1023,91 @@ export default function Dashboard() {
                                     </div>
                                   </div>
                                 </div>
-                              </div>
+                              </form>
                             </div>
                           ) : (
-                            <div className="drawer_provider_panel wallet_form_placeholder wallet_form_placeholder_short">
-                              <p>Подключение Т Банк появится в следующем обновлении.</p>
+                            <div className="drawer_provider_panel">
+                              <div className="drawer_provider_title">
+                                <img src={Tbankicon} alt="Т Банк" />
+                                <div>
+                                  <h3>Подключите Т Банк</h3>
+                                  <p>
+                                    Pulse подтянет открытые инвестиционные счета и посчитает общий портфель.
+                                    Лучше использовать токен только на чтение.
+                                  </p>
+                                </div>
+                              </div>
+
+                              <form
+                                id="wallet-connect-form"
+                                className="wallet_form"
+                                onSubmit={(event) => {
+                                  event.preventDefault();
+                                  handleConnectWallet();
+                                }}
+                              >
+                                <Inputs
+                                  variant="primary"
+                                  type="password"
+                                  value={tbankToken}
+                                  onChange={(event) => setTbankToken(event.target.value)}
+                                  placeholder="T-Invest API token"
+                                  autoComplete="off"
+                                />
+
+                                <div className="wallet_steps_box">
+                                  <div className="wallet_steps_title">
+                                    <h4>Как получить токен</h4>
+                                    <p>
+                                      Инструкция лежит рядом с подсказкой по Bybit, чтобы подключение было без гадания.
+                                    </p>
+                                  </div>
+
+                                  <div className="wallet_steps_list">
+                                    <div className="wallet_step_item">
+                                      <span className="wallet_step_badge">1</span>
+                                      <div className="wallet_step_content">
+                                        <p>Создайте токен T-Invest API в личном кабинете Т Банка.</p>
+                                        <a
+                                          href={TBANK_GUIDE_PDF_URL}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                          className="wallet_step_link"
+                                        >
+                                          Как создать токен Т Банка
+                                        </a>
+                                      </div>
+                                    </div>
+
+                                    <div className="wallet_step_item">
+                                      <span className="wallet_step_badge">2</span>
+                                      <div className="wallet_step_content">
+                                        <p>
+                                          Вставьте токен в поле выше. Мы проверим открытые счета и покажем карточки
+                                          только для тех кошельков, которые есть в базе.
+                                        </p>
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                              </form>
                             </div>
                           )}
 
                           <DrawerFooter className="drawer_footer_dashboard">
                             {selectedWalletStep ? (
-                              <DrawerClose asChild>
-                                <Buttons type="primary-full">
-                                  {selectedWalletStep === "bybit" ? "Добавить портфель" : "Понятно"}
-                                </Buttons>
-                              </DrawerClose>
+                              <Buttons
+                                type="primary-full"
+                                htmlType="submit"
+                                form="wallet-connect-form"
+                                disabled={isWalletConnecting}
+                              >
+                                {isWalletConnecting
+                                  ? "Подключаем..."
+                                  : selectedWalletStep === "bybit"
+                                    ? "Подключить Bybit"
+                                    : "Подключить Т Банк"}
+                              </Buttons>
                             ) : (
                               <Buttons type="primary-full" onClick={handleChooseProvider}>
                                 Выбрать
@@ -695,29 +1137,33 @@ export default function Dashboard() {
                     <div className="choosebag">
                       <div className="listactiveButtons">
                         <Buttons
-                          type={tradeSourceFilter === "all" ? "text trade_filter_active" : "text"}
+                          type={activeTradeSourceFilter === "all" ? "text trade_filter_active" : "text"}
                           onClick={() => setTradeSourceFilter("all")}
                         >
                           <p>Все</p>
                         </Buttons>
-                        <Buttons
-                          type={tradeSourceFilter === "tbank" ? "text trade_filter_active" : "text"}
-                          onClick={() => setTradeSourceFilter("tbank")}
-                        >
-                          <div className="contentButtonBusell">
-                            <img src={Tbankicon} alt="iconbank" />
-                            <p>Т Банк</p>
-                          </div>
-                        </Buttons>
-                        <Buttons
-                          type={tradeSourceFilter === "bybit" ? "text trade_filter_active" : "text"}
-                          onClick={() => setTradeSourceFilter("bybit")}
-                        >
-                          <div className="contentButtonBusell">
-                            <img src={BybitIcon} alt="iconbank" />
-                            <p>Bybit</p>
-                          </div>
-                        </Buttons>
+                        {connectedProviders.includes("tbank") ? (
+                          <Buttons
+                            type={activeTradeSourceFilter === "tbank" ? "text trade_filter_active" : "text"}
+                            onClick={() => setTradeSourceFilter("tbank")}
+                          >
+                            <div className="contentButtonBusell">
+                              <img src={Tbankicon} alt="iconbank" />
+                              <p>Т Банк</p>
+                            </div>
+                          </Buttons>
+                        ) : null}
+                        {connectedProviders.includes("bybit") ? (
+                          <Buttons
+                            type={activeTradeSourceFilter === "bybit" ? "text trade_filter_active" : "text"}
+                            onClick={() => setTradeSourceFilter("bybit")}
+                          >
+                            <div className="contentButtonBusell">
+                              <img src={BybitIcon} alt="iconbank" />
+                              <p>Bybit</p>
+                            </div>
+                          </Buttons>
+                        ) : null}
                       </div>
                     </div>
 
@@ -793,30 +1239,32 @@ export default function Dashboard() {
                   <div className="containerBuysellactive">
                     {dashboardReady ? (
                       <div className="contentbsac">
-                        {filteredTrades.map((trade) => (
-                          <BuysellCardMinicard
-                            key={trade.id}
-                            sourceLabel={trade.sourceLabel}
-                            sourceIcon={trade.source === "bybit" ? BybitIcon : Tbankicon}
-                            action={trade.action}
-                            name={trade.name}
-                            symbol={trade.symbol}
-                            icon={trade.icon}
-                            priceFrom={trade.priceFrom}
-                            priceTo={trade.priceTo}
-                            change={trade.change}
-                            time={trade.time}
-                            onClick={() => openAssetPage(trade)}
-                          />
-                        ))}
+                        {boughtAssetsList.map((asset) => {
+                          const convertedAssetValue = convertRubAmount(asset.valueRub);
+                          const convertedAssetChange = convertRubAmount(asset.changeRub);
+
+                          return (
+                            <BuysellCardMinicard
+                              key={`${asset.provider}-${asset.symbol || asset.figi || asset.coin}`}
+                              sourceLabel={asset.providerLabel}
+                              name={asset.name || asset.symbol || asset.shortName}
+                              symbol={asset.shortName || asset.symbol || asset.coin}
+                              icon={asset.iconUrl}
+                              priceFrom={`${formatCompactNumber(asset.quantity)} ${asset.shortName || asset.coin || ""}`}
+                              priceTo={`${formatRub(convertedAssetValue)} ${currency.symbol}`}
+                              change={`${formatSignedMoney(convertedAssetChange, currency.symbol)} (${formatPercent(asset.changePercent)})`}
+                              onClick={() => openPortfolioAsset(asset)}
+                            />
+                          );
+                        })}
                       </div>
                     ) : (
                       <SectionLoader height={180} />
                     )}
 
-                    {dashboardReady && filteredTrades.length === 0 && (
+                    {dashboardReady && boughtAssetsList.length === 0 && (
                       <div className="empty_trades_state">
-                        Нет сделок для выбранного фильтра.
+                        Нет активов для выбранного фильтра.
                       </div>
                     )}
                   </div>
@@ -896,7 +1344,7 @@ export default function Dashboard() {
                         </div>
                         <div className="activity_grid_wrap">
                           <div className="activity_grid" aria-label="Активность инвестора за 31 день">
-                            {ACTIVITY_GRID.map((value, index) => (
+                            {activityGrid.map((value, index) => (
                               <span
                                 key={`activity-day-${index}`}
                                 className={`activity_cell activity_cell_${value}`}
@@ -925,7 +1373,7 @@ export default function Dashboard() {
                         <ResponsiveContainer width="100%" height={200}>
                           <PieChart>
                             <Pie
-                              data={pieData}
+                              data={portfolioPieData}
                               dataKey="value"
                               nameKey="name"
                               cx="50%"
@@ -939,7 +1387,7 @@ export default function Dashboard() {
                               stroke="rgba(255,255,255,0.12)"
                               strokeWidth={2}
                             >
-                              {pieData.map((entry, index) => (
+                              {portfolioPieData.map((entry, index) => (
                                 <Cell
                                   key={`cell-${index}`}
                                   fill="var(--primary-blue)"
@@ -955,7 +1403,7 @@ export default function Dashboard() {
                               fontSize={13}
                               fontWeight={700}
                             >
-                              {formatCurrency(TOTAL_CAPITAL)}
+                              {convertedMoney}
                             </text>
                             <text
                               x="50%"
@@ -964,7 +1412,7 @@ export default function Dashboard() {
                               fill="var(--gray)"
                               fontSize={11}
                             >
-                              Общий капитал
+                              {currency.symbol} капитал
                             </text>
                           </PieChart>
                         </ResponsiveContainer>

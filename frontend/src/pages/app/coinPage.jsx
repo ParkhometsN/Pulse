@@ -24,6 +24,7 @@ import TextAlert from "../../components/ui/TextAlert";
 import NewsCard from "@/components/ui/newsCard";
 
 const ASSET_REFRESH_INTERVAL = 1000;
+const ASSET_BACKGROUND_REFRESH_INTERVAL = 15000;
 const ASSET_CACHE_MAX_AGE = 1000 * 60 * 5;
 const CHART_CACHE_MAX_AGE = 1000 * 60 * 10;
 const ASSET_NEWS_CACHE_MAX_AGE = 1000 * 60 * 15;
@@ -389,8 +390,7 @@ function AssetChart({ data, currencySymbol, activeRange, currentPrice }) {
     );
   }
 
-  const pointWidth = CHART_RANGES[activeRange]?.showTime ? 13 : 30;
-  const width = Math.min(Math.max(chartSize.width, chartData.length * pointWidth), 6200);
+  const width = chartSize.width;
   const chartHeight = height - padding.top - padding.bottom;
   const chartWidth = width - padding.left - padding.right;
   const axisRight = width - padding.right;
@@ -958,6 +958,8 @@ export default function CoinPage() {
   const [isAssetNewsLoading, setIsAssetNewsLoading] = useState(false);
   const [assetNewsError, setAssetNewsError] = useState("");
   const [seenNewsIds, setSeenNewsIds] = useState(() => readCachedValue(NEWS_SEEN_KEY, Infinity) || []);
+  const [activeButton, setActiveButton] = useState('Обзор');
+  const isOverviewTab = activeButton === "Обзор";
 
   const getTextAlert = () => {
     setTesxtAlert(true)
@@ -1067,6 +1069,9 @@ export default function CoinPage() {
 
     const initialFetchTimer = window.setTimeout(() => fetchAsset(endpoint), 0);
 
+    const refreshInterval = isOverviewTab
+      ? ASSET_REFRESH_INTERVAL
+      : ASSET_BACKGROUND_REFRESH_INTERVAL;
     const interval = setInterval(() => {
       if (
         document.hidden ||
@@ -1077,7 +1082,7 @@ export default function CoinPage() {
       }
 
       fetchAsset(endpoint);
-    }, ASSET_REFRESH_INTERVAL);
+    }, refreshInterval);
 
     pollingIntervalRef.current = interval;
 
@@ -1091,7 +1096,7 @@ export default function CoinPage() {
       requestIdRef.current += 1;
       isRequestRunningRef.current = false;
     };
-  }, [endpoint, fetchAsset, isCoinPageRoute]);
+  }, [endpoint, fetchAsset, isCoinPageRoute, isOverviewTab]);
 
   const asset = requestState.endpoint === endpoint ? requestState.asset : null;
   const error = !endpoint
@@ -1162,6 +1167,9 @@ export default function CoinPage() {
   const tradeButtonText = tradeSide === "buy"
     ? `Купить ${shortName}`
     : `Продать ${shortName}`;
+  const maxTradeAmount = tradeSide === "buy"
+    ? availableMoney
+    : maxSellValue;
   const tradeAmountError = tradeSide === "buy" && normalizedTradeAmount > availableMoney
     ? "Сумма больше доступных средств"
     : tradeSide === "sell" && estimatedTradeQuantity > availableAssetAmount
@@ -1170,6 +1178,7 @@ export default function CoinPage() {
   const assetNewsAliases = useMemo(() => {
     return getAssetNewsAliases(asset, symbol, shortName, assetName, baseCurrency);
   }, [asset, assetName, baseCurrency, shortName, symbol]);
+  const assetNewsAliasSignature = assetNewsAliases.join("|");
   const favoriteSymbol = asset?.symbol || symbol;
   const assetNewsKey = `${assetType}:${String(favoriteSymbol || symbol || "").toUpperCase()}`;
   const favoriteKey = `${assetType}:${String(favoriteSymbol || "").toUpperCase()}`;
@@ -1243,13 +1252,21 @@ export default function CoinPage() {
     return 'gray'; 
   };
 
-  const [activeButton, setActiveButton] = useState('Обзор');
-  const isOverviewTab = activeButton === "Обзор";
+  const setTradeAmountPercent = useCallback((percent) => {
+    const nextAmount = maxTradeAmount * percent;
+
+    setTradeAmount(Number.isFinite(nextAmount) && nextAmount > 0
+      ? nextAmount.toFixed(2)
+      : ""
+    );
+  }, [maxTradeAmount]);
+
   useEffect(() => {
-    if (activeButton !== "Новости" || !assetNewsKey || !assetNewsAliases.length) {
+    if (activeButton !== "Новости" || !assetNewsKey || !assetNewsAliasSignature) {
       return undefined;
     }
 
+    const aliases = assetNewsAliasSignature.split("|").filter(Boolean);
     const cachedNews = readCachedValue(assetNewsCacheKey(assetNewsKey), ASSET_NEWS_CACHE_MAX_AGE);
     const controller = new AbortController();
     let isActive = true;
@@ -1264,27 +1281,46 @@ export default function CoinPage() {
         setAssetNews([]);
       }
 
-      setIsAssetNewsLoading(true);
+      setIsAssetNewsLoading(!cachedNews);
       setAssetNewsError("");
     }, 0);
 
-    api
-      .get("/news", {
-        params: {
-          limit: ASSET_NEWS_PAGE_SIZE,
-          offset: 0,
-        },
-        signal: controller.signal,
-      })
-      .then((response) => {
+    const loadAssetNews = async () => {
+      const matchedItems = [];
+      const matchedIds = new Set();
+
+      for (let pageIndex = 0; pageIndex < 4; pageIndex += 1) {
+        const response = await api.get("/news", {
+          params: {
+            limit: ASSET_NEWS_PAGE_SIZE,
+            offset: pageIndex * ASSET_NEWS_PAGE_SIZE,
+          },
+          signal: controller.signal,
+        });
+
+        const items = response.data?.items || [];
+        const filteredItems = items.filter((news) => newsMatchesAsset(news, aliases));
+
+        filteredItems.forEach((news) => {
+          if (!matchedIds.has(news.id)) {
+            matchedIds.add(news.id);
+            matchedItems.push(news);
+          }
+        });
+
+        if (matchedItems.length >= 8 || !response.data?.hasMore) {
+          break;
+        }
+      }
+
+      return matchedItems.slice(0, 8);
+    };
+
+    loadAssetNews()
+      .then((filteredItems) => {
         if (!isActive) {
           return;
         }
-
-        const items = response.data?.items || [];
-        const filteredItems = items
-          .filter((news) => newsMatchesAsset(news, assetNewsAliases))
-          .slice(0, 8);
 
         setAssetNews(filteredItems);
         writeCachedValue(assetNewsCacheKey(assetNewsKey), filteredItems);
@@ -1307,7 +1343,7 @@ export default function CoinPage() {
       window.clearTimeout(stateTimer);
       controller.abort();
     };
-  }, [activeButton, assetNewsAliases, assetNewsKey]);
+  }, [activeButton, assetNewsAliasSignature, assetNewsKey]);
   const chartKey = `${assetType}:${symbol}:${activeChartRange}`;
   const assetLoadedKey = requestState.endpoint === endpoint && requestState.asset
     ? endpoint
@@ -1800,6 +1836,19 @@ export default function CoinPage() {
                                 />
                               </label>
 
+                              <div className="trade_quick_amounts" aria-label="Быстрый выбор суммы сделки">
+                                {[0.25, 0.5, 1].map((percent) => (
+                                  <button
+                                    key={percent}
+                                    type="button"
+                                    onClick={() => setTradeAmountPercent(percent)}
+                                    disabled={maxTradeAmount <= 0}
+                                  >
+                                    {percent === 1 ? "Макс." : `${percent * 100}%`}
+                                  </button>
+                                ))}
+                              </div>
+
                               <div className="trade_result_card">
                                 <div>
                                   <span>Текущая цена</span>
@@ -1871,24 +1920,28 @@ export default function CoinPage() {
                 <Buttons 
                   type={activeButton === 'Обзор' ? 'text_choosevariant active' : 'text_choosevariant'}
                   onClick={() => setActiveButton('Обзор')}
+                  aria-pressed={activeButton === 'Обзор'}
                 >
                   Обзор
                 </Buttons>
                 <Buttons 
                   type={activeButton === 'Новости' ? 'text_choosevariant active' : 'text_choosevariant'}
                   onClick={() => setActiveButton('Новости')}
+                  aria-pressed={activeButton === 'Новости'}
                 >
                   Новости
                 </Buttons>
                 <Buttons 
                   type={activeButton === 'Депозиты' ? 'text_choosevariant active' : 'text_choosevariant'}
                   onClick={() => setActiveButton('Депозиты')}
+                  aria-pressed={activeButton === 'Депозиты'}
                 >
                   Депозиты
                 </Buttons>
                 <Buttons 
                   type={activeButton === 'Информация' ? 'text_choosevariant active' : 'text_choosevariant'}
                   onClick={() => setActiveButton('Информация')}
+                  aria-pressed={activeButton === 'Информация'}
                 >
                   Информация
                 </Buttons>

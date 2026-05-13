@@ -1,10 +1,22 @@
 import asyncio
+import hashlib
+import hmac
+import time
+from urllib.parse import urlencode
 
 from aiohttp import ClientError, ClientSession, ClientTimeout
 
 
 class UpstreamHTTPError(Exception):
-    pass
+    def __init__(
+        self,
+        message: str,
+        status_code: int | None = None,
+        ret_code: int | None = None,
+    ):
+        super().__init__(message)
+        self.status_code = status_code
+        self.ret_code = ret_code
 
 
 class BybitHTTPClient:
@@ -31,11 +43,67 @@ class BybitHTTPClient:
 
                     if response.status != 200:
                         raise UpstreamHTTPError(
-                            f"Bybit HTTP error: {response.status}, {result}"
+                            f"Bybit HTTP error: {response.status}, {result}",
+                            status_code=response.status,
                         )
 
                     if result.get("retCode") != 0:
-                        raise UpstreamHTTPError(f"Bybit API error: {result}")
+                        raise UpstreamHTTPError(
+                            f"Bybit API error: {result}",
+                            ret_code=result.get("retCode"),
+                        )
+
+                    return result["result"]
+            except (asyncio.TimeoutError, ClientError) as error:
+                if attempt == 1:
+                    raise UpstreamHTTPError("Bybit provider unavailable") from error
+
+                await asyncio.sleep(0.2)
+
+        raise UpstreamHTTPError("Bybit request failed")
+
+    async def _signed_get(
+        self,
+        endpoint: str,
+        api_key: str,
+        api_secret: str,
+        params: dict | None = None,
+    ):
+        session = await self._get_session()
+        query_params = params or {}
+        query_string = urlencode(query_params)
+        timestamp = str(int(time.time() * 1000))
+        recv_window = "5000"
+        payload = f"{timestamp}{api_key}{recv_window}{query_string}"
+        signature = hmac.new(
+            api_secret.encode("utf-8"),
+            payload.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+        headers = {
+            "X-BAPI-API-KEY": api_key,
+            "X-BAPI-SIGN": signature,
+            "X-BAPI-SIGN-TYPE": "2",
+            "X-BAPI-TIMESTAMP": timestamp,
+            "X-BAPI-RECV-WINDOW": recv_window,
+        }
+
+        for attempt in range(2):
+            try:
+                async with session.get(endpoint, params=query_params, headers=headers) as response:
+                    result = await response.json(content_type=None)
+
+                    if response.status != 200:
+                        raise UpstreamHTTPError(
+                            f"Bybit HTTP error: {response.status}, {result}",
+                            status_code=response.status,
+                        )
+
+                    if result.get("retCode") != 0:
+                        raise UpstreamHTTPError(
+                            f"Bybit API error: {result}",
+                            ret_code=result.get("retCode"),
+                        )
 
                     return result["result"]
             except (asyncio.TimeoutError, ClientError) as error:
@@ -107,6 +175,21 @@ class BybitHTTPClient:
                 "limit": limit
             }
         )
+
+    async def get_wallet_balance(
+        self,
+        api_key: str,
+        api_secret: str,
+        account_type: str = "UNIFIED",
+    ):
+        result = await self._signed_get(
+            "/v5/account/wallet-balance",
+            api_key=api_key.strip(),
+            api_secret=api_secret.strip(),
+            params={"accountType": account_type},
+        )
+
+        return result.get("list", [])
 
     async def close(self):
         if self._session and not self._session.closed:

@@ -15,6 +15,7 @@ const ITEMS_PER_PAGE = 15;
 const MARKET_REFRESH_INTERVAL = 15000;
 const FAVORITES_STORAGE_KEY = "pulse_market_favorites";
 const MARKET_CACHE_MAX_AGE = 1000 * 60 * 5;
+const MARKET_PORTFOLIO_CACHE_KEY = "pulse:market:portfolio-summary:v1";
 const marketCacheKey = (type, page) => `pulse:market:${type}:page:${page}:v1`;
 
 const MARKET_STRATEGIES = [
@@ -310,6 +311,9 @@ export default function Market() {
     () => readCachedValue(marketCacheKey("stocks", 1), MARKET_CACHE_MAX_AGE)?.total || 0
   );
   const [favorites, setFavorites] = useState(getInitialFavorites);
+  const [portfolioSummary, setPortfolioSummary] = useState(
+    () => readCachedValue(MARKET_PORTFOLIO_CACHE_KEY, MARKET_CACHE_MAX_AGE) || null
+  );
   const [searchIndex, setSearchIndex] = useState([]);
   const [isSearchFocused, setIsSearchFocused] = useState(false);
   const [selectedStrategy, setSelectedStrategy] = useState(null);
@@ -360,6 +364,55 @@ export default function Market() {
       chart7d: asset.chart7d || [],
     };
   }, [getFavoriteKey]);
+
+  const normalizePortfolioAsset = useCallback((asset) => {
+    const type = asset.provider === "bybit" || asset.type === "crypto" ? "crypto" : "stock";
+    const symbol = type === "crypto"
+      ? asset.symbol || `${asset.shortName || asset.coin}USDT`
+      : asset.symbol || asset.shortName;
+    const price = type === "crypto"
+      ? asset.currentPriceUsd || asset.currentPriceRub
+      : asset.currentPriceRub;
+
+    return {
+      id: `portfolio-${asset.provider}-${symbol}`,
+      symbol,
+      name: asset.name || symbol,
+      shortName: asset.shortName || asset.coin || symbol,
+      baseCoin: asset.shortName || asset.coin || symbol,
+      iconUrl: asset.iconUrl,
+      price,
+      priceChangePercent24h: asset.changePercent,
+      priceChangePercent7d: asset.changePercent,
+      priceChangePercent30d: asset.changePercent,
+      chart7d: [],
+      isPortfolioAsset: true,
+    };
+  }, []);
+
+  const mergePortfolioAssets = useCallback((items, type) => {
+    const portfolioAssets = (portfolioSummary?.wallets || [])
+      .flatMap((wallet) => wallet.assets || [])
+      .filter((asset) => {
+        const assetType = asset.provider === "bybit" || asset.type === "crypto" ? "crypto" : "stock";
+        return assetType === type && Number(asset.valueRub) > 0;
+      })
+      .map(normalizePortfolioAsset);
+
+    if (!portfolioAssets.length) {
+      return items;
+    }
+
+    const portfolioKeys = new Set(
+      portfolioAssets.map((asset) => String(asset.symbol || asset.baseCoin || "").toUpperCase())
+    );
+    const filteredItems = items.filter((item) => {
+      const key = String(item.symbol || item.baseCoin || "").toUpperCase();
+      return !portfolioKeys.has(key);
+    });
+
+    return [...portfolioAssets, ...filteredItems];
+  }, [normalizePortfolioAsset, portfolioSummary]);
 
   const toggleFavorite = useCallback((asset) => {
     setFavorites((currentFavorites) => {
@@ -873,6 +926,17 @@ export default function Market() {
     return () => controller.abort();
   }, []);
 
+  const fetchPortfolioSummary = useCallback(() => {
+    api.get("/portfolio/summary")
+      .then((response) => {
+        setPortfolioSummary(response.data);
+        writeCachedValue(MARKET_PORTFOLIO_CACHE_KEY, response.data);
+      })
+      .catch(() => {
+        setPortfolioSummary((currentSummary) => currentSummary);
+      });
+  }, []);
+
   const getSearchRank = useCallback((asset) => {
     const query = searchQuery.trim().toLowerCase();
 
@@ -915,9 +979,9 @@ export default function Market() {
     return 0;
   }, [searchQuery]);
 
-  const sortedCurrencies = currencies;
+  const sortedCurrencies = mergePortfolioAssets(currencies, "crypto");
 
-  const sortedStocks = stocks;
+  const sortedStocks = mergePortfolioAssets(stocks, "stock");
 
   const searchResults = searchIndex
     .map((asset, index) => ({
@@ -1057,6 +1121,10 @@ export default function Market() {
       </nav>
     );
   };
+
+  useEffect(() => {
+    fetchPortfolioSummary();
+  }, [fetchPortfolioSummary]);
 
   useEffect(() => {
     if (activePage !== "crypto") {
