@@ -1,14 +1,6 @@
 import * as React from "react";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuLabel,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import {
   Accordion,
   AccordionContent,
@@ -35,13 +27,23 @@ export default function Settings() {
   const navigate = useNavigate();
   const storedSettings = readSettings();
   const user = getStoredUser();
-  const [aiProvider, setAiProvider] = React.useState(storedSettings.aiProvider || "Deepseek");
   const [aiApiKey, setAiApiKey] = React.useState(storedSettings.aiApiKey || "");
   const [deletePassword, setDeletePassword] = React.useState("");
   const [showDeleteConfirm, setShowDeleteConfirm] = React.useState(false);
   const [isSavingSettings, setIsSavingSettings] = React.useState(false);
   const [isDeleting, setIsDeleting] = React.useState(false);
   const [alert, setAlert] = React.useState(null);
+  const [isOpen, setIsOpen] = useState(false);
+  const [selected, setSelected] = useState('Deepseek');
+
+  const options = ['Deepseek', 'ChatGPT', 'Claude'];
+
+  const toggleDropdown = () => setIsOpen(!isOpen);
+
+  const handleSelect = (option) => {
+    setSelected(option);
+    setIsOpen(false);
+  };
 
   const saveSettings = (event) => {
     event.preventDefault();
@@ -51,7 +53,7 @@ export default function Settings() {
     window.setTimeout(() => {
       localStorage.setItem(
         SETTINGS_STORAGE_KEY,
-        JSON.stringify({ aiProvider, aiApiKey })
+        JSON.stringify({ aiApiKey })
       );
       setIsSavingSettings(false);
       setAlert({ type: "success", text: "API сохранен." });
@@ -103,41 +105,64 @@ export default function Settings() {
                 <div className="title_pages_stetttt">
                   <p>AI и ключи</p>
                 </div>
-                <div className="dinamic_buttons">
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <div className="butBAck">
-                        <Buttons type="nm_black_prymary flex items-center">
-                          {aiProvider}
-                          <span>
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="size-5">
-                              <path fillRule="evenodd" d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z" clipRule="evenodd" />
-                            </svg>
-                          </span>
-                        </Buttons>
+                <div className="dinamic_buttons" style={{ position: 'relative' }}>
+                  <Buttons type="nm_black_prymary" onClick={toggleDropdown}>
+                    <div className="flex items-center gap-[8px]">
+                      <p>{selected}</p>
+                      <span
+                        className={`transition-transform duration-200 ${
+                          isOpen ? 'rotate-180' : 'rotate-0'
+                        }`}
+                      >
+                        <svg
+                          xmlns="http://www.w3.org/2000/svg"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          strokeWidth="1.5"
+                          stroke="currentColor"
+                          className="size-4"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            d="m19.5 8.25-7.5 7.5-7.5-7.5"
+                          />
+                        </svg>
+                      </span>
+                    </div>
+                  </Buttons>
+
+                  {isOpen && (
+                    <>
+                      <div className="absolute top-full left-0 mt-2 w-full bg-white border border-gray-200 rounded-md shadow-lg z-10">
+                        {options.map((option) => (
+                          <button
+                            key={option}
+                            onClick={() => handleSelect(option)}
+                            className="w-full text-left px-4 py-2 hover:bg-gray-100 transition-colors first:rounded-t-md last:rounded-b-md"
+                            style={{ color: '#000' }}
+                          >
+                            {option}
+                          </button>
+                        ))}
                       </div>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent className="w-32">
-                      <DropdownMenuGroup>
-                        <DropdownMenuLabel>AI provider</DropdownMenuLabel>
-                        <DropdownMenuRadioGroup value={aiProvider} onValueChange={setAiProvider}>
-                          <DropdownMenuRadioItem value="Deepseek">Deepseek</DropdownMenuRadioItem>
-                          <DropdownMenuRadioItem value="Chat GPT">Chat GPT</DropdownMenuRadioItem>
-                          <DropdownMenuRadioItem value="Claude">Claude</DropdownMenuRadioItem>
-                        </DropdownMenuRadioGroup>
-                      </DropdownMenuGroup>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
+                      <div
+                        className="fixed inset-0 z-0"
+                        onClick={() => setIsOpen(false)}
+                      />
+                    </>
+                  )}
                   <div className="settings_api_key">
-                    <Inputs
-                      variant="primary"
-                      type="password"
-                      placeholder="API KEY"
-                      value={aiApiKey}
-                      onChange={(event) => setAiApiKey(event.target.value)}
-                    />
-                  </div>
+                  <Inputs
+                    variant="primary"
+                    type="password"
+                    placeholder="API KEY"
+                    value={aiApiKey}
+                    onChange={(event) => setAiApiKey(event.target.value)}
+                  />
                 </div>
+                </div>
+                
                 <Buttons type="primary-full" htmlType="submit" disabled={isSavingSettings}>
                   {isSavingSettings ? "Загрузка..." : "Сохранить API"}
                 </Buttons>

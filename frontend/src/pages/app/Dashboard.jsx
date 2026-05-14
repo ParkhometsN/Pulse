@@ -42,9 +42,11 @@ const TBANK_GUIDE_PDF_URL = "/docs/TBANKAPIINSTUCTIONS.pdf";
 const DASHBOARD_TOP_GROWTH_CACHE_KEY = "pulse:dashboard:top-growth:v1";
 const DASHBOARD_PORTFOLIO_CACHE_KEY = "pulse:dashboard:portfolio-summary:v1";
 const DASHBOARD_ANALYTICS_CACHE_KEY = "pulse:dashboard:portfolio-analytics:v1";
+const DASHBOARD_TRADES_CACHE_KEY = "pulse:dashboard:portfolio-trades:v1";
 const DASHBOARD_TOP_GROWTH_CACHE_MAX_AGE = 1000 * 60 * 5;
 const DASHBOARD_PORTFOLIO_CACHE_MAX_AGE = 1000 * 30;
 const DASHBOARD_ANALYTICS_CACHE_MAX_AGE = 1000 * 60;
+const DASHBOARD_TRADES_CACHE_MAX_AGE = 1000 * 60;
 const DASHBOARD_PORTFOLIO_REFRESH_INTERVAL = 1000 * 15;
 
 const EMPTY_PORTFOLIO_SUMMARY = {
@@ -62,6 +64,11 @@ const EMPTY_PORTFOLIO_ANALYTICS = {
     week: [],
     day: [],
   },
+  availableYears: [],
+  updatedAt: null,
+};
+const EMPTY_PORTFOLIO_TRADES = {
+  items: [],
   updatedAt: null,
 };
 
@@ -194,33 +201,61 @@ const CHART_YEARS = [2024, 2025, 2026, 2027];
 
 const BASE_YEAR_SERIES = {
   month: [
-    { label: "1", value: 13.2 },
-    { label: "5", value: 13.8 },
-    { label: "10", value: 14.5 },
-    { label: "15", value: 15.4 },
-    { label: "20", value: 16.7 },
-    { label: "25", value: 17.2 },
-    { label: "28", value: 17.9 },
-  ],
+    "Янв", "Фев", "Мар", "Апр", "Май", "Июн", "Июл", "Авг", "Сен", "Окт", "Ноя", "Дек",
+  ].map((label) => ({ label, value: 0, hasData: false })),
   week: [
-    { label: "1", value: 16.1 },
-    { label: "5", value: 16.8 },
-    { label: "10", value: 16.4 },
-    { label: "15", value: 17.3 },
-    { label: "20", value: 17.9 },
-    { label: "25", value: 18.6 },
-    { label: "28", value: 19.1 },
-  ],
+    "Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс",
+  ].map((label) => ({ label, value: 0, hasData: false })),
   day: [
-    { label: "1", value: 18.2 },
-    { label: "5", value: 18.55 },
-    { label: "10", value: 18.42 },
-    { label: "15", value: 18.9 },
-    { label: "20", value: 19.05 },
-    { label: "25", value: 19.33 },
-    { label: "28", value: 19.52 },
-  ],
+    "00:00", "02:00", "04:00", "06:00", "08:00", "10:00",
+    "12:00", "14:00", "16:00", "18:00", "20:00", "22:00",
+  ].map((label) => ({ label, value: 0, hasData: false })),
 };
+
+const LEGACY_TBANK_MONEY_SYMBOLS = {
+  RUB000UTSTOM: "RUB",
+  USD000UTSTOM: "USD",
+  EUR_RUB__TOM: "EUR",
+};
+
+const LEGACY_TBANK_MONEY_NAMES = {
+  RUB000UTSTOM: "Российский рубль",
+  USD000UTSTOM: "Доллар США",
+  EUR_RUB__TOM: "Евро",
+};
+
+const PROVIDER_ICONS = {
+  tbank: Tbankicon,
+  bybit: BybitIcon,
+  "pulse-ai": ChartUP,
+};
+
+const getProviderLogo = (provider) => PROVIDER_ICONS[provider] || ChartUP;
+
+const getProviderAlt = (provider, label) => label || (provider === "tbank" ? "Т Банк" : "Bybit");
+
+const getSafeChangeTone = (value) => {
+  const number = Number(value) || 0;
+
+  if (number > 0) {
+    return "positive";
+  }
+
+  if (number < 0) {
+    return "negative";
+  }
+
+  return "neutral";
+};
+
+const getChartTooltipText = (value) =>
+  `${formatRub(value)} ₽`;
+
+const getLegacyDisplaySymbol = (symbol) =>
+  LEGACY_TBANK_MONEY_SYMBOLS[symbol] || symbol;
+
+const getLegacyDisplayName = (name, symbol) =>
+  LEGACY_TBANK_MONEY_NAMES[name] || LEGACY_TBANK_MONEY_NAMES[symbol] || name;
 
 const formatRub = (value) =>
   Number(value).toLocaleString("ru-RU", {
@@ -245,6 +280,57 @@ const formatCompactNumber = (value) => {
   return number.toLocaleString("ru-RU", {
     maximumFractionDigits: number >= 10 ? 2 : 6,
   });
+};
+
+const normalizeDisplaySymbol = (symbol) => {
+  if (!symbol) {
+    return "";
+  }
+
+  return getLegacyDisplaySymbol(symbol);
+};
+
+const formatTradeDate = (value) => {
+  if (!value) {
+    return "Недавно";
+  }
+
+  return new Intl.DateTimeFormat("ru-RU", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  }).format(new Date(value));
+};
+
+const formatTradeMoney = (value, tradeCurrency = "RUB") => {
+  const symbolMap = {
+    RUB: "₽",
+    RUR: "₽",
+    USD: "$",
+    USDT: "$",
+    EUR: "€",
+  };
+  const symbol = symbolMap[String(tradeCurrency).toUpperCase()] || tradeCurrency;
+
+  return `${formatRub(value)} ${symbol}`;
+};
+
+const groupTradesByDate = (items) => {
+  const groups = new Map();
+
+  items.forEach((item) => {
+    const label = formatTradeDate(item.executedAt);
+    const group = groups.get(label) || {
+      id: label,
+      date: label,
+      items: [],
+    };
+
+    group.items.push(item);
+    groups.set(label, group);
+  });
+
+  return Array.from(groups.values());
 };
 
 const formatPercent = (value) => {
@@ -354,6 +440,10 @@ export default function Dashboard() {
     () => readCachedValue(DASHBOARD_ANALYTICS_CACHE_KEY, DASHBOARD_ANALYTICS_CACHE_MAX_AGE)
       || EMPTY_PORTFOLIO_ANALYTICS
   );
+  const [portfolioTrades, setPortfolioTrades] = useState(
+    () => readCachedValue(DASHBOARD_TRADES_CACHE_KEY, DASHBOARD_TRADES_CACHE_MAX_AGE)
+      || EMPTY_PORTFOLIO_TRADES
+  );
   const [isPortfolioLoading, setIsPortfolioLoading] = useState(
     () => !readCachedValue(DASHBOARD_PORTFOLIO_CACHE_KEY, DASHBOARD_PORTFOLIO_CACHE_MAX_AGE)
   );
@@ -369,11 +459,13 @@ export default function Dashboard() {
   const [isWalletDeleting, setIsWalletDeleting] = useState(false);
   const [walletPendingDelete, setWalletPendingDelete] = useState(null);
   const [walletConnectMessage, setWalletConnectMessage] = useState(null);
+  const [hoveredChartBar, setHoveredChartBar] = useState(null);
   const [currency, setCurrency] = useState({
     code: "RUB",
     symbol: "₽",
   });
   const navigate = useNavigate();
+  const chartYear = CHART_YEARS[chartYearIndex] || CHART_YEARS[0];
 
   const fetchPortfolioSummary = useCallback(async ({ silent = false } = {}) => {
     if (!silent) {
@@ -400,7 +492,7 @@ export default function Dashboard() {
 
   const fetchPortfolioAnalytics = useCallback(async () => {
     try {
-      const response = await api.get("/portfolio/analytics");
+      const response = await api.get(`/portfolio/analytics?year=${chartYear}`);
       const nextAnalytics = {
         ...EMPTY_PORTFOLIO_ANALYTICS,
         ...response.data,
@@ -414,6 +506,22 @@ export default function Dashboard() {
       writeCachedValue(DASHBOARD_ANALYTICS_CACHE_KEY, nextAnalytics);
     } catch {
       setPortfolioAnalytics((currentAnalytics) => currentAnalytics);
+    }
+  }, [chartYear]);
+
+  const fetchPortfolioTrades = useCallback(async () => {
+    try {
+      const response = await api.get("/portfolio/trades");
+      const nextTrades = {
+        ...EMPTY_PORTFOLIO_TRADES,
+        ...response.data,
+        items: response.data?.items || [],
+      };
+
+      setPortfolioTrades(nextTrades);
+      writeCachedValue(DASHBOARD_TRADES_CACHE_KEY, nextTrades);
+    } catch {
+      setPortfolioTrades((currentTrades) => currentTrades);
     }
   }, []);
 
@@ -440,6 +548,7 @@ export default function Dashboard() {
     const refreshPortfolioData = async ({ silent = false } = {}) => {
       await fetchPortfolioSummary({ silent });
       await fetchPortfolioAnalytics();
+      await fetchPortfolioTrades();
     };
 
     const initialRefresh = window.setTimeout(() => {
@@ -454,13 +563,14 @@ export default function Dashboard() {
       window.clearTimeout(initialRefresh);
       window.clearInterval(refreshInterval);
     };
-  }, [fetchPortfolioAnalytics, fetchPortfolioSummary]);
+  }, [fetchPortfolioAnalytics, fetchPortfolioSummary, fetchPortfolioTrades]);
 
   useEffect(() => {
     const refreshVisiblePortfolio = async () => {
       if (document.visibilityState === "visible") {
         await fetchPortfolioSummary({ silent: true });
         await fetchPortfolioAnalytics();
+        await fetchPortfolioTrades();
       }
     };
 
@@ -471,7 +581,7 @@ export default function Dashboard() {
       window.removeEventListener("focus", refreshVisiblePortfolio);
       document.removeEventListener("visibilitychange", refreshVisiblePortfolio);
     };
-  }, [fetchPortfolioAnalytics, fetchPortfolioSummary]);
+  }, [fetchPortfolioAnalytics, fetchPortfolioSummary, fetchPortfolioTrades]);
 
   useEffect(() => {
     let isMounted = true;
@@ -543,7 +653,6 @@ export default function Dashboard() {
     };
   }, []);
 
-  const chartYear = CHART_YEARS[chartYearIndex] || CHART_YEARS[0];
   const connectedWallets = portfolioSummary.wallets || [];
   const connectedProviders = Array.from(
     new Set(
@@ -588,14 +697,7 @@ export default function Dashboard() {
   const analyticsChartData = portfolioAnalytics.chart?.[chartPeriod] || [];
   const chartData = analyticsChartData.length
     ? analyticsChartData
-    : (BASE_YEAR_SERIES[chartPeriod] || BASE_YEAR_SERIES.month).map(
-      (point, index) => ({
-        ...point,
-        value: portfolioValueRub
-          ? portfolioValueRub * (0.96 + index * 0.008)
-          : point.value + (chartYearIndex * 0.5) + (index * 0.08),
-      })
-    );
+    : (BASE_YEAR_SERIES[chartPeriod] || BASE_YEAR_SERIES.month);
   const activityGrid = portfolioAnalytics.activityGrid?.length
     ? portfolioAnalytics.activityGrid
     : ACTIVITY_GRID;
@@ -606,6 +708,7 @@ export default function Dashboard() {
   const boughtAssetsList = filteredPortfolioAssets
     .filter((asset) => Number(asset.valueRub) > 0)
     .sort((firstAsset, secondAsset) => Number(secondAsset.valueRub) - Number(firstAsset.valueRub));
+  const tradeHistoryGroups = groupTradesByDate(portfolioTrades.items || []);
   const portfolioPieData = (() => {
     const groups = portfolioAssets.reduce((acc, asset) => {
       const label = getAssetRouteType(asset) === "crypto" ? "Криптовалюта" : "Акции";
@@ -627,6 +730,9 @@ export default function Dashboard() {
   const portfolioChangeTone = getChangeTone(portfolioChangeRub);
   const portfolioChangeText = `${formatSignedMoney(convertedPortfolioChange, currency.symbol)} (${formatPercent(portfolioChangePercent)})`;
   const dashboardTopLoading = !dashboardReady || (isPortfolioLoading && !portfolioSummary.updatedAt);
+  const availableChartYears = portfolioAnalytics.availableYears || [];
+  const canGoPrevYear = availableChartYears.includes(CHART_YEARS[chartYearIndex - 1]);
+  const canGoNextYear = availableChartYears.includes(CHART_YEARS[chartYearIndex + 1]);
 
   const menuItems = [
     { id: "delete-wallet", label: "Удалить кошелек", danger: true },
@@ -673,6 +779,7 @@ export default function Dashboard() {
       setWalletPendingDelete(null);
       await fetchPortfolioSummary({ silent: true });
       await fetchPortfolioAnalytics();
+      await fetchPortfolioTrades();
     } catch (error) {
       setPortfolioError(getApiErrorMessage(error, "Не удалось удалить кошелек."));
     } finally {
@@ -738,6 +845,7 @@ export default function Dashboard() {
       setTbankToken("");
       await fetchPortfolioSummary({ silent: true });
       await fetchPortfolioAnalytics();
+      await fetchPortfolioTrades();
       window.setTimeout(() => {
         setWalletDrawerOpen(false);
         setSelectedWalletStep(null);
@@ -775,9 +883,10 @@ export default function Dashboard() {
 
   const openAssetPage = (trade) => {
     const symbol = trade.routeSymbol || trade.symbol;
+    const assetType = trade.assetType === "crypto" ? "crypto" : "stock";
 
     navigate(
-      `/app/market/coin-page?type=${trade.assetType}&symbol=${encodeURIComponent(symbol)}`
+      `/app/market/coin-page?type=${assetType}&symbol=${encodeURIComponent(symbol)}`
     );
   };
 
@@ -834,7 +943,7 @@ export default function Dashboard() {
                       </p>
 
                       <div className="changes_to_day">
-                        <p className="changes_to_day_label">рост активов</p>
+                        <p className="changes_to_day_label">За сегодня</p>
                         <div className={`changes changes_${portfolioChangeTone}`}>
                           <img src={ChartUP} alt="chartup" />
                           <p>{portfolioChangeText}</p>
@@ -1189,7 +1298,7 @@ export default function Dashboard() {
                         </DrawerHeader>
 
                         <div className="trade_history_list">
-                          {TRADE_HISTORY.map((dayBlock) => (
+                          {tradeHistoryGroups.length ? tradeHistoryGroups.map((dayBlock) => (
                             <div key={dayBlock.id} className="trade_history_day">
                               <p className="trade_history_day_label">{dayBlock.date}</p>
                               <div className="trade_history_day_items">
@@ -1202,13 +1311,13 @@ export default function Dashboard() {
                                   >
                                     <div className="trade_history_item_main">
                                       <img
-                                        src={item.source === "bybit" ? BybitIcon : Tbankicon}
-                                        alt={item.sourceLabel}
+                                        src={getProviderLogo(item.provider || item.source)}
+                                        alt={getProviderAlt(item.provider || item.source, item.providerLabel || item.sourceLabel)}
                                       />
                                       <div>
-                                        <h4>{item.name}</h4>
+                                        <h4>{getLegacyDisplayName(item.name, item.symbol)}</h4>
                                         <p>
-                                          {item.sourceLabel} · {item.time}
+                                          {item.providerLabel || item.sourceLabel} · {item.time} · {normalizeDisplaySymbol(item.symbol)}
                                         </p>
                                       </div>
                                     </div>
@@ -1218,19 +1327,25 @@ export default function Dashboard() {
                                       >
                                         {item.action}
                                       </span>
-                                      <strong>{item.amount}</strong>
+                                      <strong>
+                                        {formatCompactNumber(item.quantity)} · {formatTradeMoney(item.totalAmount, item.currency)}
+                                      </strong>
                                     </div>
                                   </button>
                                 ))}
                               </div>
                             </div>
-                          ))}
+                          )) : (
+                            <div className="empty_trades_state">
+                              История сделок пока не найдена.
+                            </div>
+                          )}
                         </div>
 
                         <DrawerFooter className="trade_history_footer">
-                          <DrawerClose asChild>
+                          {/* <DrawerClose asChild>
                             <Buttons type="primary-full">Смотреть всю историю</Buttons>
-                          </DrawerClose>
+                          </DrawerClose> */}
                         </DrawerFooter>
                       </DrawerContent>
                     </Drawer>
@@ -1247,12 +1362,16 @@ export default function Dashboard() {
                             <BuysellCardMinicard
                               key={`${asset.provider}-${asset.symbol || asset.figi || asset.coin}`}
                               sourceLabel={asset.providerLabel}
-                              name={asset.name || asset.symbol || asset.shortName}
-                              symbol={asset.shortName || asset.symbol || asset.coin}
+                              name={getLegacyDisplayName(
+                                asset.name || normalizeDisplaySymbol(asset.symbol || asset.shortName),
+                                asset.symbol || asset.shortName
+                              )}
+                              symbol={normalizeDisplaySymbol(asset.shortName || asset.symbol || asset.coin)}
                               icon={asset.iconUrl}
-                              priceFrom={`${formatCompactNumber(asset.quantity)} ${asset.shortName || asset.coin || ""}`}
+                              priceFrom={formatCompactNumber(asset.quantity)}
                               priceTo={`${formatRub(convertedAssetValue)} ${currency.symbol}`}
                               change={`${formatSignedMoney(convertedAssetChange, currency.symbol)} (${formatPercent(asset.changePercent)})`}
+                              changeTone={getSafeChangeTone(asset.changeRub)}
                               onClick={() => openPortfolioAsset(asset)}
                             />
                           );
@@ -1264,7 +1383,7 @@ export default function Dashboard() {
 
                     {dashboardReady && boughtAssetsList.length === 0 && (
                       <div className="empty_trades_state">
-                        Нет активов для выбранного фильтра.
+                        Нет данных
                       </div>
                     )}
                   </div>
@@ -1383,7 +1502,7 @@ export default function Dashboard() {
                               startAngle={90}
                               endAngle={-270}
                               paddingAngle={4}
-                              cornerRadius={20}
+                              cornerRadius={40}
                               stroke="rgba(255,255,255,0.12)"
                               strokeWidth={2}
                             >
@@ -1431,7 +1550,7 @@ export default function Dashboard() {
                         const rawMax = Math.max(...chartValues);
                         const bars = chartData.map((point) => ({
                           ...point,
-                          fillPct: rawMax ? Math.max(0.08, point.value / rawMax) : 0.08,
+                          fillPct: point.hasData && rawMax ? Math.max(0.12, Number(point.value) / rawMax) : 0.08,
                         }));
 
                         return (
@@ -1467,6 +1586,7 @@ export default function Dashboard() {
                                   type="button"
                                   className="chart_year_chevron"
                                   aria-label="Предыдущий год"
+                                  disabled={!canGoPrevYear}
                                   onClick={() =>
                                     setChartYearIndex((current) => Math.max(0, current - 1))
                                   }
@@ -1492,6 +1612,7 @@ export default function Dashboard() {
                                   type="button"
                                   className="chart_year_chevron"
                                   aria-label="Следующий год"
+                                  disabled={!canGoNextYear}
                                   onClick={() =>
                                     setChartYearIndex((current) =>
                                       Math.min(CHART_YEARS.length - 1, current + 1)
@@ -1527,14 +1648,22 @@ export default function Dashboard() {
                                   ))}
                                 </div>
 
-                                <div className="chart_bars_overlay" aria-hidden>
+                                <div className="chart_bars_overlay">
                                   <div className="chart_bars_cluster">
-                                    {bars.slice(-4).map((bar) => (
+                                    {bars.map((bar) => (
                                       <div
                                         key={`${bar.label}-${chartYear}`}
-                                        className="chart_bar"
+                                        className={`chart_bar ${bar.hasData ? "chart_bar_has_data" : "chart_bar_empty"}`}
                                         style={{ height: `${bar.fillPct * 100}%` }}
-                                      />
+                                        onMouseEnter={() => setHoveredChartBar(bar)}
+                                        onMouseLeave={() => setHoveredChartBar(null)}
+                                      >
+                                        {hoveredChartBar?.label === bar.label ? (
+                                          <div className="chart_bar_tooltip">
+                                            <strong>{getChartTooltipText(bar.value)}</strong>
+                                          </div>
+                                        ) : null}
+                                      </div>
                                     ))}
                                   </div>
                                 </div>

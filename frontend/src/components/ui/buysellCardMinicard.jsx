@@ -6,6 +6,7 @@ export default function BuysellCardMinicard({
   priceFrom = "283₽",
   priceTo = "349₽",
   change = "+0,58 ₽ (0,87%)",
+  changeTone = "positive",
   time = "",
   onClick,
 }) {
@@ -52,7 +53,7 @@ export default function BuysellCardMinicard({
         </div>
 
         <div className="pricecoinBuy">
-          <p style={{ fontSize: "11px", color: "var(--green)" }}>{change}</p>
+          <p className={`pricecoinBuy_change pricecoinBuy_change_${changeTone}`}>{change}</p>
           <p className="pricecoinBuy_source">{sourceLabel}</p>
         </div>
       </div>

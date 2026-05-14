@@ -104,7 +104,7 @@ export default function Profile() {
   return (
     <div className="app_pages">
       <div className="app_content settingsContend">
-        <div className="app_items">
+        <div className="app_items rfwsadqwdfrt">
           <div className="container_settings profilesett">
             <div className="content_settings qwiouefhjioui">
               <div className="title_pages_st">
@@ -147,99 +147,109 @@ export default function Profile() {
                   {alert.text}
                 </div>
               )}
-              <div className="FAQ">
-                <div className="title_pages_stetttt">
-                  <p>Персональная информация</p>
+              <div className="ioooisssddd">
+                <div className="w-full" >
+                  <div className="FAQ">
+                    <div className="title_pages_stetttt">
+                      <p>Персональная информация</p>
+                    </div>
+                  </div>
+                  <form className="infipqowiuefh" onSubmit={handleProfileSubmit}>
+                    <div className="frominpeuts">
+                      <label className="pl-[10px]" htmlFor="profileEmail">Почта</label>
+                      <Inputs
+                        id="profileEmail"
+                        variant="primary"
+                        type="email"
+                        placeholder="example@gmail.com"
+                        value={profileForm.email}
+                        disabled
+                      />
+                      <label className="pl-[10px]" htmlFor="profileFirstName">Имя</label>
+                      <Inputs
+                        id="profileFirstName"
+                        variant="primary"
+                        type="text"
+                        placeholder="Имя"
+                        value={profileForm.firstName}
+                        onChange={updateProfileField("firstName")}
+                      />
+                    </div>
+                    <div className="frominpeuts">
+                      <label className="pl-[10px]" htmlFor="profileLastName">Фамилия</label>
+                      <Inputs
+                        id="profileLastName"
+                        variant="primary"
+                        type="text"
+                        placeholder="Фамилия"
+                        value={profileForm.lastName}
+                        onChange={updateProfileField("lastName")}
+                      />
+                      <div className="profile_form_action">
+                        <Buttons type="primary-full" htmlType="submit" disabled={isSavingProfile}>
+                          {isSavingProfile ? "Сохраняем..." : "Сохранить профиль"}
+                        </Buttons>
+                      </div>
+                    </div>
+                  </form>
+                </div>
+                <div className="w-full">
+                  <div className="FAQ">
+                    <div className="title_pages_stetttt">
+                      <p>Безопасность</p>
+                    </div>
+                  </div>
+                  <form className="infipqowiuefh" onSubmit={handlePasswordSubmit}>
+                    <div className="frominpeuts">
+                      <label className="pl-[10px]" htmlFor="currentPassword">Текущий пароль</label>
+                      <Inputs
+                        id="currentPassword"
+                        variant="primary"
+                        type="password"
+                        placeholder="Текущий пароль"
+                        value={passwordForm.currentPassword}
+                        onChange={updatePasswordField("currentPassword")}
+                      />
+                      <label className="pl-[10px]" htmlFor="newPassword">Новый пароль</label>
+                      <Inputs
+                        id="newPassword"
+                        variant="primary"
+                        type="password"
+                        placeholder="Новый пароль"
+                        value={passwordForm.password}
+                        onChange={updatePasswordField("password")}
+                      />
+                    </div>
+                    <div className="frominpeuts">
+                      <label className="pl-[10px]" htmlFor="newPasswordConfirm">Повторите пароль</label>
+                      <Inputs
+                        id="newPasswordConfirm"
+                        variant="primary"
+                        type="password"
+                        placeholder="Повторите пароль"
+                        value={passwordForm.passwordConfirm}
+                        onChange={updatePasswordField("passwordConfirm")}
+                      />
+                      <div className="profile_form_action">
+                        <Buttons type="primary-full" htmlType="submit" disabled={isSavingPassword}>
+                          {isSavingPassword ? "Обновляем..." : "Обновить пароль"}
+                        </Buttons>
+                      </div>
+                    </div>
+                  </form>
                 </div>
               </div>
-              <form className="infipqowiuefh" onSubmit={handleProfileSubmit}>
-                <div className="frominpeuts">
-                  <label className="pl-[10px]" htmlFor="profileEmail">Почта</label>
-                  <Inputs
-                    id="profileEmail"
-                    variant="primary"
-                    type="email"
-                    placeholder="example@gmail.com"
-                    value={profileForm.email}
-                    disabled
-                  />
-                  <label className="pl-[10px]" htmlFor="profileFirstName">Имя</label>
-                  <Inputs
-                    id="profileFirstName"
-                    variant="primary"
-                    type="text"
-                    placeholder="Имя"
-                    value={profileForm.firstName}
-                    onChange={updateProfileField("firstName")}
-                  />
-                </div>
-                <div className="frominpeuts">
-                  <label className="pl-[10px]" htmlFor="profileLastName">Фамилия</label>
-                  <Inputs
-                    id="profileLastName"
-                    variant="primary"
-                    type="text"
-                    placeholder="Фамилия"
-                    value={profileForm.lastName}
-                    onChange={updateProfileField("lastName")}
-                  />
-                  <div className="profile_form_action">
-                    <Buttons type="primary-full" htmlType="submit" disabled={isSavingProfile}>
-                      {isSavingProfile ? "Сохраняем..." : "Сохранить профиль"}
-                    </Buttons>
-                  </div>
-                </div>
-              </form>
+              
+              
               <div className="line"></div>
-              <div className="FAQ">
-                <div className="title_pages_stetttt">
-                  <p>Безопасность</p>
-                </div>
-              </div>
-              <form className="infipqowiuefh" onSubmit={handlePasswordSubmit}>
-                <div className="frominpeuts">
-                  <label className="pl-[10px]" htmlFor="currentPassword">Текущий пароль</label>
-                  <Inputs
-                    id="currentPassword"
-                    variant="primary"
-                    type="password"
-                    placeholder="Текущий пароль"
-                    value={passwordForm.currentPassword}
-                    onChange={updatePasswordField("currentPassword")}
-                  />
-                  <label className="pl-[10px]" htmlFor="newPassword">Новый пароль</label>
-                  <Inputs
-                    id="newPassword"
-                    variant="primary"
-                    type="password"
-                    placeholder="Новый пароль"
-                    value={passwordForm.password}
-                    onChange={updatePasswordField("password")}
-                  />
-                </div>
-                <div className="frominpeuts">
-                  <label className="pl-[10px]" htmlFor="newPasswordConfirm">Повторите пароль</label>
-                  <Inputs
-                    id="newPasswordConfirm"
-                    variant="primary"
-                    type="password"
-                    placeholder="Повторите пароль"
-                    value={passwordForm.passwordConfirm}
-                    onChange={updatePasswordField("passwordConfirm")}
-                  />
-                  <div className="profile_form_action">
-                    <Buttons type="primary-full" htmlType="submit" disabled={isSavingPassword}>
-                      {isSavingPassword ? "Обновляем..." : "Обновить пароль"}
-                    </Buttons>
+              <div className="pb-[40px]">
+                <Buttons disabled="disabled" onClick={() => window.alert("Google Authenticator скоро появится")} type="black_prymary-widht">
+                  <div className="flex items-center justify-center gap-[8px]">
+                    <img src={GoogleSvg} alt="Google" />
+                    Включить Google Authenticator
                   </div>
-                </div>
-              </form>
-              <Buttons disabled="disabled" onClick={() => window.alert("Google Authenticator скоро появится")} type="black_prymary-widht">
-                <div className="flex items-center justify-center gap-[8px]">
-                  <img src={GoogleSvg} alt="Google" />
-                  Включить Google Authenticator
-                </div>
-              </Buttons>
+                </Buttons>
+              </div>
             </div>
           </div>
         </div>

@@ -34,6 +34,7 @@ const assetNewsCacheKey = (key) => `pulse:asset-news:${key}:v1`;
 const FAVORITES_STORAGE_KEY = "pulse_market_favorites";
 const NEWS_SEEN_KEY = "pulse:news:seen:v1";
 const ASSET_NEWS_PAGE_SIZE = 20;
+const STABLE_CRYPTO_SYMBOLS = new Set(["USDT", "USDC", "DAI", "USD", "BUSD"]);
 const CHART_RANGES = {
   "1D": { days: 1, interval: "60", stockInterval: 60, points: 24, showTime: true },
   "5D": { days: 5, interval: "60", stockInterval: 60, points: 120, showTime: true },
@@ -972,6 +973,10 @@ export default function CoinPage() {
 
     if (assetType === "stock") {
       return `/stocks/${symbol}`;
+    }
+
+    if (STABLE_CRYPTO_SYMBOLS.has(symbol.toUpperCase())) {
+      return null;
     }
 
     return `/cryptocurrencies/${symbol}`;

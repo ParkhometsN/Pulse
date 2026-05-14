@@ -1420,6 +1420,14 @@ flex-direction: row;
     width: 100%;
 }
 
+.ioooisssddd {
+    align-items: center;
+    gap: 20px;
+    display: flex;
+    justify-content: space-between;
+    flex-direction: column;
+}
+
 .buttonChart_container{
     overflow-x: auto;
     justify-content: flex-start;

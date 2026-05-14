@@ -191,6 +191,25 @@ class BybitHTTPClient:
 
         return result.get("list", [])
 
+    async def get_order_history(
+        self,
+        api_key: str,
+        api_secret: str,
+        category: str = "spot",
+        limit: int = 20,
+    ):
+        result = await self._signed_get(
+            "/v5/order/history",
+            api_key=api_key.strip(),
+            api_secret=api_secret.strip(),
+            params={
+                "category": category,
+                "limit": limit,
+            },
+        )
+
+        return result.get("list", [])
+
     async def close(self):
         if self._session and not self._session.closed:
             await self._session.close()

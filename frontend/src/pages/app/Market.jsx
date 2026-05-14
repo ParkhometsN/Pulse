@@ -17,6 +17,7 @@ const FAVORITES_STORAGE_KEY = "pulse_market_favorites";
 const MARKET_CACHE_MAX_AGE = 1000 * 60 * 5;
 const MARKET_PORTFOLIO_CACHE_KEY = "pulse:market:portfolio-summary:v1";
 const marketCacheKey = (type, page) => `pulse:market:${type}:page:${page}:v1`;
+const STABLE_CRYPTO_SYMBOLS = new Set(["USDT", "USDC", "DAI", "USD", "BUSD"]);
 
 const MARKET_STRATEGIES = [
   {
@@ -325,6 +326,9 @@ export default function Market() {
   const stocksRequestIdRef = useRef(0);
   const strategyCloseTimerRef = useRef(null);
   const navigate = useNavigate();
+  const hasTbankWallet = (portfolioSummary?.wallets || []).some(
+    (wallet) => wallet.provider === "tbank" && wallet.status === "active"
+  );
 
   const pages = [
     { id: "strategies", label: "Стратегии" },
@@ -367,8 +371,12 @@ export default function Market() {
 
   const normalizePortfolioAsset = useCallback((asset) => {
     const type = asset.provider === "bybit" || asset.type === "crypto" ? "crypto" : "stock";
+    const baseCoin = asset.shortName || asset.coin || asset.symbol;
+    const normalizedBaseCoin = String(baseCoin || "").toUpperCase().replace("USDT", "");
     const symbol = type === "crypto"
-      ? asset.symbol || `${asset.shortName || asset.coin}USDT`
+      ? STABLE_CRYPTO_SYMBOLS.has(normalizedBaseCoin)
+        ? normalizedBaseCoin
+        : asset.symbol || `${normalizedBaseCoin}USDT`
       : asset.symbol || asset.shortName;
     const price = type === "crypto"
       ? asset.currentPriceUsd || asset.currentPriceRub
@@ -379,7 +387,7 @@ export default function Market() {
       symbol,
       name: asset.name || symbol,
       shortName: asset.shortName || asset.coin || symbol,
-      baseCoin: asset.shortName || asset.coin || symbol,
+      baseCoin: type === "crypto" ? normalizedBaseCoin : asset.shortName || asset.coin || symbol,
       iconUrl: asset.iconUrl,
       price,
       priceChangePercent24h: asset.changePercent,
@@ -387,6 +395,7 @@ export default function Market() {
       priceChangePercent30d: asset.changePercent,
       chart7d: [],
       isPortfolioAsset: true,
+      isTradable: !(type === "crypto" && STABLE_CRYPTO_SYMBOLS.has(normalizedBaseCoin)),
     };
   }, []);
 
@@ -433,6 +442,10 @@ export default function Market() {
   }, []);
 
   const openAssetPage = useCallback((type, symbol) => {
+    if (type === "crypto" && STABLE_CRYPTO_SYMBOLS.has(String(symbol || "").toUpperCase())) {
+      return;
+    }
+
     navigate(`coin-page?type=${type}&symbol=${encodeURIComponent(symbol)}`);
   }, [navigate]);
 
@@ -842,7 +855,8 @@ export default function Market() {
 
   const fetchStocks = useCallback(() => {
     stocksAbortRef.current?.abort();
-    const cachedPage = readCachedValue(marketCacheKey("stocks", stocksPage), MARKET_CACHE_MAX_AGE);
+    const stockSource = hasTbankWallet ? "stocks:tbank" : "stocks";
+    const cachedPage = readCachedValue(marketCacheKey(stockSource, stocksPage), MARKET_CACHE_MAX_AGE);
 
     if (cachedPage) {
       setStocks(cachedPage.items || []);
@@ -857,7 +871,7 @@ export default function Market() {
     stocksRequestIdRef.current = requestId;
 
     api
-      .get("/stocks", {
+      .get(hasTbankWallet ? "/portfolio/tbank/stocks" : "/stocks", {
         params: {
           limit: ITEMS_PER_PAGE,
           offset: (stocksPage - 1) * ITEMS_PER_PAGE,
@@ -876,7 +890,7 @@ export default function Market() {
         const nextTotal = response.data.total || data.length;
         setStocks(nextStocks);
         setStocksTotal(nextTotal);
-        writeCachedValue(marketCacheKey("stocks", stocksPage), {
+        writeCachedValue(marketCacheKey(stockSource, stocksPage), {
           items: nextStocks,
           total: nextTotal,
         });
@@ -887,7 +901,7 @@ export default function Market() {
           return;
         }
 
-        setStocksError("Не удалось загрузить акции");
+        setStocksError(hasTbankWallet ? "Не удалось загрузить акции из Т-Банка" : "Не удалось загрузить акции");
       })
       .finally(() => {
         if (requestId !== stocksRequestIdRef.current) {
@@ -896,7 +910,7 @@ export default function Market() {
 
         setIsStocksLoading(false);
       });
-  }, [normalizeStock, stocksPage]);
+  }, [hasTbankWallet, normalizeStock, stocksPage]);
 
   const fetchSearchIndex = useCallback(() => {
     const controller = new AbortController();

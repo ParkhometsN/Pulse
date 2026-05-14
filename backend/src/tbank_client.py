@@ -82,6 +82,24 @@ class TBankInvestClient:
             },
         )
 
+    async def get_operations(
+        self,
+        token: str,
+        account_id: str,
+        date_from: str,
+        date_to: str,
+    ):
+        return await self._post(
+            "OperationsService/GetOperations",
+            token,
+            {
+                "accountId": account_id,
+                "from": date_from,
+                "to": date_to,
+                "state": "OPERATION_STATE_EXECUTED",
+            },
+        )
+
     async def get_instrument_by_figi(self, token: str, figi: str):
         return await self._post(
             "InstrumentsService/GetInstrumentBy",
@@ -90,6 +108,40 @@ class TBankInvestClient:
                 "idType": "INSTRUMENT_ID_TYPE_FIGI",
                 "id": figi,
             },
+        )
+
+    async def get_share_by_figi(self, token: str, figi: str):
+        return await self._post(
+            "InstrumentsService/GetShareBy",
+            token,
+            {
+                "idType": "INSTRUMENT_ID_TYPE_FIGI",
+                "id": figi,
+            },
+        )
+
+    async def get_currency_by_figi(self, token: str, figi: str):
+        return await self._post(
+            "InstrumentsService/GetCurrencyBy",
+            token,
+            {
+                "idType": "INSTRUMENT_ID_TYPE_FIGI",
+                "id": figi,
+            },
+        )
+
+    async def get_shares(self, token: str, instrument_status: str = "INSTRUMENT_STATUS_BASE"):
+        return await self._post(
+            "InstrumentsService/Shares",
+            token,
+            {"instrumentStatus": instrument_status},
+        )
+
+    async def get_last_prices(self, token: str, figis: list[str]):
+        return await self._post(
+            "MarketDataService/GetLastPrices",
+            token,
+            {"figi": figis},
         )
 
     async def close(self):
