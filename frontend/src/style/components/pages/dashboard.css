@@ -69,6 +69,20 @@
     align-items: center;
     gap: 8px;
 }
+.changes img {
+    transition: transform 0.2s ease, filter 0.2s ease, opacity 0.2s ease;
+}
+.changes_positive img {
+    filter: brightness(0) saturate(100%) invert(54%) sepia(92%) saturate(517%) hue-rotate(118deg) brightness(95%) contrast(95%);
+}
+.changes_negative img {
+    transform: rotate(180deg);
+    filter: brightness(0) saturate(100%) invert(38%) sepia(76%) saturate(1664%) hue-rotate(333deg) brightness(102%) contrast(96%);
+}
+.changes_neutral img {
+    opacity: 0.46;
+    filter: grayscale(1);
+}
 .changes_negative p,
 .scoreBag_negative p{
     color: var(--red) !important;
@@ -286,7 +300,6 @@ align-items: flex-end;
     position: relative;
     flex: 1 1 0;
     min-width: 8px;
-    max-width: 55px;
     border-radius: 13px;
     background-color: var(--primary-blue);
     min-height: 4px;
@@ -1070,6 +1083,10 @@ display: flex;
     flex: 0 0 34px;
 }
 
+.trade_history_loader {
+    padding: 8px 0;
+}
+
 .trade_history_item_main h4 {
     margin: 0;
     font-size: 14px;
@@ -1222,8 +1239,8 @@ display: flex;
 
 .top_growth_item_main img,
 .top_growth_icon {
-    width: 16px;
-    height: 16px;
+    width: 28px;
+    height: 28px;
     border-radius: 50%;
     flex-shrink: 0;
 }
@@ -1312,7 +1329,8 @@ display: flex;
 .activity_grid {
     display: grid;
     grid-template-columns: repeat(7, 18px);
-    gap: 16px;
+    grid-auto-rows: 18px;
+    gap: 10px 16px;
     width: fit-content;
     max-width: 100%;
 }
@@ -1325,12 +1343,21 @@ display: flex;
 }
 
 .activity_cell {
+    display: flex;
+    align-items: center;
+    justify-content: center;
     width: 18px;
     height: 18px;
     aspect-ratio: 1;
     border-radius: 50%;
     background: rgba(255, 255, 255, 0.06);
     border: 1px solid rgba(255, 255, 255, 0.04);
+    color: white;
+    font-size: 9px;
+    font-weight: 800;
+    line-height: 1;
+    text-indent: -999px;
+    overflow: hidden;
 }
 
 .activity_weekdays {
@@ -1358,19 +1385,31 @@ display: flex;
 }
 
 .activity_cell_1 {
-    background: rgba(30, 117, 255, 0.18);
+    background: rgba(30, 117, 255, 0.2);
 }
 
 .activity_cell_2 {
-    background: rgba(30, 117, 255, 0.32);
+    background: rgba(30, 117, 255, 0.5);
 }
 
 .activity_cell_3 {
-    background: rgba(30, 117, 255, 0.48);
+    background: rgba(30, 117, 255, 0.75);
 }
 
 .activity_cell_4 {
-    background: rgba(30, 117, 255, 0.72);
+    background: rgba(30, 117, 255, 1);
+}
+
+.activity_cell_empty {
+    visibility: hidden;
+}
+
+.activity_cell_future {
+    opacity: 0.35;
+}
+
+.activity_cell_today {
+    box-shadow: 0 0 0 4px rgba(30, 117, 255, 0.18);
 }
 
 .chart_header_copy h3 {

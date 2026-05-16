@@ -129,6 +129,60 @@ async def ensure_auth_schema() -> None:
         )
         await connection.execute(
             """
+            create table if not exists user_ai_settings (
+                user_id uuid primary key references users(id) on delete cascade,
+                provider varchar(40) not null default 'openai',
+                api_key text,
+                model varchar(120) not null default 'gpt-4.1-mini',
+                created_at timestamptz not null default now(),
+                updated_at timestamptz not null default now()
+            )
+            """
+        )
+        await connection.execute(
+            """
+            create table if not exists ai_asset_scores (
+                id uuid primary key default gen_random_uuid(),
+                user_id uuid references users(id) on delete cascade,
+                asset_type varchar(30) not null,
+                symbol varchar(40) not null,
+                figi varchar(64),
+                score numeric(6, 2) not null,
+                signal varchar(20) not null,
+                confidence numeric(6, 2) not null,
+                target_price numeric(24, 10),
+                horizon varchar(30) not null default '7d',
+                model varchar(120),
+                summary text,
+                factors jsonb not null default '{}'::jsonb,
+                source_manifest jsonb not null default '[]'::jsonb,
+                data_quality_flags jsonb not null default '[]'::jsonb,
+                created_at timestamptz not null default now()
+            )
+            """
+        )
+        await connection.execute(
+            """
+            create table if not exists ai_paper_strategy_runs (
+                id uuid primary key default gen_random_uuid(),
+                user_id uuid not null references users(id) on delete cascade,
+                strategy_id varchar(80) not null,
+                run_date date not null,
+                start_capital numeric(24, 10) not null default 100000,
+                current_capital numeric(24, 10) not null default 100000,
+                roi numeric(12, 6) not null default 0,
+                accuracy numeric(12, 6) not null default 0,
+                max_drawdown numeric(12, 6) not null default 0,
+                chart jsonb not null default '[]'::jsonb,
+                trades jsonb not null default '[]'::jsonb,
+                metadata jsonb not null default '{}'::jsonb,
+                created_at timestamptz not null default now(),
+                unique(user_id, strategy_id, run_date)
+            )
+            """
+        )
+        await connection.execute(
+            """
             create table if not exists password_reset_codes (
                 id uuid primary key default gen_random_uuid(),
                 user_id uuid not null references users(id) on delete cascade,
@@ -161,4 +215,10 @@ async def ensure_auth_schema() -> None:
         )
         await connection.execute(
             "create index if not exists idx_portfolio_snapshots_user_id on portfolio_snapshots(user_id)"
+        )
+        await connection.execute(
+            "create index if not exists idx_ai_asset_scores_user_symbol on ai_asset_scores(user_id, asset_type, symbol, created_at desc)"
+        )
+        await connection.execute(
+            "create index if not exists idx_ai_paper_strategy_runs_user_date on ai_paper_strategy_runs(user_id, run_date desc)"
         )

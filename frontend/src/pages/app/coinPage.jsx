@@ -11,6 +11,7 @@ import {
 
 import PulseSvgTag from "../../assets/svg/tagpulsegray.svg";
 import LogoSvg from "../../assets/svg/pulse_logo.svg";
+import TbankIcon from "../../assets/svg/tbanklogoicon.svg";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useSearchParams } from "react-router-dom";
 import api from "../../lib/api";
@@ -23,18 +24,29 @@ import CoinIcon from "../../components/ui/coinIcon";
 import TextAlert from "../../components/ui/TextAlert";
 import NewsCard from "@/components/ui/newsCard";
 
-const ASSET_REFRESH_INTERVAL = 1000;
-const ASSET_BACKGROUND_REFRESH_INTERVAL = 15000;
+const ASSET_REFRESH_INTERVAL = 10000;
+const ASSET_BACKGROUND_REFRESH_INTERVAL = 60000;
 const ASSET_CACHE_MAX_AGE = 1000 * 60 * 5;
 const CHART_CACHE_MAX_AGE = 1000 * 60 * 10;
 const ASSET_NEWS_CACHE_MAX_AGE = 1000 * 60 * 15;
-const assetCacheKey = (endpoint) => `pulse:asset:${endpoint}:v1`;
-const chartCacheKey = (key) => `pulse:asset-chart:${key}:v1`;
+const assetCacheKey = (endpoint) => `pulse:asset:${endpoint}:v3`;
+const chartCacheKey = (key) => `pulse:asset-chart:${key}:v2`;
 const assetNewsCacheKey = (key) => `pulse:asset-news:${key}:v1`;
+const aiScoreCacheKey = (key) => `pulse:asset-ai-score:${new Date().toLocaleDateString("en-CA")}:${key}:v1`;
+const TRADE_PORTFOLIO_CACHE_KEY = "pulse:trade:portfolio-summary:v3";
 const FAVORITES_STORAGE_KEY = "pulse_market_favorites";
 const NEWS_SEEN_KEY = "pulse:news:seen:v1";
 const ASSET_NEWS_PAGE_SIZE = 20;
-const STABLE_CRYPTO_SYMBOLS = new Set(["USDT", "USDC", "DAI", "USD", "BUSD"]);
+const STABLE_CRYPTO_SYMBOLS = new Set(["USDT", "USDC", "DAI", "USD", "BUSD", "RUB", "RUR"]);
+const STABLE_CRYPTO_NAMES = {
+  USDT: "Tether",
+  USDC: "USD Coin",
+  DAI: "Dai",
+  USD: "US Dollar",
+  BUSD: "Binance USD",
+  RUB: "Российский рубль",
+  RUR: "Российский рубль",
+};
 const CHART_RANGES = {
   "1D": { days: 1, interval: "60", stockInterval: 60, points: 24, showTime: true },
   "5D": { days: 5, interval: "60", stockInterval: 60, points: 120, showTime: true },
@@ -73,7 +85,7 @@ const getPriceDecimals = (value) => {
   return 8;
 };
 
-const formatNumber = (value, maximumFractionDigits = getPriceDecimals(value)) => {
+const formatNumber = (value, maximumFractionDigits = getPriceDecimals(value), minimumFractionDigits = 0) => {
   const number = Number(value);
 
   if (!Number.isFinite(number)) {
@@ -82,6 +94,7 @@ const formatNumber = (value, maximumFractionDigits = getPriceDecimals(value)) =>
 
   return number.toLocaleString("ru-RU", {
     maximumFractionDigits,
+    minimumFractionDigits: Math.min(minimumFractionDigits, maximumFractionDigits),
   });
 };
 
@@ -92,7 +105,26 @@ const formatMoney = (value, currencySymbol) => {
     return `${currencySymbol}0`;
   }
 
-  return `${currencySymbol}${formatNumber(number)}`;
+  const maximumFractionDigits = getPriceDecimals(number);
+  const minimumFractionDigits = number >= 1 && number < 1000
+    ? Math.min(2, maximumFractionDigits)
+    : number > 0 && number < 1
+      ? Math.min(4, maximumFractionDigits)
+      : 0;
+
+  return `${currencySymbol}${formatNumber(number, maximumFractionDigits, minimumFractionDigits)}`;
+};
+
+const formatTradeInputValue = (value, digits = 8) => {
+  const number = Number(value);
+
+  if (!Number.isFinite(number) || number <= 0) {
+    return "";
+  }
+
+  return number
+    .toFixed(digits)
+    .replace(/\.?0+$/, "");
 };
 
 const formatRubleEquivalent = (value, quoteCurrency) => {
@@ -195,6 +227,120 @@ const formatDateTime = (value) => {
   });
 };
 
+const getApiErrorText = (error, fallback = "Не удалось отправить заявку") => {
+  const detail = error?.response?.data?.detail;
+
+  if (typeof detail === "string") {
+    return detail;
+  }
+
+  if (Array.isArray(detail)) {
+    return detail
+      .map((item) => {
+        const fieldName = Array.isArray(item?.loc)
+          ? item.loc.filter((part) => part !== "body").join(".")
+          : "";
+        const message = item?.msg || item?.message || "Некорректные данные заявки";
+
+        return fieldName ? `${fieldName}: ${message}` : message;
+      })
+      .join(". ");
+  }
+
+  if (detail && typeof detail === "object") {
+    return detail.message || detail.msg || fallback;
+  }
+
+  return fallback;
+};
+
+const normalizeTextContent = (value, fallback = "") => {
+  if (typeof value === "string") {
+    return value;
+  }
+
+  if (value === null || value === undefined) {
+    return fallback;
+  }
+
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => normalizeTextContent(item))
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  if (typeof value === "object") {
+    return value.message || value.msg || value.detail || fallback;
+  }
+
+  return fallback;
+};
+
+const calculateLocalDailyAiScore = (asset, assetType, symbol) => {
+  const chart = (asset?.chart || asset?.chart7d || [])
+    .map((point) => Number(point?.close || point?.price))
+    .filter((value) => Number.isFinite(value) && value > 0);
+  const currentPrice = Number(asset?.price) || chart[chart.length - 1] || 0;
+  const change1d = Number(asset?.priceChangePercent24h) || 0;
+  const change7d = Number(asset?.priceChangePercent7d) || 0;
+  const change30d = Number(asset?.priceChangePercent30d) || 0;
+  const returns = chart
+    .slice(1)
+    .map((value, index) => {
+      const previousValue = chart[index];
+      return previousValue > 0 ? ((value - previousValue) / previousValue) * 100 : 0;
+    })
+    .filter(Number.isFinite);
+  const volatility = returns.length
+    ? Math.sqrt(returns.reduce((sum, value) => sum + value * value, 0) / returns.length)
+    : Math.abs(change1d);
+  const positiveDays = returns.filter((value) => value > 0).length;
+  const trendQuality = returns.length ? (positiveDays / returns.length) * 100 : 50;
+  const turnover = Number(asset?.turnover24h || asset?.volume24h || 0);
+  const momentumScore = clamp(50 + change1d * 1.8 + change7d * 1.1 + change30d * 0.45, 0, 100);
+  const liquidityScore = clamp(35 + Math.log10(Math.max(turnover, 1)) * 9, 0, 100);
+  const riskScore = clamp(100 - volatility * 6, 0, 100);
+  const qualityScore = clamp(trendQuality * 0.7 + riskScore * 0.3, 0, 100);
+  const score = clamp(
+    momentumScore * 0.42 + liquidityScore * 0.2 + riskScore * 0.18 + qualityScore * 0.2,
+    0,
+    100
+  );
+  const targetMove = clamp(((score - 50) / 100) * Math.max(6, volatility * 1.8), -18, 18);
+  const targetPrice = currentPrice > 0 ? currentPrice * (1 + targetMove / 100) : 0;
+  const rangeWidth = Math.max(Math.abs(targetMove) * 0.38, Math.min(Math.max(volatility, 1.2), 8));
+  const confidence = clamp(82 - (chart.length < 3 ? 14 : 0) - (turnover <= 0 ? 10 : 0), 35, 88);
+  const signal = confidence < 45
+    ? "NO_SIGNAL"
+    : score >= 60
+      ? "BUY"
+      : score <= 35
+        ? "SELL"
+        : "HOLD";
+
+  return {
+    symbol,
+    assetType,
+    score: Number(score.toFixed(2)),
+    signal,
+    confidence: Number(confidence.toFixed(2)),
+    targetPrice: Number(targetPrice.toFixed(8)),
+    targetRangeLow: Number((targetPrice * (1 - rangeWidth / 100)).toFixed(8)),
+    targetRangeHigh: Number((targetPrice * (1 + rangeWidth / 100)).toFixed(8)),
+    summary: "Локальный дневной прогноз рассчитан по momentum, волатильности, ликвидности и качеству тренда.",
+    sourceManifest: ["local_market_features"],
+    dataQualityFlags: chart.length < 3 ? ["short_chart_history"] : [],
+    cached: true,
+    localFallback: true,
+    createdAt: new Date().toISOString(),
+  };
+};
+
 const getPointTime = (point) => {
   const rawTime = point?.time || point?.begin;
   const date = rawTime ? new Date(rawTime) : null;
@@ -245,6 +391,41 @@ const getLinePath = (points) => {
     .join(" ");
 };
 
+const getTradeMarkerTime = (marker) => {
+  const date = marker?.executedAt ? new Date(marker.executedAt) : null;
+
+  return date && !Number.isNaN(date.getTime()) ? date : null;
+};
+
+const getTradeMarkerPrice = (marker) => {
+  const explicitPrice = Number(marker?.price);
+
+  if (Number.isFinite(explicitPrice) && explicitPrice > 0) {
+    return explicitPrice;
+  }
+
+  const totalAmount = Number(marker?.totalAmount);
+  const quantity = Number(marker?.quantity);
+
+  return Number.isFinite(totalAmount) && totalAmount > 0 && Number.isFinite(quantity) && quantity > 0
+    ? totalAmount / quantity
+    : null;
+};
+
+const getMedianInterval = (timeValues) => {
+  const intervals = timeValues
+    .slice(1)
+    .map((value, index) => value - timeValues[index])
+    .filter((value) => Number.isFinite(value) && value > 0)
+    .sort((firstValue, secondValue) => firstValue - secondValue);
+
+  if (!intervals.length) {
+    return 0;
+  }
+
+  return intervals[Math.floor(intervals.length / 2)];
+};
+
 const filterChartByRange = (chartData, range) => {
   const data = Array.isArray(chartData) ? chartData : [];
 
@@ -280,7 +461,7 @@ const getInitialFavorites = () => {
   }
 };
 
-function AssetChart({ data, currencySymbol, activeRange, currentPrice }) {
+function AssetChart({ data, currencySymbol, activeRange, currentPrice, tradeMarkers = [] }) {
   const [chartSize, setChartSize] = useState({
     width: 640,
     height: 320,
@@ -300,6 +481,7 @@ function AssetChart({ data, currencySymbol, activeRange, currentPrice }) {
     scrollLeft: 0,
   });
   const [hoveredPoint, setHoveredPoint] = useState(null);
+  const [selectedTradeMarker, setSelectedTradeMarker] = useState(null);
   const chartData = useMemo(() => {
     return (Array.isArray(data) ? data : [])
       .map((point) => {
@@ -327,9 +509,47 @@ function AssetChart({ data, currencySymbol, activeRange, currentPrice }) {
       });
   }, [data]);
   const currentPriceNumber = Number(currentPrice);
+  const timeValues = chartData
+    .map((point) => point.time?.getTime())
+    .filter(Number.isFinite);
+  const minTime = Math.min(...timeValues);
+  const maxTime = Math.max(...timeValues);
+  const hasTimeScale = Number.isFinite(minTime) && Number.isFinite(maxTime) && maxTime > minTime;
+  const chartIntervalMs = getMedianInterval(timeValues);
+  const visibleWindowStart = hasTimeScale
+    ? minTime - (chartIntervalMs || 0)
+    : null;
+  const visibleWindowEnd = hasTimeScale
+    ? maxTime + (chartIntervalMs || 0)
+    : null;
+  const preparedTradeMarkers = (Array.isArray(tradeMarkers) ? tradeMarkers : [])
+    .map((marker) => {
+      const markerTime = getTradeMarkerTime(marker);
+      const markerTimeMs = markerTime?.getTime();
+      const markerPrice = getTradeMarkerPrice(marker);
+
+      return {
+        ...marker,
+        markerTime,
+        markerTimeMs,
+        markerPrice,
+      };
+    })
+    .filter((marker) => Number.isFinite(marker.markerTimeMs));
+  const visibleTradeMarkers = preparedTradeMarkers.filter((marker) => {
+    if (!hasTimeScale) {
+      return true;
+    }
+
+    return marker.markerTimeMs >= visibleWindowStart && marker.markerTimeMs <= visibleWindowEnd;
+  });
+  const tradeMarkerPrices = visibleTradeMarkers
+    .map((marker) => marker.markerPrice)
+    .filter(Number.isFinite);
   const prices = [
     ...chartData.flatMap((point) => [point.close, point.high, point.low]),
     currentPriceNumber,
+    ...tradeMarkerPrices,
   ].filter(Number.isFinite);
   const rawMin = Math.min(...prices);
   const rawMax = Math.max(...prices);
@@ -402,8 +622,17 @@ function AssetChart({ data, currencySymbol, activeRange, currentPrice }) {
   const min = rawMin - visualPadding;
   const max = rawMax + visualPadding;
   const valueRange = max - min || 1;
+  const getXByTime = (time, index) => {
+    const timeMs = time?.getTime();
+
+    if (hasTimeScale && Number.isFinite(timeMs)) {
+      return padding.left + ((timeMs - minTime) / (maxTime - minTime)) * chartWidth;
+    }
+
+    return padding.left + (index / (chartData.length - 1)) * chartWidth;
+  };
   const points = chartData.map((point, index) => {
-    const x = padding.left + (index / (chartData.length - 1)) * chartWidth;
+    const x = getXByTime(point.time, index);
     const y = padding.top + (1 - ((point.close - min) / valueRange)) * chartHeight;
 
     const previousClose = index > 0 ? chartData[index - 1].close : point.open;
@@ -412,9 +641,9 @@ function AssetChart({ data, currencySymbol, activeRange, currentPrice }) {
 
     return { ...point, x, y, change, changePercent };
   });
-  const currentPriceY = padding.top + (
+  const currentPriceY = clamp(padding.top + (
     1 - ((currentPriceNumber - min) / valueRange)
-  ) * chartHeight;
+  ) * chartHeight, padding.top, height - padding.bottom);
   const hasCurrentPrice = Number.isFinite(currentPriceNumber);
   const linePath = getLinePath(points);
   const areaPath = `${linePath} L ${axisRight} ${height - padding.bottom} L ${padding.left} ${height - padding.bottom} Z`;
@@ -438,6 +667,47 @@ function AssetChart({ data, currencySymbol, activeRange, currentPrice }) {
   const tooltipGoesLeft = hoveredPoint ? hoveredPoint.x > width - 226 : false;
   const tooltipTop = hoveredPoint
     ? Math.min(Math.max(hoveredPoint.y, 78), height - 64)
+    : 0;
+  const markerPoints = visibleTradeMarkers
+    .map((marker) => {
+      if (
+        !marker.markerTime ||
+        !Number.isFinite(marker.markerTimeMs) ||
+        !hasTimeScale
+      ) {
+        return null;
+      }
+
+      const nearestPoint = points.reduce((nearest, point) => (
+        Math.abs((point.time?.getTime() || 0) - marker.markerTimeMs) <
+        Math.abs((nearest.time?.getTime() || 0) - marker.markerTimeMs)
+          ? point
+          : nearest
+      ), points[0]);
+      const markerValue = Number.isFinite(marker.markerPrice) ? marker.markerPrice : nearestPoint.close;
+      const x = padding.left + ((marker.markerTimeMs - minTime) / (maxTime - minTime)) * chartWidth;
+      const y = padding.top + (1 - ((markerValue - min) / valueRange)) * chartHeight;
+
+      return {
+        ...marker,
+        markerValue,
+        x: clamp(x, padding.left, axisRight),
+        y: clamp(y, padding.top, height - padding.bottom),
+      };
+    })
+    .filter(Boolean);
+  const hiddenTradeMarkerCount = Math.max(preparedTradeMarkers.length - markerPoints.length, 0);
+  const tradeTooltip = selectedTradeMarker && markerPoints.find((marker) => {
+    const currentKey = marker.id || marker.executedAt;
+    const selectedKey = selectedTradeMarker.id || selectedTradeMarker.executedAt;
+
+    return currentKey && selectedKey
+      ? currentKey === selectedKey
+      : marker.executedAt === selectedTradeMarker.executedAt;
+  });
+  const tradeTooltipGoesLeft = tradeTooltip ? tradeTooltip.x > width - 236 : false;
+  const tradeTooltipTop = tradeTooltip
+    ? Math.min(Math.max(tradeTooltip.y, 82), height - 74)
     : 0;
 
   const updateHoveredPoint = (event) => {
@@ -492,6 +762,7 @@ function AssetChart({ data, currencySymbol, activeRange, currentPrice }) {
         onPointerLeave={(event) => {
           stopDrag(event);
           setHoveredPoint(null);
+          setSelectedTradeMarker(null);
         }}
       >
         <div className="asset_chart_inner" style={{ width, minWidth: width, height }}>
@@ -562,7 +833,54 @@ function AssetChart({ data, currencySymbol, activeRange, currentPrice }) {
               strokeLinejoin="round"
               pathLength="1"
             />
-            {hoveredPoint && (
+            {markerPoints.map((marker, index) => {
+              const isSell = String(marker.action || "").toLowerCase().includes("прод");
+              const markerKey = `${marker.id || marker.executedAt || index}-marker`;
+              const markerFill = isSell ? "#ff3b30" : "#10B981";
+
+              return (
+                <g
+                  key={markerKey}
+                  className={`asset_chart_trade_marker asset_chart_trade_marker_${isSell ? "sell" : "buy"}`}
+                  role="button"
+                  tabIndex="0"
+                  aria-label={`${isSell ? "Продажа" : "Покупка"} ${formatNumber(marker.quantity, 8)} по ${formatMoney(marker.markerValue, currencySymbol)}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setSelectedTradeMarker(marker);
+                  }}
+                  onPointerEnter={() => {
+                    setSelectedTradeMarker(marker);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      setSelectedTradeMarker(marker);
+                    }
+                  }}
+                >
+                  <rect
+                    x={marker.x - 5}
+                    y={marker.y - 5}
+                    width="10"
+                    height="10.3704"
+                    rx="5"
+                    fill={markerFill}
+                  />
+                  <rect
+                    x={marker.x - 4}
+                    y={marker.y - 4}
+                    width="8"
+                    height="8.3704"
+                    rx="4"
+                    stroke="white"
+                    strokeWidth="2"
+                    fill="none"
+                  />
+                </g>
+              );
+            })}
+            {hoveredPoint && !tradeTooltip && (
               <>
                 <line
                   x1={hoveredPoint.x}
@@ -583,7 +901,7 @@ function AssetChart({ data, currencySymbol, activeRange, currentPrice }) {
             )}
           </svg>
 
-          {hoveredPoint && (
+          {hoveredPoint && !tradeTooltip && (
             <div
               className={`asset_chart_tooltip ${tooltipGoesLeft ? "asset_chart_tooltip_left" : ""}`}
               style={{
@@ -611,6 +929,29 @@ function AssetChart({ data, currencySymbol, activeRange, currentPrice }) {
               )}
             </div>
           )}
+          {tradeTooltip && (
+            <div
+              className={`asset_chart_tooltip asset_chart_trade_tooltip ${tradeTooltipGoesLeft ? "asset_chart_tooltip_left" : ""}`}
+              style={{
+                left: tradeTooltipGoesLeft ? tradeTooltip.x - 18 : tradeTooltip.x + 18,
+                top: tradeTooltipTop,
+              }}
+            >
+              <p>{String(tradeTooltip.action || "").toLowerCase().includes("прод") ? "Продажа" : "Покупка"}</p>
+              <span>{formatDateTime(tradeTooltip.executedAt)}</span>
+              <div className="asset_chart_tooltip_grid">
+                <span>Цена {formatMoney(tradeTooltip.markerValue, currencySymbol)}</span>
+                <span>Кол-во {formatNumber(tradeTooltip.quantity, 8)}</span>
+                <span>Сумма {formatMoney(tradeTooltip.totalAmount, currencySymbol)}</span>
+                <span>{tradeTooltip.sourceLabel || tradeTooltip.source || "Pulse"}</span>
+              </div>
+            </div>
+          )}
+          {hiddenTradeMarkerCount > 0 ? (
+            <div className="asset_chart_marker_notice">
+              {hiddenTradeMarkerCount} сдел. вне выбранного диапазона
+            </div>
+          ) : null}
         </div>
       </div>
       {hasCurrentPrice && (
@@ -795,6 +1136,12 @@ function OrderBook({ orderbook, currentPrice, currencySymbol, baseCurrency, quot
         </p>
       </div>
 
+      {!orderbook.hasRows ? (
+        <p className="orderbook_empty_message">
+          Стакан сейчас пуст или недоступен. Для акций это часто происходит вне торговой сессии биржи.
+        </p>
+      ) : null}
+
       <div className="glassSellBuy">
         <div className="buyGlass">
           <div className="QTYBTC">
@@ -929,10 +1276,12 @@ export default function CoinPage() {
   const [searchParams] = useSearchParams();
   const assetTypeParam = (searchParams.get("type") || "").toLowerCase();
   const symbol = searchParams.get("symbol") || "";
+  const figiParam = searchParams.get("figi") || "";
+  const isCurrencyAssetParam = assetTypeParam === "currency";
   const isStockAsset = assetTypeParam === "stock"
     || assetTypeParam === "stocks"
     || (!assetTypeParam && symbol && !symbol.toUpperCase().endsWith("USDT"));
-  const assetType = isStockAsset ? "stock" : "crypto";
+  const assetType = isStockAsset ? "stock" : isCurrencyAssetParam ? "currency" : "crypto";
   const [requestState, setRequestState] = useState({
     endpoint: null,
     asset: null,
@@ -953,34 +1302,65 @@ export default function CoinPage() {
   const isCoinPageRoute = location.pathname.endsWith("/market/coin-page");
 
   const [textAlert, setTesxtAlert] = useState(false);
+  const [tradeSuccessAlert, setTradeSuccessAlert] = useState(null);
+  const [isTradeDrawerOpen, setIsTradeDrawerOpen] = useState(false);
   const [tradeSide, setTradeSide] = useState("buy");
   const [tradeAmount, setTradeAmount] = useState("");
   const [assetNews, setAssetNews] = useState([]);
   const [isAssetNewsLoading, setIsAssetNewsLoading] = useState(false);
   const [assetNewsError, setAssetNewsError] = useState("");
+  const [assetTradeMarkers, setAssetTradeMarkers] = useState([]);
+	  const [aiScoreState, setAiScoreState] = useState({
+	    key: "",
+	    data: null,
+	    isLoading: false,
+	  });
+  const [aiSummaryState, setAiSummaryState] = useState({
+    key: "",
+    title: "Сводка GPT",
+    text: "",
+    isLoading: false,
+    error: "",
+  });
+  const [stockTradingStatus, setStockTradingStatus] = useState(null);
   const [seenNewsIds, setSeenNewsIds] = useState(() => readCachedValue(NEWS_SEEN_KEY, Infinity) || []);
+  const [portfolioSummary, setPortfolioSummary] = useState(
+    () => readCachedValue(TRADE_PORTFOLIO_CACHE_KEY, ASSET_CACHE_MAX_AGE) || null
+  );
+  const [isPortfolioLoading, setIsPortfolioLoading] = useState(!portfolioSummary);
+  const [tradeState, setTradeState] = useState({
+    isSubmitting: false,
+    message: "",
+    error: "",
+  });
   const [activeButton, setActiveButton] = useState('Обзор');
   const isOverviewTab = activeButton === "Обзор";
 
-  const getTextAlert = () => {
-    setTesxtAlert(true)
-  }
-
-  const endpoint = useMemo(() => {
+	  const endpoint = useMemo(() => {
     if (!symbol) {
       return null;
     }
 
-    if (assetType === "stock") {
-      return `/stocks/${symbol}`;
+    if (assetType === "currency") {
+      return `stable:${symbol.toUpperCase()}`;
     }
 
+	    if (assetType === "stock") {
+	      const stockParams = new URLSearchParams();
+
+	      if (figiParam) {
+	        stockParams.set("figi", figiParam);
+	      }
+
+	      return `/portfolio/tbank/stocks/${encodeURIComponent(symbol)}${stockParams.toString() ? `?${stockParams.toString()}` : ""}`;
+	    }
+
     if (STABLE_CRYPTO_SYMBOLS.has(symbol.toUpperCase())) {
-      return null;
+      return `stable:${symbol.toUpperCase()}`;
     }
 
     return `/cryptocurrencies/${symbol}`;
-  }, [assetType, symbol]);
+	  }, [assetType, figiParam, symbol]);
 
   const fetchAsset = useCallback((targetEndpoint) => {
     if (
@@ -988,6 +1368,35 @@ export default function CoinPage() {
       !isCoinPageRoute ||
       activeEndpointRef.current !== targetEndpoint
     ) {
+      return;
+    }
+
+    if (targetEndpoint.startsWith("stable:")) {
+        const stableSymbol = targetEndpoint.replace("stable:", "").toUpperCase();
+      const isRubStable = stableSymbol === "RUB" || stableSymbol === "RUR";
+      setRequestState({
+        endpoint: targetEndpoint,
+        asset: {
+          id: stableSymbol,
+          symbol: stableSymbol,
+          name: STABLE_CRYPTO_NAMES[stableSymbol] || stableSymbol,
+          shortName: stableSymbol,
+          baseCoin: stableSymbol,
+          quoteCoin: isRubStable ? "RUB" : "USD",
+          iconUrl: stableSymbol === "USDT"
+            ? "https://cryptologos.cc/logos/tether-usdt-logo.svg"
+            : null,
+          price: 1,
+          priceChangePercent24h: 0,
+          priceChangePercent7d: 0,
+          priceChangePercent30d: 0,
+          chart7d: [],
+          orderbook: { bids: [], asks: [] },
+          isStableAsset: true,
+          isCurrencyAsset: isRubStable || stableSymbol === "USD",
+        },
+        error: "",
+      });
       return;
     }
 
@@ -1041,6 +1450,35 @@ export default function CoinPage() {
           return;
         }
 
+        if (targetEndpoint.startsWith("/portfolio/tbank/stocks/") && symbol) {
+          return api
+            .get(`/stocks/${symbol}`, { signal: controller.signal })
+            .then((fallbackResponse) => {
+              if (
+                requestId !== requestIdRef.current ||
+                activeEndpointRef.current !== targetEndpoint
+              ) {
+                return;
+              }
+
+              setRequestState({
+                endpoint: targetEndpoint,
+                asset: fallbackResponse.data,
+                error: "",
+              });
+              writeCachedValue(assetCacheKey(targetEndpoint), fallbackResponse.data);
+            })
+            .catch(() => {
+              setRequestState((currentState) => ({
+                endpoint: targetEndpoint,
+                asset: currentState.asset,
+                error: currentState.asset
+                  ? "Данные временно не обновились"
+                  : "Не удалось загрузить актив",
+              }));
+            });
+        }
+
         setRequestState((currentState) => ({
           endpoint: targetEndpoint,
           asset: currentState.asset,
@@ -1054,7 +1492,7 @@ export default function CoinPage() {
           isRequestRunningRef.current = false;
         }
       });
-  }, [isCoinPageRoute]);
+  }, [isCoinPageRoute, symbol]);
 
   useEffect(() => {
     if (pollingIntervalRef.current) {
@@ -1112,11 +1550,15 @@ export default function CoinPage() {
   const isLoading = Boolean(endpoint && requestState.endpoint !== endpoint);
   const isBlockingError = Boolean(error && !asset);
   const isStock = assetType === "stock";
+  const isCurrency = assetType === "currency" || asset?.isCurrencyAsset || asset?.assetType === "currency";
   const assetName = asset?.name || asset?.baseCoin || symbol;
   const shortName = asset?.shortName || asset?.baseCoin || asset?.symbol || symbol;
-  const quoteCurrency = isStock ? "RUB" : asset?.quoteCoin || "USD";
+  const pageTitleName = isStock ? shortName : assetName;
+  const pageSubtitleSymbol = isStock ? asset?.symbol || symbol : shortName;
+  const quoteCurrency = isStock ? "RUB" : isCurrency ? asset?.quoteCoin || shortName : asset?.quoteCoin || "USD";
+  const tradeQuoteCurrency = isStock ? "RUB" : "USDT";
   const baseCurrency = isStock ? shortName : asset?.baseCoin || shortName;
-  const currencySymbol = isStock ? "₽" : "$";
+  const currencySymbol = isStock || baseCurrency === "RUB" || quoteCurrency === "RUB" ? "₽" : "$";
   const price = formatMoney(asset?.price, currencySymbol);
   const changePercent = Number(asset?.priceChangePercent24h) || 0;
   const currentPrice = Number(asset?.price) || 0;
@@ -1158,28 +1600,152 @@ export default function CoinPage() {
   const positiveMood = derivedSentiment.positive;
   const negativeMood = derivedSentiment.negative;
   const hasMood = Boolean(asset);
-  const rawAvailableMoney = Number(asset?.availableMoney ?? asset?.availableBalance ?? 0);
-  const rawAvailableAssetAmount = Number(asset?.availableAssetAmount ?? asset?.positionAmount ?? 0);
-  const availableMoney = Number.isFinite(rawAvailableMoney) ? rawAvailableMoney : 0;
-  const availableAssetAmount = Number.isFinite(rawAvailableAssetAmount) ? rawAvailableAssetAmount : 0;
+  const tradeWallet = useMemo(() => {
+    const targetProvider = isStock ? "tbank" : "bybit";
+
+    return (portfolioSummary?.wallets || []).find(
+      (wallet) => wallet.provider === targetProvider && wallet.status === "active"
+    );
+  }, [isStock, portfolioSummary]);
+  const walletAssets = tradeWallet?.assets || [];
+  const normalizedBaseCurrency = String(baseCurrency || "").toUpperCase();
+  const quoteAsset = walletAssets.find((item) => {
+    const assetSymbol = String(item.symbol || item.shortName || item.coin || "").toUpperCase();
+    const assetType = String(item.type || "").toLowerCase();
+
+    return isStock
+      ? assetSymbol === "RUB" || assetType === "currency"
+      : assetSymbol === "USDT" || assetSymbol === "USDC";
+  });
+	  const positionAsset = walletAssets.find((item) => {
+	    const assetSymbol = String(item.symbol || item.shortName || item.coin || "").toUpperCase();
+	    const routeSymbol = String(item.routeSymbol || "").toUpperCase();
+	    const itemFigi = String(item.figi || item.id || "").toUpperCase();
+	    const pageSymbol = String(asset?.symbol || symbol).toUpperCase();
+	    const pageFigi = String(asset?.figi || figiParam || asset?.id || "").toUpperCase();
+
+    return assetSymbol === normalizedBaseCurrency
+      || assetSymbol === pageSymbol
+      || routeSymbol === pageSymbol
+      || (pageFigi && itemFigi === pageFigi);
+  });
+  const availableMoneyRaw = isStock
+    ? quoteAsset?.valueRub
+    : quoteAsset?.valueUsd ?? quoteAsset?.currentPriceUsd;
+  const availableMoney = Number.isFinite(Number(availableMoneyRaw))
+    ? Number(availableMoneyRaw)
+    : 0;
+  const availableAssetAmountRaw = positionAsset?.availableQuantity ?? positionAsset?.quantity;
+  const availableAssetAmount = Number.isFinite(Number(availableAssetAmountRaw))
+    ? Number(availableAssetAmountRaw)
+    : 0;
+  const hasTradeWallet = Boolean(tradeWallet);
   const tradeAmountNumber = Number(String(tradeAmount).replace(",", "."));
   const normalizedTradeAmount = Number.isFinite(tradeAmountNumber) ? Math.max(tradeAmountNumber, 0) : 0;
-  const estimatedTradeQuantity = currentPrice > 0
-    ? normalizedTradeAmount / currentPrice
+  const stockLotSize = Math.max(Number(asset?.lotSize || asset?.lot || 1) || 1, 1);
+  const stockLotValue = currentPrice * stockLotSize;
+  const normalizedTradeLots = Math.floor(normalizedTradeAmount);
+  const isStockLotInputInvalid = isStock && normalizedTradeAmount > 0 && normalizedTradeAmount !== normalizedTradeLots;
+  const cryptoTradingPair = isStock ? "" : `${String(asset?.baseCoin || baseCurrency).toUpperCase()}/${tradeQuoteCurrency}`;
+  const cryptoMinOrderAmount = !isStock
+    ? Number(asset?.minOrderAmount || asset?.minNotionalValue || 5)
     : 0;
-  const maxBuyQuantity = currentPrice > 0 ? availableMoney / currentPrice : 0;
-  const maxSellValue = availableAssetAmount * currentPrice;
+  const cryptoMinSellQuantity = !isStock && currentPrice > 0 && cryptoMinOrderAmount > 0
+    ? cryptoMinOrderAmount / currentPrice
+    : 0;
+  const estimatedTradeQuantity = isStock
+    ? normalizedTradeLots * stockLotSize
+    : tradeSide === "sell"
+      ? normalizedTradeAmount
+      : currentPrice > 0
+      ? normalizedTradeAmount / currentPrice
+      : 0;
+  const estimatedTradeValue = estimatedTradeQuantity * currentPrice;
+  const maxBuyLots = currentPrice > 0
+    ? Math.floor(availableMoney / (currentPrice * stockLotSize))
+    : 0;
+  const maxSellLots = Math.floor(availableAssetAmount / stockLotSize);
+  const stockBuyShortfall = Math.max(stockLotValue - availableMoney, 0);
   const tradeButtonText = tradeSide === "buy"
     ? `Купить ${shortName}`
     : `Продать ${shortName}`;
-  const maxTradeAmount = tradeSide === "buy"
-    ? availableMoney
-    : maxSellValue;
-  const tradeAmountError = tradeSide === "buy" && normalizedTradeAmount > availableMoney
-    ? "Сумма больше доступных средств"
-    : tradeSide === "sell" && estimatedTradeQuantity > availableAssetAmount
-      ? "Количество больше позиции"
-      : "";
+  const maxTradeAmount = isStock
+    ? tradeSide === "buy"
+      ? maxBuyLots
+      : maxSellLots
+    : tradeSide === "buy"
+      ? availableMoney
+      : availableAssetAmount;
+  const tradeAmountError = (() => {
+    if (isPortfolioLoading && !portfolioSummary) {
+      return "Загружаем баланс";
+    }
+
+    if (!hasTradeWallet) {
+      return `Подключите ${isStock ? "Т-Банк" : "Bybit"} в настройках`;
+    }
+
+    if (!isStock && asset?.isStableAsset) {
+      return `${baseCurrency} используется как расчетная валюта. Для сделки откройте торговую пару, например BTC/USDT.`;
+    }
+
+    if (isStockLotInputInvalid) {
+      return "Введите целое количество лотов";
+    }
+
+    if (isStock && tradeSide === "buy" && normalizedTradeLots > maxBuyLots) {
+      if (maxBuyLots <= 0 && stockLotValue > 0) {
+        return `Для покупки 1 лота нужно примерно ${formatMoney(stockLotValue, currencySymbol)}. Сейчас доступно ${formatMoney(availableMoney, currencySymbol)}, не хватает ${formatMoney(stockBuyShortfall, currencySymbol)}.`;
+      }
+
+      return "Количество больше доступных лотов";
+    }
+
+    if (isStock && tradeSide === "sell" && normalizedTradeLots > maxSellLots) {
+      return "Количество больше позиции";
+    }
+
+    if (!isStock && tradeSide === "buy" && normalizedTradeAmount > availableMoney) {
+      return "Сумма больше доступных средств";
+    }
+
+    if (!isStock && tradeSide === "sell" && cryptoMinOrderAmount > 0 && estimatedTradeValue > 0 && estimatedTradeValue < cryptoMinOrderAmount) {
+      return `Минимальная продажа для ${cryptoTradingPair} — ${formatMoney(cryptoMinOrderAmount, currencySymbol)}. Нужно примерно ${formatNumber(cryptoMinSellQuantity, 8)} ${baseCurrency}.`;
+    }
+
+    if (!isStock && tradeSide === "sell" && normalizedTradeAmount > availableAssetAmount) {
+      return "Количество больше позиции";
+    }
+
+    return "";
+  })();
+  const tradeAvailabilityHint = (() => {
+    if (!hasTradeWallet || isPortfolioLoading || tradeAmountError) {
+      return "";
+    }
+
+    if (isStock && tradeSide === "buy" && currentPrice > 0 && maxBuyLots <= 0) {
+      return `Минимальная покупка — 1 лот (${stockLotSize} шт.) примерно за ${formatMoney(stockLotValue, currencySymbol)}. Сейчас доступно ${formatMoney(availableMoney, currencySymbol)}, не хватает ${formatMoney(stockBuyShortfall, currencySymbol)}.`;
+    }
+
+    if (isStock && tradeSide === "sell" && maxSellLots <= 0) {
+      return `Для продажи нужен минимум 1 полный лот (${stockLotSize} шт.). В позиции сейчас ${formatNumber(availableAssetAmount, 8)} ${baseCurrency}.`;
+    }
+
+    if (!isStock && tradeSide === "buy" && availableMoney <= 0) {
+      return `Для покупки нужен свободный баланс ${tradeQuoteCurrency} на подключенном Bybit-аккаунте.`;
+    }
+
+    if (!isStock && tradeSide === "sell" && availableAssetAmount <= 0) {
+      return `Для продажи нужен свободный баланс ${baseCurrency} на подключенном Bybit-аккаунте.`;
+    }
+
+    if (!isStock && tradeSide === "sell" && cryptoMinOrderAmount > 0 && availableAssetAmount > 0 && availableAssetAmount * currentPrice < cryptoMinOrderAmount) {
+      return `Вся позиция меньше минимума Bybit: доступно ${formatNumber(availableAssetAmount, 8)} ${baseCurrency}, нужно примерно ${formatNumber(cryptoMinSellQuantity, 8)} ${baseCurrency}.`;
+    }
+
+    return "";
+  })();
   const assetNewsAliases = useMemo(() => {
     return getAssetNewsAliases(asset, symbol, shortName, assetName, baseCurrency);
   }, [asset, assetName, baseCurrency, shortName, symbol]);
@@ -1188,6 +1754,13 @@ export default function CoinPage() {
   const assetNewsKey = `${assetType}:${String(favoriteSymbol || symbol || "").toUpperCase()}`;
   const favoriteKey = `${assetType}:${String(favoriteSymbol || "").toUpperCase()}`;
   const isFavoriteAsset = favorites.some((item) => item.favoriteKey === favoriteKey);
+  const isStockExchangeClosed = Boolean(
+    isStock &&
+    stockTradingStatus &&
+    (!stockTradingStatus.isOpen ||
+      !stockTradingStatus.isMarketOrderAvailable ||
+      !stockTradingStatus.isApiTradeAvailable)
+  );
 
   const toggleFavorite = useCallback(() => {
     if (!asset || !favoriteSymbol) {
@@ -1257,14 +1830,238 @@ export default function CoinPage() {
     return 'gray'; 
   };
 
+  const fetchPortfolioSummary = useCallback(({ forceRefresh = false } = {}) => {
+    setIsPortfolioLoading(true);
+
+    return api.get("/portfolio/summary", {
+      params: forceRefresh ? { force_refresh: true } : undefined,
+    })
+      .then((response) => {
+        setPortfolioSummary(response.data);
+        writeCachedValue(TRADE_PORTFOLIO_CACHE_KEY, response.data);
+
+        return response.data;
+      })
+      .catch(() => {
+        setPortfolioSummary((currentSummary) => currentSummary);
+        return null;
+      })
+      .finally(() => {
+        setIsPortfolioLoading(false);
+      });
+  }, []);
+
+  const loadAssetTradeMarkers = useCallback(() => {
+    if (!asset || !symbol) {
+      setAssetTradeMarkers([]);
+      return;
+    }
+
+	    const routeType = isStock ? "stock" : "crypto";
+	    const matches = new Set([
+	      String(symbol || "").toUpperCase(),
+	      String(asset.symbol || "").toUpperCase(),
+	      String(asset.baseCoin || "").toUpperCase(),
+	      String(figiParam || "").toUpperCase(),
+	      String(asset.figi || asset.id || "").toUpperCase(),
+	    ].filter(Boolean));
+
+    if (!isStock) {
+      const base = String(asset.baseCoin || symbol || "").replace(/USDT$/i, "").toUpperCase();
+      if (base) {
+        matches.add(base);
+        matches.add(`${base}USDT`);
+      }
+    }
+
+    api.get("/portfolio/trades")
+      .then((response) => {
+        const markers = (response.data?.items || [])
+          .filter((item) => {
+            const itemType = String(item.assetType || "").toLowerCase();
+            const itemSymbols = [
+              item.symbol,
+              item.routeSymbol,
+              item.figi,
+            ].map((value) => String(value || "").toUpperCase());
+
+            return itemType === routeType && itemSymbols.some((value) => matches.has(value));
+          })
+          .slice(0, 40);
+
+        setAssetTradeMarkers(markers);
+      })
+      .catch(() => {
+        setAssetTradeMarkers([]);
+      });
+  }, [asset, figiParam, isStock, symbol]);
+
+  const loadStockTradingStatus = useCallback(() => {
+    if (!isStock || !hasTradeWallet || !asset) {
+      setStockTradingStatus(null);
+      return;
+    }
+
+    api.get("/portfolio/tbank/trading-status", {
+      params: {
+        symbol: asset.symbol || symbol,
+        figi: asset.figi || figiParam || undefined,
+      },
+    })
+      .then((response) => {
+        setStockTradingStatus(response.data);
+      })
+      .catch(() => {
+        setStockTradingStatus(null);
+      });
+  }, [asset, figiParam, hasTradeWallet, isStock, symbol]);
+
   const setTradeAmountPercent = useCallback((percent) => {
     const nextAmount = maxTradeAmount * percent;
 
-    setTradeAmount(Number.isFinite(nextAmount) && nextAmount > 0
-      ? nextAmount.toFixed(2)
-      : ""
+    if (!Number.isFinite(nextAmount) || nextAmount <= 0) {
+      setTradeAmount("");
+      setTradeState({ isSubmitting: false, message: "", error: "" });
+      return;
+    }
+
+    setTradeAmount(isStock
+      ? String(Math.max(Math.floor(nextAmount), 1))
+      : tradeSide === "sell"
+        ? formatTradeInputValue(nextAmount, 8)
+        : formatTradeInputValue(nextAmount, 2)
     );
-  }, [maxTradeAmount]);
+    setTradeState({ isSubmitting: false, message: "", error: "" });
+  }, [isStock, maxTradeAmount, tradeSide]);
+
+  const submitTrade = useCallback(() => {
+    const canSubmitStock = isStock && normalizedTradeLots > 0;
+    const canSubmitCrypto = !isStock && normalizedTradeAmount > 0;
+
+    if (tradeAmountError || (!canSubmitStock && !canSubmitCrypto) || !asset || currentPrice <= 0) {
+      return;
+    }
+
+    setTradeState({
+      isSubmitting: true,
+      message: "",
+      error: "",
+    });
+
+    const normalizedSymbol = String(asset.symbol || symbol || "").trim().toUpperCase();
+    const tradePayload = {
+      asset_type: assetType,
+      symbol: normalizedSymbol,
+      side: tradeSide,
+      ...(isStock
+        ? { lots: normalizedTradeLots }
+        : tradeSide === "buy"
+          ? { amount: normalizedTradeAmount }
+          : { quantity: normalizedTradeAmount }),
+      price: currentPrice,
+      asset_name: String(assetName || shortName || normalizedSymbol).slice(0, 120),
+    };
+
+	    if (isStock) {
+	      const figi = String(asset.figi || figiParam || "").trim();
+
+      if (figi) {
+        tradePayload.figi = figi.slice(0, 64);
+      }
+    }
+
+    api.post("/portfolio/trade", tradePayload)
+      .then((response) => {
+        const quantity = Number(response.data?.quantity);
+        const lots = Number(response.data?.lots);
+        const quantityText = isStock && Number.isFinite(lots)
+          ? `${formatNumber(lots, 0)} лот. (${formatNumber(quantity, 8)} ${baseCurrency})`
+          : Number.isFinite(quantity)
+          ? `${formatNumber(quantity, 8)} ${baseCurrency}`
+          : baseCurrency;
+
+        setTradeState({
+          isSubmitting: false,
+          message: `${response.data?.message || "Заявка отправлена."} Количество: ${quantityText}`,
+          error: "",
+        });
+        setTradeSuccessAlert({
+          title: tradeSide === "buy" ? "Покупка отправлена" : "Продажа отправлена",
+          text: `${response.data?.message || "Заявка отправлена."} ${quantityText}`,
+        });
+        setIsTradeDrawerOpen(false);
+        setActiveButton("Депозиты");
+        setTradeAmount("");
+        fetchAsset(endpoint);
+	        fetchPortfolioSummary({ forceRefresh: true });
+        loadAssetTradeMarkers();
+      })
+      .catch((error) => {
+        setTradeState({
+          isSubmitting: false,
+          message: "",
+          error: getApiErrorText(error),
+        });
+      });
+  }, [
+    asset,
+    assetName,
+    assetType,
+    baseCurrency,
+    currentPrice,
+    endpoint,
+	    fetchAsset,
+	    fetchPortfolioSummary,
+	    figiParam,
+    isStock,
+    loadAssetTradeMarkers,
+    normalizedTradeAmount,
+    normalizedTradeLots,
+    shortName,
+    symbol,
+    tradeAmountError,
+    tradeSide,
+  ]);
+
+  useEffect(() => {
+    if (!tradeSuccessAlert) {
+      return undefined;
+    }
+
+    const timer = window.setTimeout(() => {
+      setTradeSuccessAlert(null);
+    }, 4200);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [tradeSuccessAlert]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(fetchPortfolioSummary, 0);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [fetchPortfolioSummary]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(loadAssetTradeMarkers, 0);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [loadAssetTradeMarkers]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(loadStockTradingStatus, 0);
+    const interval = window.setInterval(loadStockTradingStatus, 120000);
+
+    return () => {
+      window.clearTimeout(timer);
+      window.clearInterval(interval);
+    };
+  }, [loadStockTradingStatus]);
 
   useEffect(() => {
     if (activeButton !== "Новости" || !assetNewsKey || !assetNewsAliasSignature) {
@@ -1353,7 +2150,151 @@ export default function CoinPage() {
   const assetLoadedKey = requestState.endpoint === endpoint && requestState.asset
     ? endpoint
     : "";
-  const baseChartData = chartState.key === chartKey
+  const aiScoreKey = `${assetType}:${symbol}:${figiParam || ""}`;
+  const dailyAiScoreCacheKey = aiScoreCacheKey(aiScoreKey);
+
+  useEffect(() => {
+		    if (!assetLoadedKey || !symbol || (asset?.isStableAsset && !isCurrency)) {
+	      return;
+	    }
+
+		    let isActive = true;
+    const cachedScore = readCachedValue(dailyAiScoreCacheKey, Infinity);
+    const fallbackScore = cachedScore || calculateLocalDailyAiScore(asset, assetType, symbol);
+		    const loadingTimer = window.setTimeout(() => {
+		      if (!isActive) {
+		        return;
+		      }
+
+		      setAiScoreState((currentState) => ({
+		        key: aiScoreKey,
+		        data: currentState.key === aiScoreKey ? currentState.data || fallbackScore : fallbackScore,
+		        isLoading: true,
+		      }));
+		    }, 0);
+
+    api.get("/ai/asset-score", {
+      params: {
+        asset_type: isStock ? "stock" : isCurrency ? "currency" : "crypto",
+        symbol,
+        figi: figiParam || undefined,
+      },
+    })
+	      .then((response) => {
+	        if (!isActive) {
+	          return;
+	        }
+
+        const nextAiScore = response.data?.providerUnavailable
+          ? fallbackScore
+          : response.data;
+
+	        setAiScoreState({
+	          key: aiScoreKey,
+	          data: nextAiScore,
+	          isLoading: false,
+	        });
+        writeCachedValue(dailyAiScoreCacheKey, nextAiScore);
+	      })
+	      .catch(() => {
+	        if (!isActive) {
+	          return;
+	        }
+
+        writeCachedValue(dailyAiScoreCacheKey, fallbackScore);
+	        setAiScoreState((currentState) => ({
+	          key: aiScoreKey,
+	          data: currentState.key === aiScoreKey ? currentState.data || fallbackScore : fallbackScore,
+	          isLoading: false,
+	        }));
+	      });
+
+	    return () => {
+	      isActive = false;
+	      window.clearTimeout(loadingTimer);
+	    };
+  }, [aiScoreKey, asset, asset?.isStableAsset, assetLoadedKey, assetType, dailyAiScoreCacheKey, figiParam, isCurrency, isStock, symbol]);
+
+  const aiScore = aiScoreState.key === aiScoreKey ? aiScoreState.data : null;
+  const isAiScoreLoading = aiScoreState.key === aiScoreKey && aiScoreState.isLoading;
+  const hasAiScore = Number.isFinite(Number(aiScore?.score));
+  const aiProbability = hasAiScore
+    ? Math.min(Math.max(Math.round(Number(aiScore.score)), 0), 100)
+    : null;
+  const aiSignal = hasAiScore
+    ? aiScore?.signal || (aiProbability >= 60 ? "BUY" : aiProbability <= 35 ? "SELL" : "HOLD")
+    : "NO_SIGNAL";
+	  const aiSignalLabel = {
+	    BUY: "Покупать",
+	    HOLD: "Наблюдать",
+	    SELL: "Продавать",
+	    NO_SIGNAL: "Нет сигнала",
+	  }[aiSignal] || "Наблюдать";
+	  const aiSignalTone = aiSignal === "BUY" ? "positive" : aiSignal === "SELL" ? "negative" : "neutral";
+  const forecastTargetPrice = Number(aiScore?.targetPrice) > 0
+    ? Number(aiScore.targetPrice)
+    : currentPrice;
+  const forecastDelta = forecastTargetPrice - currentPrice;
+  const forecastDeltaPercent = currentPrice > 0 ? (forecastDelta / currentPrice) * 100 : 0;
+  const forecastRangeLow = Number(aiScore?.targetRangeLow) > 0
+    ? Number(aiScore.targetRangeLow)
+    : forecastTargetPrice * (1 - Math.max(Math.abs(forecastDeltaPercent) * 0.35, 1.2) / 100);
+  const forecastRangeHigh = Number(aiScore?.targetRangeHigh) > 0
+    ? Number(aiScore.targetRangeHigh)
+    : forecastTargetPrice * (1 + Math.max(Math.abs(forecastDeltaPercent) * 0.35, 1.2) / 100);
+  const aiForecastTone = !hasAiScore
+    ? "neutral"
+    : aiProbability >= 60
+    ? "positive"
+    : aiProbability <= 35
+      ? "negative"
+      : "neutral";
+	  const aiForecastColor = aiForecastTone === "positive"
+	    ? "var(--green)"
+	    : aiForecastTone === "negative"
+	      ? "var(--red)"
+	      : "var(--gray)";
+  const getTextAlert = () => {
+    if (!assetLoadedKey || !symbol) {
+      return;
+    }
+
+    setTesxtAlert(true);
+    setAiSummaryState((currentState) => ({
+      key: aiScoreKey,
+      title: currentState.key === aiScoreKey ? currentState.title : "Сводка GPT",
+      text: currentState.key === aiScoreKey ? currentState.text : "",
+      error: "",
+      isLoading: true,
+    }));
+
+    api.get("/ai/asset-summary", {
+      params: {
+        asset_type: isStock ? "stock" : isCurrency ? "currency" : "crypto",
+        symbol,
+        figi: figiParam || undefined,
+      },
+    })
+      .then((response) => {
+        setAiSummaryState({
+          key: aiScoreKey,
+          title: response.data?.title || `Сводка GPT · ${assetName}`,
+          text: response.data?.summary || "GPT не вернул текст сводки.",
+          error: "",
+          isLoading: false,
+        });
+      })
+      .catch((error) => {
+        setAiSummaryState({
+          key: aiScoreKey,
+          title: `Сводка GPT · ${assetName}`,
+          text: "",
+          error: getApiErrorText(error, "Не удалось загрузить GPT-сводку."),
+          isLoading: false,
+        });
+      });
+  };
+	  const baseChartData = chartState.key === chartKey
     ? chartState.data
     : filterChartByRange(
       asset?.chart || asset?.chart7d || [],
@@ -1393,7 +2334,7 @@ export default function CoinPage() {
   }, [chartData]);
   const rangeStatsText = `${formatSignedMoney(selectedRangeStats.money, currencySymbol)} (${formatPercent(selectedRangeStats.percent)})`;
   const renderContent = useMemo(() => {
-    const assetKind = isStock ? "акция" : "криптовалюта";
+	    const assetKind = isStock ? "акция" : isCurrency ? "валюта" : "криптовалюта";
     const infoMetrics = [
       { label: "Текущая цена", value: price },
       { label: "Изменение за 24 часа", value: formatPercent(changePercent) },
@@ -1401,8 +2342,6 @@ export default function CoinPage() {
       { label: "Минимум 24ч", value: formatMoney(asset?.lowPrice24h, currencySymbol) },
       { label: "Объем 24ч", value: formatNumber(asset?.volume24h, 2) },
       { label: "Оборот 24ч", value: formatMoney(asset?.turnover24h, currencySymbol) },
-      { label: "Лучшая покупка", value: formatMoney(asset?.bidPrice, currencySymbol) },
-      { label: "Лучшая продажа", value: formatMoney(asset?.askPrice, currencySymbol) },
     ];
 
     if (activeButton === "Новости") {
@@ -1452,11 +2391,57 @@ export default function CoinPage() {
     }
 
     if (activeButton === "Депозиты") {
+      const hasCurrentPosition = Boolean(positionAsset && availableAssetAmount > 0);
+      const currentPositionValue = availableAssetAmount * currentPrice;
+      const positionChangePercent = Number(positionAsset?.changePercent || asset?.priceChangePercent24h || 0);
+      const positionChangeValue = Number(positionAsset?.changeRub || 0);
+      const positionChangeTone = positionChangePercent > 0 || positionChangeValue > 0
+        ? "positive"
+        : positionChangePercent < 0 || positionChangeValue < 0
+          ? "negative"
+          : "neutral";
+
       return (
         <div className="coin_tab_content">
-          <div className="coin_tab_panel">
+          <div className="coin_tab_panel coin_deposit_panel">
             <p className="coin_tab_title">Депозиты</p>
-            <span>У вас еще нет депозитов</span>
+            {hasCurrentPosition ? (
+              <div className="coin_deposit_position_card">
+                <div className="coin_deposit_position_metrics">
+                  <div>
+                    <span>Актив в портфеле</span>
+                    <strong>{formatNumber(availableAssetAmount, 8)} {baseCurrency}</strong>
+                  </div>
+                  <div>
+                    <span>Оценка позиции</span>
+                    <strong>{formatMoney(currentPositionValue, currencySymbol)}</strong>
+                  </div>
+                  <div>
+                    <span>{isStock ? "Доступно лотами" : "Торговая пара"}</span>
+                    <strong>{isStock ? `${formatNumber(maxSellLots, 0)} лот.` : cryptoTradingPair}</strong>
+                  </div>
+                  <div>
+                    <span>Динамика</span>
+                    <strong className={`coin_deposit_change coin_deposit_change_${positionChangeTone}`}>
+                      {formatPercent(positionChangePercent)}
+                    </strong>
+                  </div>
+                </div>
+                <Buttons
+                  type="primary-danger"
+                  onClick={() => {
+                    setTradeSide("sell");
+                    setTradeAmount("");
+                    setTradeState({ isSubmitting: false, message: "", error: "" });
+                    setIsTradeDrawerOpen(true);
+                  }}
+                >
+                  Продать
+                </Buttons>
+              </div>
+            ) : (
+              <span>По этому активу пока нет позиции в подключенном портфеле</span>
+            )}
           </div>
         </div>
       );
@@ -1497,15 +2482,19 @@ export default function CoinPage() {
                 в импульсе, коррекции или спокойном боковом движении.
               </p>
               <p>
-                {isStock
-                  ? "Для акций особенно важны ликвидность, обороты, корпоративные события, дивиденды, отчеты и общий фон российского рынка. Перед покупкой стоит смотреть не только цену, но и объем торгов, новости эмитента и состояние сектора."
-                  : "Для криптовалют особенно важны ликвидность пары, глубина стакана, волатильность, объем торгов и новостной фон вокруг сети или токена. Сильный перекос заявок в стакане может показывать краткосрочное давление покупателей или продавцов."}
-              </p>
-              <p>
-                Стакан справа показывает ближайшие заявки на покупку и продажу. Зеленая сторона
-                отражает спрос, красная - предложение. Чем шире заливка за ценой, тем больше объем
-                заявки относительно других уровней в текущем стакане.
-              </p>
+	                {isCurrency
+	                  ? "Для валют в портфеле важнее курс, доля в капитале и назначение как расчетной позиции. Стакан для таких активов в Pulse не отображается, если брокер или биржа не возвращают по ним реальные уровни заявок."
+	                  : isStock
+	                  ? "Для акций особенно важны ликвидность, обороты, корпоративные события, дивиденды, отчеты и общий фон российского рынка. Перед покупкой стоит смотреть не только цену, но и объем торгов, новости эмитента и состояние сектора."
+	                  : "Для криптовалют особенно важны ликвидность пары, глубина стакана, волатильность, объем торгов и новостной фон вокруг сети или токена. Сильный перекос заявок в стакане может показывать краткосрочное давление покупателей или продавцов."}
+	              </p>
+	              {orderbook.hasRows ? (
+	                <p>
+	                  Стакан справа показывает ближайшие заявки на покупку и продажу. Зеленая сторона
+	                  отражает спрос, красная - предложение. Чем шире заливка за ценой, тем больше объем
+	                  заявки относительно других уровней в текущем стакане.
+	                </p>
+	              ) : null}
             </div>
           </div>
         </div>
@@ -1519,12 +2508,20 @@ export default function CoinPage() {
     assetName,
     assetNews,
     assetNewsError,
+    availableAssetAmount,
+    baseCurrency,
     changePercent,
+    cryptoTradingPair,
     currencySymbol,
-    isAssetNewsLoading,
-    isStock,
+    currentPrice,
+	    isAssetNewsLoading,
+	    isCurrency,
+	    isStock,
     markNewsAsSeen,
-    positiveMood,
+	    maxSellLots,
+	    orderbook.hasRows,
+	    positiveMood,
+    positionAsset,
     price,
     quoteCurrency,
     rangeStatsText,
@@ -1535,6 +2532,30 @@ export default function CoinPage() {
   useEffect(() => {
     if (!assetLoadedKey || !symbol || !isOverviewTab) {
       return;
+    }
+
+    if (asset?.isStableAsset) {
+      const now = Date.now();
+      const stableChart = Array.from({ length: 6 }, (_, index) => ({
+        time: now - (5 - index) * 60 * 60 * 1000,
+        open: 1,
+        high: 1,
+        low: 1,
+        close: 1,
+        volume: 0,
+        turnover: 0,
+      }));
+      const stableChartTimer = window.setTimeout(() => {
+        setChartState({
+          key: chartKey,
+          data: stableChart,
+          isLoading: false,
+        });
+      }, 0);
+
+      return () => {
+        window.clearTimeout(stableChartTimer);
+      };
     }
 
     const rangeSettings = CHART_RANGES[activeChartRange] || CHART_RANGES["5D"];
@@ -1622,17 +2643,37 @@ export default function CoinPage() {
 
       controller.abort();
     };
-  }, [activeChartRange, assetLoadedKey, chartKey, isOverviewTab, isStock, symbol]);
+  }, [activeChartRange, asset, assetLoadedKey, chartKey, isOverviewTab, isStock, symbol]);
 
 
   return (
     <div className="app_pages">
-      <div className="app_content">
-        {textAlert && (
-            <TextAlert
-              TextAlertButton = {() => setTesxtAlert(false)}
-            />
-        )}
+	          <div className="app_content">
+		        {textAlert && (
+		            <TextAlert
+		              TextAlertButton = {() => setTesxtAlert(false)}
+		              title={aiSummaryState.title}
+		              isLoading={aiSummaryState.isLoading}
+		              error={aiSummaryState.error}
+		            >
+		              {normalizeTextContent(aiSummaryState.text, "Сводка пока не загружена.")
+		                .split(/\n+/)
+		                .filter(Boolean)
+		                .map((paragraph, index) => (
+	                  <p key={`ai-summary-${index}`}>{paragraph}</p>
+	                ))}
+	            </TextAlert>
+	        )}
+
+        {tradeSuccessAlert ? (
+          <div className="trade_success_toast" role="status">
+            <div className="trade_success_toast_icon">✓</div>
+            <div>
+              <strong>{tradeSuccessAlert.title}</strong>
+              <span>{tradeSuccessAlert.text}</span>
+            </div>
+          </div>
+        ) : null}
 
         <div className="app_items Pagecoin_cpntainer">
           <div className="dashboard_container coin_page_container ">
@@ -1649,17 +2690,17 @@ export default function CoinPage() {
                   <div className="uPContainerPageCoin disabledCpinpage">
 
 
-                    <Link to={`/app/market?tab=${isStock ? "stocks" : "crypto"}`}>
-                      <Buttons type='text'>
-                          <p style={{opacity: 0.5}}>
-                            {isStock ? "Акция " : "Криптовалюта "} 
-                          </p>
+	                    <Link to={`/app/market?tab=${isStock ? "stocks" : "crypto"}`}>
+	                      <Buttons type='text'>
+	                          <p style={{opacity: 0.5}}>
+	                            {isStock ? "Акция " : isCurrency ? "Валюта " : "Криптовалюта "}
+	                          </p>
                       </Buttons>
                     </Link>
 
 
                     <div className="NameCoin">
-                      · {assetName}
+                      · {pageTitleName}
                     </div>
 
                   </div>
@@ -1710,21 +2751,21 @@ export default function CoinPage() {
                       <div className="coinStokIMg">
                         <CoinIcon
                           baseCoin={asset?.baseCoin || asset?.symbol}
-                          iconUrl={asset?.iconUrl}
-                          label={shortName}
-                          type={isStock ? "stock" : "crypto"}
-                          className="coin_page_icon"
-                        />
+	                          iconUrl={asset?.iconUrl}
+	                          label={shortName}
+	                          type={isStock ? "stock" : "crypto"}
+	                          className="coin_page_icon"
+	                        />
                       </div>
 
                       <div className="textinfCoun">
                         <div className="ttcoin">
                           <h1>{assetName}</h1>
-                          <p>{shortName}</p>
+                          <p>{pageSubtitleSymbol}</p>
                         </div>
                         <p className="disabledCpinpagemobile" style={{opacity: 0.5}}>
                           {formatDateTime(asset?.updatedAt)} ·{" "}
-                          {quoteCurrency}/{baseCurrency} 
+                          {quoteCurrency}/{isStock ? asset?.symbol || symbol : baseCurrency}
                         </p>
                       </div>
                       
@@ -1769,7 +2810,8 @@ export default function CoinPage() {
                       </Buttons>
 
                       
-                      <Drawer>
+	                      {!isCurrency ? (
+	                      <Drawer open={isTradeDrawerOpen} onOpenChange={setIsTradeDrawerOpen}>
                         <div className="ContwainerBagsAdd">
                           <DrawerTrigger asChild>
                           <Buttons type='primary-buy' >
@@ -1795,8 +2837,22 @@ export default function CoinPage() {
                             <DrawerHeader className="trade_drawer_header">
                               <DrawerTitle>Сделка с {shortName}</DrawerTitle>
                               <DrawerDescription>
-                                Выберите действие и сумму. Итоговое исполнение зависит от стакана и подключенного брокера.
+                                {isStock
+                                  ? "Введите количество лотов. Итоговое исполнение зависит от стакана и подключенного брокера."
+                                  : `Торговая пара ${cryptoTradingPair}. Покупка идет за ${tradeQuoteCurrency}, продажа списывает ${baseCurrency}.`}
                               </DrawerDescription>
+                              {isStockExchangeClosed ? (
+                                <div className="tbank_market_status_banner">
+                                  <div className="tbank_market_status_provider">
+                                    <img src={TbankIcon} alt="Т-Банк" />
+                                    <span>Т-Банк</span>
+                                  </div>
+                                  <p>
+                                    Биржа закрыта: {stockTradingStatus?.statusLabel || "торги сейчас недоступны"}.
+                                    Заявку можно отправить, когда торговая сессия снова откроется.
+                                  </p>
+                                </div>
+                              ) : null}
                             </DrawerHeader>
 
                             <div className="trade_drawer_body">
@@ -1804,7 +2860,10 @@ export default function CoinPage() {
                                 <button
                                   type="button"
                                   className={tradeSide === "buy" ? "active" : ""}
-                                  onClick={() => setTradeSide("buy")}
+                                  onClick={() => {
+                                    setTradeSide("buy");
+                                    setTradeState({ isSubmitting: false, message: "", error: "" });
+                                  }}
                                   aria-pressed={tradeSide === "buy"}
                                 >
                                   Купить
@@ -1812,31 +2871,41 @@ export default function CoinPage() {
                                 <button
                                   type="button"
                                   className={tradeSide === "sell" ? "active" : ""}
-                                  onClick={() => setTradeSide("sell")}
+                                  onClick={() => {
+                                    setTradeSide("sell");
+                                    setTradeState({ isSubmitting: false, message: "", error: "" });
+                                  }}
                                   aria-pressed={tradeSide === "sell"}
                                 >
                                   Продать
                                 </button>
                               </div>
 
-                              <div className="trade_balance_grid">
+                              <div className="trade_balance_grid ">
                                 <div>
-                                  <span>Доступные деньги</span>
+                                  <span>{isPortfolioLoading ? "Обновляем баланс" : "Доступные деньги"}</span>
                                   <p>{formatMoney(availableMoney, currencySymbol)}</p>
                                 </div>
-                                <div>
-                                  <span>В позиции</span>
-                                  <p>{formatNumber(availableAssetAmount, 8)} {baseCurrency}</p>
+                                <div className="border_blue">
+                                  <span >{isStock ? tradeSide === "buy" ? "Доступно к покупке" : "Доступно к продаже" : "В позиции"}</span>
+                                  <p style={{color: 'var(--primary-blue)'}}>
+                                    {isStock
+                                      ? `${formatNumber(tradeSide === "buy" ? maxBuyLots : maxSellLots, 0)} лот.`
+                                      : `${formatNumber(availableAssetAmount, 8)} ${baseCurrency}`}
+                                  </p>
                                 </div>
                               </div>
 
                               <label className="trade_input_label">
-                                <span>Сумма сделки, {quoteCurrency}</span>
+                                <span>{isStock ? "Количество лотов" : tradeSide === "buy" ? `Сумма покупки, ${tradeQuoteCurrency}` : `Количество к продаже, ${baseCurrency}`}</span>
                                 <input
                                   type="text"
-                                  inputMode="decimal"
+                                  inputMode={isStock ? "numeric" : "decimal"}
                                   value={tradeAmount}
-                                  onChange={(event) => setTradeAmount(event.target.value)}
+                                  onChange={(event) => {
+                                    setTradeAmount(event.target.value);
+                                    setTradeState({ isSubmitting: false, message: "", error: "" });
+                                  }}
                                   placeholder="0"
                                 />
                               </label>
@@ -1855,28 +2924,38 @@ export default function CoinPage() {
                               </div>
 
                               <div className="trade_result_card">
+                                {!isStock ? (
+                                  <div>
+                                    <span>Торговая пара</span>
+                                    <p>{cryptoTradingPair}</p>
+                                  </div>
+                                ) : null}
                                 <div>
-                                  <span>Текущая цена</span>
+                                  <span>{isStock ? `Цена за 1 акцию · лот ${stockLotSize} шт.` : "Текущая цена"}</span>
                                   <p>{formatMoney(currentPrice, currencySymbol)}</p>
                                 </div>
                                 <div>
-                                  <span>{tradeSide === "buy" ? "Можно купить" : "Будет списано"}</span>
+                                  <span>{isStock ? "Акций в заявке" : tradeSide === "buy" ? "Можно купить" : "Будет списано"}</span>
                                   <p>
                                     {formatNumber(estimatedTradeQuantity, 8)} {baseCurrency}
                                   </p>
                                 </div>
-                                <div>
-                                  <span>{tradeSide === "buy" ? "Максимум к покупке" : "Максимум к продаже"}</span>
-                                  <p>
-                                    {tradeSide === "buy"
-                                      ? `${formatNumber(maxBuyQuantity, 8)} ${baseCurrency}`
-                                      : `${formatMoney(maxSellValue, currencySymbol)}`}
-                                  </p>
-                                </div>
+                                {isStock ? (
+                                  <div>
+                                    <span>Примерная сумма</span>
+                                    <p>{formatMoney(estimatedTradeValue, currencySymbol)}</p>
+                                  </div>
+                                ) : null}
                               </div>
 
                               {tradeAmountError ? (
                                 <p className="trade_error">{tradeAmountError}</p>
+                              ) : tradeState.error ? (
+                                <p className="trade_error">{tradeState.error}</p>
+                              ) : tradeState.message ? (
+                                <p className="trade_success">{tradeState.message}</p>
+                              ) : tradeAvailabilityHint ? (
+                                <p className="trade_hint">{tradeAvailabilityHint}</p>
                               ) : (
                                 <p className="trade_hint">
                                   Комиссия и финальное количество уточняются при реальном исполнении заявки.
@@ -1887,14 +2966,10 @@ export default function CoinPage() {
                             <DrawerFooter className="trade_drawer_footer">
                               <Buttons
                                 type={tradeSide === "buy" ? "primary-buy" : "primary-sell"}
-                                disabled={Boolean(tradeAmountError) || normalizedTradeAmount <= 0}
-                                onClick={() => {
-                                  if (!tradeAmountError && normalizedTradeAmount > 0) {
-                                    getTextAlert();
-                                  }
-                                }}
+                                disabled={Boolean(tradeAmountError) || (isStock ? normalizedTradeLots <= 0 : normalizedTradeAmount <= 0) || tradeState.isSubmitting || isPortfolioLoading}
+                                onClick={submitTrade}
                               >
-                                {tradeButtonText}
+                                {tradeState.isSubmitting ? "Отправляем заявку..." : tradeButtonText}
                               </Buttons>
                               {/* <DrawerClose asChild>
                                 <Buttons type="text">Закрыть</Buttons>
@@ -1904,7 +2979,12 @@ export default function CoinPage() {
                         </DrawerContent>
                         </div>
                         
-                      </Drawer>
+	                      </Drawer>
+	                      ) : (
+	                        <div className="currency_trade_notice">
+	                          Расчетная валюта. Сделки и стакан для нее не отображаются.
+	                        </div>
+	                      )}
 
                     </div>
                   </div>
@@ -1993,6 +3073,7 @@ export default function CoinPage() {
                                 currencySymbol={currencySymbol}
                                 activeRange={activeChartRange}
                                 currentPrice={currentPrice}
+                                tradeMarkers={assetTradeMarkers}
                               />
                             )}
                           </div>
@@ -2001,6 +3082,38 @@ export default function CoinPage() {
                     </div>
                   </div>
                     <div className="ContainerRightINF">
+                      {asset?.isStableAsset ? (
+                        <>
+                          <div className="AiPrognathation_content stable_asset_card">
+                            <div className="titleUPAI ">
+                              <div className="flex items-center gap-[8px]">
+                                <CoinIcon
+                                  baseCoin={baseCurrency}
+                                  iconUrl={asset?.iconUrl}
+                                  label={baseCurrency}
+                                  type="crypto"
+                                />
+                                <p>{baseCurrency} как расчетная валюта</p>
+                              </div>
+                            </div>
+                            <div className="stable_asset_metrics">
+                              <div>
+                                <span>Ориентировочная цена</span>
+                                <strong>{formatMoney(currentPrice, currencySymbol)}</strong>
+                              </div>
+                              <div>
+                                <span>Рублевый эквивалент</span>
+                                <strong>{formatRubleEquivalent(currentPrice, quoteCurrency)}</strong>
+                              </div>
+                              <div>
+                                <span>Назначение</span>
+                                <strong>Покупка пар вроде BTC/USDT</strong>
+                              </div>
+                            </div>
+                          </div>
+	                        </>
+	                      ) : (
+                        <>
                       <div className="AiPrognathation_content">
                           <div className="titleUPAI ">
                             <div className="flex items-center gap-[8px]">
@@ -2017,36 +3130,50 @@ export default function CoinPage() {
                             </span>
                             
                           </div>
-                          <div className="modleBlock">
-                            <div className="textItems">
-                              <div className="tAI">
-                                <p>Прогнозная цена</p>
-                                <div className="flex gap-[4px]">
-                                  <h5>97 213$</h5>
-                                  <h5 style={{color: 'var(--green)'}}>+1 221$ (24,92%)</h5>
-                                </div>
-                                
-                              </div>
-                              <div className="tAI">
-                                <p>Прогнозная цена</p>
-                                <h5>97 213$  +1 221$ (24,92%)</h5>
-                              </div>
-                            </div>
-                            <div className="SerckeChart">
-                              <div className="SecleChartContainer">
-                                  <div className="midleSercle">
-                                      <div className="centerPersent">
-                                          <p>67%</p>
-                                      </div>
-                                  </div>
-                              </div>
-                            </div>
-                          </div>
-                          <div className="downAIBlock">
-                            <div className="tbysell flex items-center gap-[8px]">
-                              <p style={{color: 'var(--green)', fontSize: '14px'}}>Покупать</p>
-                              <Buttons onClick ={getTextAlert}  type='nm_black_prymary'>Сводка</Buttons>
-                            </div>
+	                          <div className="modleBlock">
+	                            <div className="textItems">
+	                              {isAiScoreLoading && !aiScore ? (
+	                                <LoaderAnimation height={96} rounded="16px" />
+	                              ) : (
+		                                <>
+		                                  <div className="tAI">
+		                                    <p>Прогнозная цена</p>
+		                                    <div className="flex gap-[4px]">
+		                                      <h5>{formatMoney(forecastTargetPrice, currencySymbol)}</h5>
+		                                      <h5 className={`forecast_delta forecast_delta_${aiForecastTone}`}>
+		                                        {formatSignedMoney(forecastDelta, currencySymbol)} ({formatPercent(forecastDeltaPercent)})
+		                                      </h5>
+		                                    </div>
+		                                  </div>
+		                                  <div className="tAI">
+		                                    <p>Диапазон</p>
+		                                    <h5>{formatMoney(forecastRangeLow, currencySymbol)} - {formatMoney(forecastRangeHigh, currencySymbol)}</h5>
+		                                  </div>
+		                                  {/* <div className="tAI">
+		                                    <p>Сигнал</p>
+		                                    <h5 className={`ai_signal_text ai_signal_text_${aiSignalTone}`}>{aiSignalLabel}</h5>
+		                                  </div> */}
+		                                </>
+		                              )}
+		                            </div>
+		                            <div className="SerckeChart">
+		                              <div
+		                                className={`SecleChartContainer SecleChartContainer_${aiForecastTone}`}
+		                                style={{ "--forecast-color": aiForecastColor }}
+		                              >
+		                                  <div className="midleSercle">
+		                                      <div className="centerPersent">
+			                                          <p>{hasAiScore ? `${aiProbability}%` : "—"}</p>
+	                                      </div>
+	                                  </div>
+	                              </div>
+	                            </div>
+	                          </div>
+	                          <div className="downAIBlock">
+	                            <div className="tbysell flex items-center gap-[8px]">
+	                              <p className={`ai_signal_text ai_signal_text_${aiSignalTone}`}>{aiSignalLabel}</p>
+	                              <Buttons onClick ={getTextAlert}  type='nm_black_prymary'>Сводка</Buttons>
+	                            </div>
                             <div className="LogoPulseSmall">
                               <img src={PulseSvgTag} alt="pulseimg" />
                             </div>
@@ -2056,13 +3183,17 @@ export default function CoinPage() {
                       {/* <div className="AiPrognathation">
                         
                       </div> */}
-                      <OrderBook
-                        orderbook={orderbook}
-                        currentPrice={currentPrice}
-                        currencySymbol={currencySymbol}
-                        baseCurrency={baseCurrency}
-                        quoteCurrency={quoteCurrency}
-                      />
+	                      {orderbook.hasRows ? (
+	                        <OrderBook
+	                          orderbook={orderbook}
+	                          currentPrice={currentPrice}
+	                          currencySymbol={currencySymbol}
+	                          baseCurrency={baseCurrency}
+	                          quoteCurrency={quoteCurrency}
+	                        />
+	                      ) : null}
+                        </>
+                      )}
                     </div>
                 </div>
                   

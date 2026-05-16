@@ -14,6 +14,7 @@ const Inputs = ({
   icon,
   autoComplete,
   required,
+  ...props
 }) => {
 
   const inputclass = `
@@ -38,6 +39,7 @@ const Inputs = ({
     placeholder={placeholder}
     autoComplete={autoComplete}
     required={required}
+    {...props}
   />
 
   {icon && (

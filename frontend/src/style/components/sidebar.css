@@ -52,8 +52,20 @@
        opacity: 0.6;
 }
 .PersentMoney{
-           font-size: 13px;
+    font-size: 13px;
     color: var(--green);
+}
+.PersentMoney_negative,
+.persent_money_negative {
+    color: var(--red) !important;
+}
+.PersentMoney_neutral,
+.persent_money_neutral {
+    color: var(--gray) !important;
+}
+.PersentMoney_positive,
+.persent_money_positive {
+    color: var(--green) !important;
 }
 .account_button{
     cursor: pointer;
@@ -239,7 +251,15 @@
     /* border: 1.5px solid var(--black-t); */
     border-radius: 20px;
 }
+.TodayMoney_negative{
+    background-color: rgba(255, 59, 48, 0.14);
+}
+.TodayMoney_neutral{
+    background-color: rgba(150, 150, 150, 0.12);
+}
+.TodayMoney_positive{
+    background-color: rgba(0, 255, 170, 0.11);
+}
 
 
 }
-

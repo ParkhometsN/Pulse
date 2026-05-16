@@ -4,6 +4,7 @@ import asyncio
 import ssl
 from decimal import Decimal
 from typing import Any
+from uuid import uuid4
 
 import certifi
 from aiohttp import ClientError, ClientSession, ClientTimeout, TCPConnector
@@ -12,9 +13,10 @@ from aiohttp import ClientError, ClientSession, ClientTimeout, TCPConnector
 class TBankAPIError(Exception):
     """Raised when T-Invest API is unavailable or returns an error."""
 
-    def __init__(self, message: str, status_code: int | None = None):
+    def __init__(self, message: str, status_code: int | None = None, detail: Any | None = None):
         super().__init__(message)
         self.status_code = status_code
+        self.detail = detail
 
 
 class TBankInvestClient:
@@ -54,6 +56,7 @@ class TBankInvestClient:
                         raise TBankAPIError(
                             f"T-Bank API error: {response.status}, {detail}",
                             response.status,
+                            detail,
                         )
 
                     return result
@@ -100,6 +103,13 @@ class TBankInvestClient:
             },
         )
 
+    async def get_withdraw_limits(self, token: str, account_id: str):
+        return await self._post(
+            "OperationsService/GetWithdrawLimits",
+            token,
+            {"accountId": account_id},
+        )
+
     async def get_instrument_by_figi(self, token: str, figi: str):
         return await self._post(
             "InstrumentsService/GetInstrumentBy",
@@ -143,6 +153,40 @@ class TBankInvestClient:
             token,
             {"figi": figis},
         )
+
+    async def get_trading_status(self, token: str, instrument_id: str):
+        return await self._post(
+            "MarketDataService/GetTradingStatus",
+            token,
+            {"instrumentId": instrument_id},
+        )
+
+    async def post_order(
+        self,
+        token: str,
+        account_id: str,
+        instrument_id: str,
+        quantity: int,
+        direction: str,
+        order_type: str = "ORDER_TYPE_MARKET",
+    ):
+        payload = {
+            "accountId": account_id,
+            "quantity": str(quantity),
+            "direction": direction,
+            "orderType": order_type,
+            "orderId": str(uuid4()),
+            "instrumentId": instrument_id,
+        }
+
+        if order_type != "ORDER_TYPE_MARKET":
+            payload["price"] = {
+                "units": "0",
+                "nano": 0,
+            }
+            payload["priceType"] = "PRICE_TYPE_CURRENCY"
+
+        return await self._post("OrdersService/PostOrder", token, payload)
 
     async def close(self):
         if self._session and not self._session.closed:

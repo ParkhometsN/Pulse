@@ -6,6 +6,21 @@ import api from "../../lib/api";
 import { getStoredUser, saveStoredUser } from "../../lib/auth";
 import { getApiErrorMessage } from "../../lib/apiError";
 
+const formatPercent = (value) => {
+  const number = Number(value) || 0;
+  const sign = number > 0 ? "+" : "";
+
+  return `${sign}${number.toFixed(2).replace(".", ",")}%`;
+};
+
+const formatRub = (value) => {
+  const number = Number(value) || 0;
+
+  return `${new Intl.NumberFormat("ru-RU", {
+    maximumFractionDigits: 0,
+  }).format(number)}₽`;
+};
+
 export default function Profile() {
   const [user, setUser] = useState(() => getStoredUser());
   const [profileForm, setProfileForm] = useState({
@@ -21,6 +36,11 @@ export default function Profile() {
   const [alert, setAlert] = useState(null);
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [isSavingPassword, setIsSavingPassword] = useState(false);
+  const [portfolioSummary, setPortfolioSummary] = useState({
+    totalValueRub: 0,
+    changePercent: 0,
+    wallets: [],
+  });
 
   useEffect(() => {
     api.get("/auth/me")
@@ -32,6 +52,18 @@ export default function Profile() {
           firstName: nextUser.firstName || "",
           lastName: nextUser.lastName || "",
           email: nextUser.email || "",
+        });
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    api.get("/portfolio/summary")
+      .then((response) => {
+        setPortfolioSummary({
+          totalValueRub: Number(response.data?.totalValueRub) || 0,
+          changePercent: Number(response.data?.changePercent) || 0,
+          wallets: response.data?.wallets || [],
         });
       })
       .catch(() => {});
@@ -117,19 +149,19 @@ export default function Profile() {
                   <div className="title_box">
                     <p>Доходность за 12 месяцев</p>
                   </div>
-                  <div className="currencyBOX">
-                    <h5>30 000₽</h5>
-                    <p>+0,87%</p>
-                  </div>
-                </div>
+	                  <div className="currencyBOX">
+	                    <h5>{formatRub(portfolioSummary.totalValueRub)}</h5>
+	                    <p>{formatPercent(portfolioSummary.changePercent)}</p>
+	                  </div>
+	                </div>
                 <div className="boxCurrency">
                   <div className="title_box">
                     <p>Подключенные портфели</p>
                   </div>
-                  <div className="currencyBOX">
-                    <h5>0</h5>
-                    <p>скоро</p>
-                  </div>
+	                  <div className="currencyBOX">
+	                    <h5>{portfolioSummary.wallets.length}</h5>
+	                    <p>активных</p>
+	                  </div>
                 </div>
                 <div className="boxCurrency">
                   <div className="title_box">

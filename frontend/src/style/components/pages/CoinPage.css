@@ -339,8 +339,9 @@
     justify-content: center;
     align-items: center;
     height: 150px;
-    border: 16px solid var(--green);
+    border: 16px solid var(--forecast-color, var(--green));
     border-radius: 50%;
+    transition: border-color 0.24s ease, filter 0.24s ease;
 }
 .midleSercle{
      display: flex;
@@ -356,7 +357,7 @@
     display: flex;
     justify-content: center;
     align-items: center;
-    background-color: #00ffaa2c;
+    background-color: color-mix(in srgb, var(--forecast-color, var(--green)) 18%, transparent);
     padding: 20px;
     width: 100%;
     border-radius: 50%;
@@ -369,7 +370,19 @@
 }
 .centerPersent p{
     font-size: 20px;
-    color: #00ffaa;
+    color: var(--forecast-color, var(--green));
+}
+
+.forecast_delta_positive{
+    color: var(--green) !important;
+}
+
+.forecast_delta_negative{
+    color: var(--red) !important;
+}
+
+.forecast_delta_neutral{
+    color: var(--gray) !important;
 }
 .chartUserContainer{
     gap: 10px;
@@ -698,12 +711,15 @@
     align-items: center;
 }
 
-.trade_drawer_panel{
+.trade_drawer_panel {
     width: min(100%, 800px);
     margin: 0 auto;
+    max-height: 720px;       /* или max-height: 400px */
     display: flex;
     flex-direction: column;
     align-items: stretch;
+    overflow-y: auto;       /* или scroll — появится, если контент выше */
+    overflow-x: auto;
 }
 
 .trade_drawer_header{
@@ -719,6 +735,41 @@
 .trade_drawer_header [data-slot="drawer-description"]{
     color: var(--gray);
     line-height: 1.35;
+}
+
+.tbank_market_status_banner{
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin-top: 10px;
+    padding: 14px 16px;
+    border-radius: 16px;
+    background: #f8fbff;
+    color: #111827;
+}
+
+.tbank_market_status_provider{
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+    font-size: 14px;
+    font-weight: 800;
+}
+
+.tbank_market_status_provider img{
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+}
+
+.tbank_market_status_banner p{
+    margin: 0;
+    color: #334155;
+    font-size: 12px;
+    line-height: 1.35;
+    text-align: right;
 }
 
 .trade_drawer_body{
@@ -846,7 +897,8 @@
 }
 
 .trade_error,
-.trade_hint{
+.trade_hint,
+.trade_success{
     font-size: 12px;
     line-height: 1.35;
 }
@@ -859,8 +911,98 @@
     color: var(--gray);
 }
 
+.trade_success{
+    color: var(--green);
+}
+
+.orderbook_empty_message{
+    margin: 12px 0 0;
+    color: var(--gray);
+    font-size: 12px;
+    line-height: 1.35;
+}
+
+.asset_chart_trade_marker rect{
+    filter: drop-shadow(0 6px 12px rgba(0, 0, 0, 0.35));
+}
+
+.asset_chart_trade_marker rect:first-child{
+    stroke: none;
+}
+
+.asset_chart_trade_marker rect:last-child{
+    stroke: white;
+    stroke-width: 2;
+}
+
+.asset_chart_trade_marker{
+    cursor: pointer;
+    outline: none;
+}
+
+.asset_chart_trade_marker:hover rect:last-child,
+.asset_chart_trade_marker:focus-visible rect:last-child{
+    stroke-width: 3;
+}
+
+.asset_chart_trade_marker text{
+    fill: #07121f;
+    font-size: 9px;
+    font-weight: 900;
+    pointer-events: none;
+}
+
+.asset_chart_trade_tooltip{
+    z-index: 8;
+    min-width: 220px;
+    border-color: rgba(30, 117, 255, 0.38);
+}
+
+.currency_trade_notice {
+    display: inline-flex;
+    align-items: center;
+    min-height: 42px;
+    border: 1.5px solid var(--black-t);
+    border-radius: 999px;
+    background: var(--black-s);
+    color: var(--gray);
+    padding: 0 14px;
+    font-size: 12px;
+}
+
+.ai_signal_text {
+    transition: color 0.2s ease;
+}
+
+.ai_signal_text_positive {
+    color: var(--green) !important;
+}
+
+.ai_signal_text_negative {
+    color: var(--red) !important;
+}
+
+.ai_signal_text_neutral {
+    color: var(--gray) !important;
+}
+
+.asset_chart_marker_notice{
+    position: absolute;
+    left: 14px;
+    bottom: 12px;
+    z-index: 6;
+    padding: 7px 10px;
+    border: 1px solid var(--black-t);
+    border-radius: 999px;
+    background: rgba(18, 18, 18, 0.82);
+    color: var(--gray);
+    font-size: 11px;
+    line-height: 1;
+    pointer-events: none;
+}
+
 .trade_drawer_footer{
-    padding: 12px 4px 4px !important;
+    padding: 30px 4px 50px 4px !important;
     width: 100%;
 }
 
@@ -874,6 +1016,152 @@
     border-radius: 30px;
     align-items: center;
     justify-content: center;
+}
+
+.trade_success_toast{
+    position: fixed;
+    right: 28px;
+    top: 96px;
+    z-index: 80;
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    max-width: min(420px, calc(100vw - 32px));
+    padding: 16px 18px;
+    border: 1px solid var(--black-t);
+    border-radius: 18px;
+    background: var(--black);
+    box-shadow: 0 22px 70px rgba(0, 0, 0, 0.34);
+    animation: tradeToastIn 0.42s cubic-bezier(0.2, 0.85, 0.25, 1.15);
+}
+
+.trade_success_toast_icon{
+    display: grid;
+    place-items: center;
+    width: 38px;
+    height: 38px;
+    border-radius: 999px;
+    border: 1px solid rgba(0, 224, 164, 0.38);
+    background: rgba(0, 224, 164, 0.12);
+    color: var(--green);
+    font-size: 22px;
+    font-weight: 900;
+    box-shadow: none;
+}
+
+.trade_success_toast strong,
+.trade_success_toast span{
+    display: block;
+}
+
+.trade_success_toast strong{
+    margin-bottom: 3px;
+    color: white;
+    font-size: 14px;
+}
+
+.trade_success_toast span{
+    color: var(--gray);
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+.coin_deposit_position_card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    width: 100%;
+    margin-top: 16px;
+    /* padding: 16px; */
+    /* border: 1px solid var(--black-t); */
+    border-radius: 20px;
+    /* background: var(--black-s); */
+}
+
+.coin_deposit_position_metrics{
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 14px;
+    flex: 1;
+}
+
+.coin_deposit_position_metrics span,
+.coin_deposit_position_metrics strong{
+    display: block;
+}
+
+.coin_deposit_position_metrics span{
+    margin-bottom: 7px;
+    color: var(--gray);
+    font-size: 12px;
+}
+
+.coin_deposit_position_metrics strong{
+    color: white;
+    font-size: 15px;
+}
+
+.coin_deposit_change_positive{
+    color: var(--green) !important;
+}
+
+.coin_deposit_change_negative{
+    color: var(--red) !important;
+}
+
+.coin_deposit_change_neutral{
+    color: var(--gray) !important;
+}
+
+.coin_deposit_position_card .button--primary-sell{
+    width: auto;
+    min-width: 116px;
+    padding-inline: 22px;
+}
+
+.stable_asset_card{
+    gap: 18px;
+}
+
+.stable_asset_metrics{
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 10px;
+}
+
+.stable_asset_metrics div{
+    padding: 12px;
+    border: 1px solid var(--black-t);
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.stable_asset_metrics span,
+.stable_asset_metrics strong{
+    display: block;
+}
+
+.stable_asset_metrics span{
+    margin-bottom: 6px;
+    color: var(--gray);
+    font-size: 12px;
+}
+
+.stable_asset_metrics strong{
+    color: white;
+    font-size: 14px;
+}
+
+@keyframes tradeToastIn{
+    from{
+        opacity: 0;
+        transform: translateY(-14px) scale(0.96);
+    }
+    to{
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
 }
 
 /* Coin page bento layout */
@@ -1550,6 +1838,28 @@ flex-direction: row;
 .trade_balance_grid,
 .trade_result_card{
     grid-template-columns: 1fr;
+}
+
+.coin_deposit_position_card{
+    align-items: stretch;
+    flex-direction: column;
+}
+
+.coin_deposit_position_metrics{
+    grid-template-columns: 1fr;
+}
+
+.coin_deposit_position_card .button--primary-sell{
+    width: 100%;
+}
+
+.tbank_market_status_banner{
+    align-items: flex-start;
+    flex-direction: column;
+}
+
+.tbank_market_status_banner p{
+    text-align: left;
 }
 }
 

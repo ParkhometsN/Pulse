@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     smtp_password: str | None = None
     smtp_from_email: str | None = None
     smtp_use_tls: bool = True
+    openai_api_key: str | None = None
+    chatgpt_api_key: str | None = None
+    openai_model: str = "gpt-4.1-mini"
 
     @property
     def resolved_database_url(self) -> str | None:
@@ -25,6 +28,10 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.environment.lower() == "production"
+
+    @property
+    def resolved_openai_api_key(self) -> str | None:
+        return self.openai_api_key or self.chatgpt_api_key
 
 
 settings = Settings()

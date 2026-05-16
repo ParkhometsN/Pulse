@@ -186,6 +186,7 @@ def format_coin(
 ):
     price = to_float(ticker.get("lastPrice"))
     change_24h = to_float(ticker.get("price24hPcnt")) * 100
+    lot_size_filter = instrument.get("lotSizeFilter") or {}
 
     change_7d = get_chart_price_change(price, chart, 7)
     change_30d = get_chart_price_change(price, chart, 30)
@@ -200,6 +201,13 @@ def format_coin(
         "quoteCoin": instrument.get("quoteCoin"),
         "status": instrument.get("status"),
         "iconUrl": icon_url,
+        "minOrderAmount": to_float(
+            lot_size_filter.get("minOrderAmt")
+            or lot_size_filter.get("minOrderAmount")
+            or lot_size_filter.get("minNotionalValue")
+        ),
+        "minOrderQuantity": to_float(lot_size_filter.get("minOrderQty")),
+        "quantityStep": to_float(lot_size_filter.get("basePrecision") or lot_size_filter.get("qtyStep")),
 
         "price": price,
         "priceChangePercent24h": change_24h,

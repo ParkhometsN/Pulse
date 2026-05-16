@@ -186,10 +186,14 @@ html{
     align-items: end;
     justify-content: space-between;
 }
+
+.border_blue{
+  border: 1px solid var(--primary-blue) !important;
+}
 .content_settingsss,
 .content_settings{
   padding: 20px;
-  width: 650px;
+  width: 840px;
   height: 100%;
 }
 .deleteAccount{

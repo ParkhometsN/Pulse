@@ -208,10 +208,10 @@ export default function CointButtonMarket({
           type={assetType}
         />
 
-        <div className="name_coin">
-          <h1>{NameCoin}</h1>
-          <p className="NMC">{NMC}</p>
-        </div>
+          <div className="name_coin">
+            <h1>{NameCoin}</h1>
+            <p className="NMC">{NMC}</p>
+          </div>
       </div>
     <div className="coinlistprice">
         <p className="coin_price">

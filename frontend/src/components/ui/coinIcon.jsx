@@ -33,9 +33,22 @@ const CRYPTO_LOGO_SLUGS = {
   AAVE: "aave-aave",
   SUI: "sui-sui",
   PEPE: "pepe-pepe",
+  MNT: "mantle-mnt",
 };
 
-const getIconSources = (coinCode, iconUrl) => {
+const STATIC_ICON_SOURCES = {
+  RUB: ["https://invest-brands.cdn-tinkoff.ru/rublex160.png"],
+  RUR: ["https://invest-brands.cdn-tinkoff.ru/rublex160.png"],
+  USD: [
+    "https://invest-brands.cdn-tinkoff.ru/dollarx160.png",
+    "https://cdn.jsdelivr.net/gh/spothq/cryptocurrency-icons@master/svg/color/usd.svg",
+  ],
+  EUR: ["https://invest-brands.cdn-tinkoff.ru/eurox160.png"],
+  USDT: ["https://cryptologos.cc/logos/tether-usdt-logo.svg"],
+  USDC: ["https://cryptologos.cc/logos/usd-coin-usdc-logo.svg"],
+};
+
+const getCryptoIconSources = (coinCode, iconUrl) => {
   const lowerCode = coinCode.toLowerCase();
   const cryptoLogoSlug = CRYPTO_LOGO_SLUGS[coinCode];
   const sources = [iconUrl];
@@ -55,21 +68,37 @@ const getIconSources = (coinCode, iconUrl) => {
 };
 
 const getStockIconSources = (iconUrl) => {
-  if (!iconUrl) {
+  if (
+    !iconUrl ||
+    (!iconUrl.includes("invest-brands.cdn-tinkoff.ru") && !iconUrl.startsWith("data:image/"))
+  ) {
     return [];
   }
 
-  const sources = [iconUrl];
-  const clearbitDomain = iconUrl.match(/logo\.clearbit\.com\/([^/?#]+)/)?.[1];
-
-  if (clearbitDomain) {
-    sources.push(`https://www.google.com/s2/favicons?domain=${clearbitDomain}&sz=64`);
-  }
-
-  return [...new Set(sources)];
+  return [iconUrl];
 };
 
-const getFallbackStyle = (coinCode) => {
+const getIconSources = (type, coinCode, iconUrl) => {
+  const staticSources = STATIC_ICON_SOURCES[coinCode] || [];
+
+  if (staticSources.length) {
+    return staticSources;
+  }
+
+  return type === "stock"
+    ? getStockIconSources(iconUrl)
+    : getCryptoIconSources(coinCode, iconUrl);
+};
+
+const getFallbackStyle = (coinCode, type) => {
+  if (type === "stock") {
+    return {
+      background: "#ffffff",
+      borderColor: "rgba(17, 24, 39, 0.12)",
+      color: "#111827",
+    };
+  }
+
   const colors = [
     ["#1E75FF", "#00E0A4"],
     ["#7C5CFF", "#1E75FF"],
@@ -99,22 +128,23 @@ export default function CoinIcon({
   const rawCode = String(baseCoin || label || "?").toUpperCase();
   const coinCode = type === "stock"
     ? rawCode.slice(0, 5)
-    : rawCode.replace("USDT", "").slice(0, 4);
+    : (rawCode.endsWith("USDT") && rawCode.length > 4
+      ? rawCode.slice(0, -4)
+      : rawCode
+    ).slice(0, 4);
   const iconKey = `${type}:${coinCode}:${iconUrl || ""}`;
   const [sourceState, setSourceState] = useState({
     key: iconKey,
     index: 0,
   });
-  const iconSources = type === "stock"
-    ? getStockIconSources(iconUrl)
-    : getIconSources(coinCode, iconUrl);
+  const iconSources = getIconSources(type, coinCode, iconUrl);
   const sourceIndex = sourceState.key === iconKey ? sourceState.index : 0;
 
   if (sourceIndex >= iconSources.length) {
     return (
       <span
         className={`coin_icon coin_icon_fallback ${className}`}
-        style={getFallbackStyle(coinCode)}
+        style={getFallbackStyle(coinCode, type)}
       >
         {coinCode}
       </span>

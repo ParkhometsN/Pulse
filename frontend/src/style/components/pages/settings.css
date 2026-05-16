@@ -1,0 +1,35 @@
+.settings_api_key {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    width: 100%;
+}
+
+.settings_api_hint {
+    margin: 0;
+    padding: 10px 12px;
+    border-radius: 14px;
+    border: 1px solid var(--black-t);
+    background: rgba(255, 255, 255, 0.03);
+    color: rgba(255, 255, 255, 0.62);
+    font-size: 12px;
+    line-height: 1.4;
+    animation: pageElementIn 0.28s ease both;
+}
+
+.settings_api_hint_success {
+    color: var(--green);
+    border-color: rgba(0, 224, 164, 0.24);
+    background: rgba(0, 224, 164, 0.08);
+}
+
+@keyframes pageElementIn {
+    from {
+        opacity: 0;
+        transform: translateY(6px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}

@@ -1,5 +1,5 @@
 import * as React from "react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Accordion,
@@ -13,30 +13,22 @@ import api from "../../lib/api";
 import { clearAuthSession, getStoredUser } from "../../lib/auth";
 import { getApiErrorMessage } from "../../lib/apiError";
 
-const SETTINGS_STORAGE_KEY = "pulse:settings:v1";
-
-function readSettings() {
-  try {
-    return JSON.parse(localStorage.getItem(SETTINGS_STORAGE_KEY) || "null") || {};
-  } catch {
-    return {};
-  }
-}
-
 export default function Settings() {
   const navigate = useNavigate();
-  const storedSettings = readSettings();
   const user = getStoredUser();
-  const [aiApiKey, setAiApiKey] = React.useState(storedSettings.aiApiKey || "");
+  const [aiApiKey, setAiApiKey] = React.useState("");
+  const [aiModel, setAiModel] = React.useState("gpt-4.1-mini");
+  const [savedAISettings, setSavedAISettings] = React.useState(null);
   const [deletePassword, setDeletePassword] = React.useState("");
   const [showDeleteConfirm, setShowDeleteConfirm] = React.useState(false);
   const [isSavingSettings, setIsSavingSettings] = React.useState(false);
+  const [isSettingsLoading, setIsSettingsLoading] = React.useState(true);
   const [isDeleting, setIsDeleting] = React.useState(false);
   const [alert, setAlert] = React.useState(null);
   const [isOpen, setIsOpen] = useState(false);
-  const [selected, setSelected] = useState('Deepseek');
+  const [selected, setSelected] = useState('ChatGPT');
 
-  const options = ['Deepseek', 'ChatGPT', 'Claude'];
+  const options = ['ChatGPT'];
 
   const toggleDropdown = () => setIsOpen(!isOpen);
 
@@ -45,19 +37,52 @@ export default function Settings() {
     setIsOpen(false);
   };
 
-  const saveSettings = (event) => {
+  useEffect(() => {
+    let isMounted = true;
+
+    api.get("/settings/ai")
+      .then((response) => {
+        if (!isMounted) {
+          return;
+        }
+
+        setSavedAISettings(response.data);
+        setAiModel(response.data?.model || "gpt-4.1-mini");
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (isMounted) {
+          setIsSettingsLoading(false);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const saveSettings = async (event) => {
     event.preventDefault();
     setAlert(null);
     setIsSavingSettings(true);
 
-    window.setTimeout(() => {
-      localStorage.setItem(
-        SETTINGS_STORAGE_KEY,
-        JSON.stringify({ aiApiKey })
-      );
+    try {
+      const response = await api.put("/settings/ai", {
+        provider: "openai",
+        api_key: aiApiKey,
+        model: aiModel,
+      });
+      setSavedAISettings(response.data);
+      setAiApiKey("");
+      setAlert({ type: "success", text: response.data?.message || "Ключ ChatGPT сохранен." });
+    } catch (error) {
+      setAlert({
+        type: "error",
+        text: getApiErrorMessage(error, "Не удалось сохранить ключ ChatGPT."),
+      });
+    } finally {
       setIsSavingSettings(false);
-      setAlert({ type: "success", text: "API сохранен." });
-    }, 250);
+    }
   };
 
   const deleteAccount = async (event) => {
@@ -136,9 +161,10 @@ export default function Settings() {
                     <>
                       <div className="absolute top-full left-0 mt-2 w-full bg-white border border-gray-200 rounded-md shadow-lg z-10">
                         {options.map((option) => (
-                          <button
-                            key={option}
-                            onClick={() => handleSelect(option)}
+	                          <button
+	                            key={option}
+	                            type="button"
+	                            onClick={() => handleSelect(option)}
                             className="w-full text-left px-4 py-2 hover:bg-gray-100 transition-colors first:rounded-t-md last:rounded-b-md"
                             style={{ color: '#000' }}
                           >
@@ -152,15 +178,33 @@ export default function Settings() {
                       />
                     </>
                   )}
-                  <div className="settings_api_key">
-                  <Inputs
-                    variant="primary"
-                    type="password"
-                    placeholder="API KEY"
-                    value={aiApiKey}
-                    onChange={(event) => setAiApiKey(event.target.value)}
-                  />
-                </div>
+	                  <div className="settings_api_key">
+                    {isSettingsLoading ? (
+                      <p className="settings_api_hint">Проверяем сохраненный ключ...</p>
+                    ) : savedAISettings?.hasApiKey ? (
+                      <p className="settings_api_hint settings_api_hint_success">
+                        Ключ подключен{savedAISettings.maskedApiKey ? `: ${savedAISettings.maskedApiKey}` : " через .env"}.
+                      </p>
+                    ) : (
+                      <p className="settings_api_hint">
+                        Сохрани OpenAI API key, чтобы AI-блоки могли делать расширенный анализ.
+                      </p>
+                    )}
+	                  <Inputs
+	                    variant="primary"
+	                    type="password"
+	                    placeholder="OpenAI API KEY"
+	                    value={aiApiKey}
+	                    onChange={(event) => setAiApiKey(event.target.value)}
+	                  />
+                    <Inputs
+                      variant="primary"
+                      type="text"
+                      placeholder="Модель"
+                      value={aiModel}
+                      onChange={(event) => setAiModel(event.target.value)}
+                    />
+	                </div>
                 </div>
                 
                 <Buttons type="primary-full" htmlType="submit" disabled={isSavingSettings}>

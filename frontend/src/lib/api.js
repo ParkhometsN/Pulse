@@ -3,10 +3,11 @@ import { ACCESS_TOKEN_KEY, clearAuthSession } from './auth';
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL
   || (import.meta.env.DEV ? 'http://127.0.0.1:8000' : '/api');
+const API_TIMEOUT_MS = 30000;
 
 const api = axios.create({
   baseURL: apiBaseUrl,
-  timeout: 10000,
+  timeout: API_TIMEOUT_MS,
   headers: {
     'Content-Type': 'application/json',
   },

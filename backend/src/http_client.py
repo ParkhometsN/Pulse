@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import hmac
+import json
 import time
 from urllib.parse import urlencode
 
@@ -13,10 +14,16 @@ class UpstreamHTTPError(Exception):
         message: str,
         status_code: int | None = None,
         ret_code: int | None = None,
+        ret_msg: str | None = None,
     ):
         super().__init__(message)
         self.status_code = status_code
         self.ret_code = ret_code
+        self.ret_msg = ret_msg
+
+
+def json_dumps(value: dict) -> str:
+    return json.dumps(value, separators=(",", ":"), ensure_ascii=False)
 
 
 class BybitHTTPClient:
@@ -51,6 +58,7 @@ class BybitHTTPClient:
                         raise UpstreamHTTPError(
                             f"Bybit API error: {result}",
                             ret_code=result.get("retCode"),
+                            ret_msg=result.get("retMsg"),
                         )
 
                     return result["result"]
@@ -103,6 +111,61 @@ class BybitHTTPClient:
                         raise UpstreamHTTPError(
                             f"Bybit API error: {result}",
                             ret_code=result.get("retCode"),
+                            ret_msg=result.get("retMsg"),
+                        )
+
+                    return result["result"]
+            except (asyncio.TimeoutError, ClientError) as error:
+                if attempt == 1:
+                    raise UpstreamHTTPError("Bybit provider unavailable") from error
+
+                await asyncio.sleep(0.2)
+
+        raise UpstreamHTTPError("Bybit request failed")
+
+    async def _signed_post(
+        self,
+        endpoint: str,
+        api_key: str,
+        api_secret: str,
+        payload_data: dict | None = None,
+    ):
+        session = await self._get_session()
+        body = payload_data or {}
+        body_string = json_dumps(body)
+        timestamp = str(int(time.time() * 1000))
+        recv_window = "5000"
+        payload = f"{timestamp}{api_key}{recv_window}{body_string}"
+        signature = hmac.new(
+            api_secret.encode("utf-8"),
+            payload.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+        headers = {
+            "X-BAPI-API-KEY": api_key,
+            "X-BAPI-SIGN": signature,
+            "X-BAPI-SIGN-TYPE": "2",
+            "X-BAPI-TIMESTAMP": timestamp,
+            "X-BAPI-RECV-WINDOW": recv_window,
+            "Content-Type": "application/json",
+        }
+
+        for attempt in range(2):
+            try:
+                async with session.post(endpoint, data=body_string, headers=headers) as response:
+                    result = await response.json(content_type=None)
+
+                    if response.status != 200:
+                        raise UpstreamHTTPError(
+                            f"Bybit HTTP error: {response.status}, {result}",
+                            status_code=response.status,
+                        )
+
+                    if result.get("retCode") != 0:
+                        raise UpstreamHTTPError(
+                            f"Bybit API error: {result}",
+                            ret_code=result.get("retCode"),
+                            ret_msg=result.get("retMsg"),
                         )
 
                     return result["result"]
@@ -210,6 +273,35 @@ class BybitHTTPClient:
 
         return result.get("list", [])
 
+    async def create_order(
+        self,
+        api_key: str,
+        api_secret: str,
+        symbol: str,
+        side: str,
+        qty: str,
+        category: str = "spot",
+        order_type: str = "Market",
+        market_unit: str | None = None,
+    ):
+        payload = {
+            "category": category,
+            "symbol": symbol.upper(),
+            "side": side,
+            "orderType": order_type,
+            "qty": qty,
+        }
+
+        if market_unit:
+            payload["marketUnit"] = market_unit
+
+        return await self._signed_post(
+            "/v5/order/create",
+            api_key=api_key.strip(),
+            api_secret=api_secret.strip(),
+            payload_data=payload,
+        )
+
     async def close(self):
         if self._session and not self._session.closed:
             await self._session.close()
@@ -247,7 +339,7 @@ class MoexHTTPClient:
             params={
                 "start": start,
                 "iss.only": "securities,marketdata",
-                "securities.columns": "SECID,SHORTNAME,SECNAME",
+                "securities.columns": "SECID,SHORTNAME,SECNAME,LOTSIZE",
                 "marketdata.columns": (
                     "SECID,LAST,LCURRENTPRICE,LASTCHANGEPRCNT,"
                     "VALTODAY,UPDATETIME"

@@ -3,25 +3,32 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 from datetime import date, datetime, timedelta, timezone
-from decimal import Decimal
-from typing import Any
+from decimal import Decimal, ROUND_DOWN
+from typing import Any, Callable
 from uuid import UUID
 
 from aiohttp import ClientError, ClientSession, ClientTimeout
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from src.auth_router import get_current_user
 from src.database import get_database_pool
 from src.http_client import UpstreamHTTPError
 from src.init import bybit_client, tbank_client
 from src.router import get_coin_name, get_coinmarketcap_icon_url
-from src.stocks_router import get_stock_icon_url
+from src.stocks_router import (
+    calculate_percent_change,
+    get_change_from_candles,
+    get_stock_candles,
+    get_stock_icon_url,
+)
 from src.tbank_client import TBankAPIError, normalize_tbank_token, proto_decimal, proto_number
 
 
 router = APIRouter(tags=["wallets"])
+logger = logging.getLogger(__name__)
 
 BYBIT_ACCOUNT_TYPES = ("UNIFIED", "SPOT", "CONTRACT")
 BYBIT_SOFT_ACCOUNT_ERRORS = {10001, 110001, 110004}
@@ -32,6 +39,10 @@ _usd_rub_rate_cache: dict[str, Any] = {
 }
 _tbank_instrument_cache: dict[str, dict[str, Any]] = {}
 _tbank_shares_cache: dict[str, dict[str, Any]] = {}
+_tbank_trading_status_cache: dict[str, dict[str, Any]] = {}
+_portfolio_summary_cache: dict[str, dict[str, Any]] = {}
+PORTFOLIO_SUMMARY_CACHE_TTL_SECONDS = 45
+TBANK_TRADING_STATUS_CACHE_TTL_SECONDS = 60
 
 
 ACCOUNT_TYPE_LABELS = {
@@ -51,6 +62,14 @@ TBANK_MONEY_FIGI_CODES = {
     "USD000UTSTOM": ("USD", "Доллар США"),
     "EUR_RUB__TOM": ("EUR", "Евро"),
 }
+MONEY_ICON_URLS = {
+    "RUB": "https://invest-brands.cdn-tinkoff.ru/rublex160.png",
+    "RUR": "https://invest-brands.cdn-tinkoff.ru/rublex160.png",
+    "USD": "https://invest-brands.cdn-tinkoff.ru/dollarx160.png",
+    "USDT": "https://cryptologos.cc/logos/tether-usdt-logo.svg",
+    "USDC": "https://cryptologos.cc/logos/usd-coin-usdc-logo.svg",
+    "EUR": "https://invest-brands.cdn-tinkoff.ru/eurox160.png",
+}
 TBANK_BUY_OPERATION_TYPES = {
     "OPERATION_TYPE_BUY",
     "OPERATION_TYPE_BUY_CARD",
@@ -59,6 +78,22 @@ TBANK_BUY_OPERATION_TYPES = {
 TBANK_SELL_OPERATION_TYPES = {
     "OPERATION_TYPE_SELL",
     "OPERATION_TYPE_SELL_MARGIN",
+}
+TBANK_TRADING_STATUS_LABELS = {
+    "SECURITY_TRADING_STATUS_UNSPECIFIED": "статус торгов не определен",
+    "SECURITY_TRADING_STATUS_NOT_AVAILABLE_FOR_TRADING": "торги недоступны",
+    "SECURITY_TRADING_STATUS_OPENING_PERIOD": "период открытия торгов",
+    "SECURITY_TRADING_STATUS_CLOSING_PERIOD": "период закрытия торгов",
+    "SECURITY_TRADING_STATUS_BREAK_IN_TRADING": "перерыв в торговле",
+    "SECURITY_TRADING_STATUS_NORMAL_TRADING": "нормальная торговля",
+    "SECURITY_TRADING_STATUS_CLOSING_AUCTION": "аукцион закрытия",
+    "SECURITY_TRADING_STATUS_OPENING_AUCTION_PERIOD": "аукцион открытия",
+    "SECURITY_TRADING_STATUS_SESSION_ASSIGNED": "торговая сессия назначена",
+    "SECURITY_TRADING_STATUS_SESSION_CLOSE": "торговая сессия закрыта",
+    "SECURITY_TRADING_STATUS_SESSION_OPEN": "торговая сессия открыта",
+    "SECURITY_TRADING_STATUS_DEALER_NORMAL_TRADING": "торги через внутреннюю ликвидность брокера",
+    "SECURITY_TRADING_STATUS_DEALER_BREAK_IN_TRADING": "перерыв торговли через внутреннюю ликвидность брокера",
+    "SECURITY_TRADING_STATUS_DEALER_NOT_AVAILABLE_FOR_TRADING": "внутренняя ликвидность брокера недоступна",
 }
 
 
@@ -69,6 +104,55 @@ class ConnectTBankRequest(BaseModel):
 class ConnectBybitRequest(BaseModel):
     api_key: str = Field(min_length=8, max_length=255)
     api_secret: str = Field(min_length=8, max_length=255)
+
+
+class TradeRequest(BaseModel):
+    asset_type: str = Field(pattern="^(crypto|stock)$")
+    symbol: str = Field(min_length=1, max_length=40)
+    side: str = Field(pattern="^(buy|sell)$")
+    amount: Decimal | None = Field(default=None, gt=0)
+    quantity: Decimal | None = Field(default=None, gt=0)
+    lots: int | None = Field(default=None, gt=0)
+    price: Decimal | None = Field(default=None, gt=0)
+    asset_name: str | None = Field(default=None, max_length=120)
+    figi: str | None = Field(default=None, max_length=64)
+
+    @field_validator("asset_type", "side", mode="before")
+    @classmethod
+    def _normalize_choice_text(cls, value: Any) -> str:
+        return str(value or "").strip().lower()
+
+    @field_validator("symbol", mode="before")
+    @classmethod
+    def _normalize_symbol_text(cls, value: Any) -> str:
+        if isinstance(value, (dict, list, tuple)):
+            return ""
+
+        return str(value or "").strip()[:40]
+
+    @field_validator("asset_name", mode="before")
+    @classmethod
+    def _normalize_asset_name_text(cls, value: Any) -> str | None:
+        if value is None:
+            return None
+
+        if isinstance(value, (dict, list, tuple)):
+            return None
+
+        text = str(value).strip()
+        return text[:120] if text else None
+
+    @field_validator("figi", mode="before")
+    @classmethod
+    def _normalize_figi_text(cls, value: Any) -> str | None:
+        if value is None:
+            return None
+
+        if isinstance(value, (dict, list, tuple)):
+            return None
+
+        text = str(value).strip()
+        return text[:64] if text else None
 
 
 def _jsonb(value: Any) -> dict[str, Any]:
@@ -95,6 +179,10 @@ def _get(data: dict[str, Any], *keys: str) -> Any:
 
 def _decimal_to_float(value: Decimal) -> float:
     return round(float(value), 2)
+
+
+def _decimal_to_precise_float(value: Decimal, digits: int = 8) -> float:
+    return round(float(value), digits)
 
 
 def _decimal_from_string(value: Any) -> Decimal:
@@ -145,6 +233,11 @@ def _normalize_tbank_name(figi: str | None, symbol: str, instrument: dict[str, A
 
 
 def _get_tbank_icon_url(instrument: dict[str, Any], symbol: str, asset_type: str) -> str | None:
+    normalized_symbol = str(symbol or "").upper()
+
+    if normalized_symbol in MONEY_ICON_URLS:
+        return MONEY_ICON_URLS[normalized_symbol]
+
     brand = instrument.get("brand") if isinstance(instrument.get("brand"), dict) else {}
     logo_name = (
         brand.get("logoName")
@@ -169,6 +262,43 @@ def _get_tbank_icon_url(instrument: dict[str, Any], symbol: str, asset_type: str
     return None
 
 
+def _get_money_icon_url(currency: str | None) -> str | None:
+    return MONEY_ICON_URLS.get(str(currency or "").upper())
+
+
+def _is_supported_tbank_market_share(instrument: dict[str, Any]) -> bool:
+    ticker = str(instrument.get("ticker") or "").strip().upper()
+    currency = str(instrument.get("currency") or "").strip().lower()
+    country = str(
+        instrument.get("countryOfRisk")
+        or instrument.get("country_of_risk")
+        or ""
+    ).strip().upper()
+    exchange = str(
+        instrument.get("exchange")
+        or instrument.get("realExchange")
+        or instrument.get("real_exchange")
+        or ""
+    ).strip().upper()
+
+    if not instrument.get("figi") or not ticker:
+        return False
+
+    if not any(char.isalpha() for char in ticker):
+        return False
+
+    if currency and currency not in {"rub", "rur"}:
+        return False
+
+    if country and country not in {"RU", "RUS", "RUSSIA"}:
+        return False
+
+    if exchange and any(marker in exchange for marker in ("SPB", "HK", "NASDAQ", "NYSE", "LSE")):
+        return False
+
+    return bool(instrument.get("apiTradeAvailableFlag", True))
+
+
 def _parse_datetime(value: Any) -> datetime:
     if isinstance(value, datetime):
         return value
@@ -177,8 +307,18 @@ def _parse_datetime(value: Any) -> datetime:
         return datetime.fromtimestamp(value / 1000 if value > 10_000_000_000 else value, timezone.utc)
 
     if isinstance(value, str):
+        normalized_value = value.strip()
+
+        if normalized_value.isdigit():
+            timestamp = int(normalized_value)
+
+            return datetime.fromtimestamp(
+                timestamp / 1000 if timestamp > 10_000_000_000 else timestamp,
+                timezone.utc,
+            )
+
         try:
-            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+            return datetime.fromisoformat(normalized_value.replace("Z", "+00:00"))
         except ValueError:
             return datetime.now(timezone.utc)
 
@@ -262,6 +402,15 @@ async def _calculate_bybit_spot_change(assets: list[dict[str, Any]]) -> tuple[De
         )
         multiplier = Decimal("1") + (change_percent / Decimal("100"))
         previous_value = current_value / multiplier if multiplier > 0 else current_value
+        asset_change_usd = current_value - previous_value
+
+        asset["changeUsd"] = _decimal_to_float(asset_change_usd)
+        asset["changeRub"] = _decimal_to_float(
+            asset_change_usd * _decimal_from_string(asset.get("currentPriceRub")) / (
+                _decimal_from_string(asset.get("currentPriceUsd")) or Decimal("1")
+            )
+        )
+        asset["changePercent"] = round(float(change_percent), 2)
 
         total_current_value += current_value
         total_previous_value += previous_value
@@ -365,7 +514,82 @@ def _cache_token_key(token: str) -> str:
     return hashlib.sha256(normalize_tbank_token(token).encode("utf-8")).hexdigest()
 
 
-def _format_tbank_share(instrument: dict[str, Any], price_map: dict[str, Decimal]) -> dict[str, Any] | None:
+def _portfolio_summary_cache_key(user_id: Any) -> str:
+    return str(user_id)
+
+
+def _clear_portfolio_summary_cache(user_id: Any) -> None:
+    _portfolio_summary_cache.pop(_portfolio_summary_cache_key(user_id), None)
+
+
+async def _get_tbank_trading_status(token: str, instrument: dict[str, Any]) -> dict[str, Any]:
+    figi = instrument.get("figi")
+    instrument_id = instrument.get("uid") or figi
+
+    if not instrument_id:
+        return {}
+
+    token_key = _cache_token_key(token)
+    cache_key = f"{token_key}:{instrument_id}"
+    now = datetime.now(timezone.utc)
+    cached = _tbank_trading_status_cache.get(cache_key)
+
+    if cached and cached["expires_at"] > now:
+        return cached["data"]
+
+    trading_status = await tbank_client.get_trading_status(token, instrument_id)
+    _tbank_trading_status_cache[cache_key] = {
+        "data": trading_status,
+        "expires_at": now + timedelta(seconds=TBANK_TRADING_STATUS_CACHE_TTL_SECONDS),
+    }
+
+    return trading_status
+
+
+def _serialize_tbank_trading_status(
+    instrument: dict[str, Any],
+    trading_status: dict[str, Any] | None,
+    symbol: str,
+) -> dict[str, Any]:
+    status_payload = trading_status or {}
+    status_code_value = str(status_payload.get("tradingStatus") or "")
+    is_market_order_available = status_payload.get("marketOrderAvailableFlag") is not False
+    is_api_trade_available = (
+        instrument.get("apiTradeAvailableFlag") is not False
+        and status_payload.get("apiTradeAvailableFlag") is not False
+    )
+    is_buy_available = instrument.get("buyAvailableFlag") is not False
+    is_sell_available = instrument.get("sellAvailableFlag") is not False
+    is_open = is_api_trade_available and is_market_order_available and (
+        status_code_value in {
+            "SECURITY_TRADING_STATUS_NORMAL_TRADING",
+            "SECURITY_TRADING_STATUS_DEALER_NORMAL_TRADING",
+        }
+    )
+
+    return {
+        "symbol": symbol,
+        "figi": instrument.get("figi"),
+        "instrumentId": instrument.get("uid") or instrument.get("figi"),
+        "status": status_code_value,
+        "statusLabel": TBANK_TRADING_STATUS_LABELS.get(
+            status_code_value,
+            status_code_value or "неизвестный статус",
+        ),
+        "isOpen": is_open,
+        "isMarketOrderAvailable": is_market_order_available,
+        "isApiTradeAvailable": is_api_trade_available,
+        "isBuyAvailable": is_buy_available,
+        "isSellAvailable": is_sell_available,
+        "updatedAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def _format_tbank_share(
+    instrument: dict[str, Any],
+    price_map: dict[str, Decimal],
+    trading_status: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
     figi = instrument.get("figi")
     ticker = instrument.get("ticker")
     symbol = _normalize_tbank_symbol(figi, ticker, instrument)
@@ -373,6 +597,7 @@ def _format_tbank_share(instrument: dict[str, Any], price_map: dict[str, Decimal
         return None
 
     price = price_map.get(figi, Decimal("0"))
+    status_payload = _serialize_tbank_trading_status(instrument, trading_status, symbol)
     return {
         "id": figi,
         "figi": figi,
@@ -382,14 +607,43 @@ def _format_tbank_share(instrument: dict[str, Any], price_map: dict[str, Decimal
         "baseCoin": symbol,
         "iconUrl": _get_tbank_icon_url(instrument, symbol, "stock"),
         "price": _decimal_to_float(price),
+        "lotSize": int(instrument.get("lot") or 1),
         "priceChangePercent24h": 0,
         "priceChangePercent7d": 0,
         "priceChangePercent30d": 0,
         "chart7d": [],
         "provider": "tbank",
         "providerLabel": PROVIDER_LABELS["tbank"],
-        "isTradable": bool(instrument.get("apiTradeAvailableFlag", True)),
+        "tradingStatus": status_payload,
+        "isTradable": status_payload["isApiTradeAvailable"],
+        "isTradingOpen": status_payload["isOpen"],
     }
+
+
+async def _enrich_tbank_share_with_moex_history(share: dict[str, Any]) -> dict[str, Any]:
+    symbol = str(share.get("symbol") or "").upper()
+
+    if not symbol:
+        return share
+
+    try:
+        candles = await get_stock_candles(symbol, "TQBR", days=35)
+    except Exception:
+        return share
+
+    if not candles:
+        return share
+
+    price = _decimal_from_string(share.get("price")) or _decimal_from_string(candles[-1].get("close"))
+    previous_close = candles[-2].get("close") if len(candles) >= 2 else candles[0].get("open")
+
+    share["price"] = _decimal_to_float(price)
+    share["priceChangePercent24h"] = round(calculate_percent_change(price, previous_close), 2)
+    share["priceChangePercent7d"] = round(get_change_from_candles(price, candles, 7), 2)
+    share["priceChangePercent30d"] = round(get_change_from_candles(price, candles, 30), 2)
+    share["chart7d"] = candles[-7:]
+
+    return share
 
 
 def _is_usable_tbank_account(account: dict[str, Any]) -> bool:
@@ -439,6 +693,627 @@ async def _resolve_tbank_account(row) -> dict[str, Any]:
     return _account_permissions(accounts[0])
 
 
+def _format_decimal_for_provider(value: Decimal, max_places: int = 8) -> str:
+    quantizer = Decimal("1").scaleb(-max_places)
+    normalized = value.quantize(quantizer, rounding=ROUND_DOWN).normalize()
+    text = format(normalized, "f")
+
+    return text if "." not in text else text.rstrip("0").rstrip(".")
+
+
+def _get_bybit_coin_balance(balances: list[dict[str, Any]], coin_code: str) -> Decimal:
+    normalized_coin_code = coin_code.upper()
+    best_value = Decimal("0")
+
+    for balance in balances:
+        for coin in balance.get("coin", []):
+            if not isinstance(coin, dict):
+                continue
+
+            if str(coin.get("coin") or "").upper() != normalized_coin_code:
+                continue
+
+            candidates = [
+                coin.get("availableToWithdraw"),
+                coin.get("walletBalance"),
+                coin.get("equity"),
+            ]
+
+            for candidate in candidates:
+                value = _decimal_from_string(candidate)
+                if value > best_value:
+                    best_value = value
+
+    return best_value
+
+
+async def _get_bybit_trade_price(symbol: str, side: str) -> Decimal:
+    ticker = await bybit_client.get_ticker(symbol, category="spot")
+
+    if not ticker:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Не удалось получить актуальную цену Bybit.",
+        )
+
+    price_key = "ask1Price" if side == "buy" else "bid1Price"
+    price = _decimal_from_string(ticker.get(price_key) or ticker.get("lastPrice"))
+
+    if price <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Bybit вернул некорректную цену инструмента.",
+        )
+
+    return price
+
+
+async def _get_bybit_spot_rules(symbol: str) -> dict[str, Any]:
+    instruments = await bybit_client.get_instruments(category="spot")
+    normalized_symbol = symbol.upper()
+
+    for instrument in instruments:
+        if str(instrument.get("symbol") or "").upper() == normalized_symbol:
+            return instrument
+
+    return {}
+
+
+def _get_money_amount(items: list[dict[str, Any]], currency: str) -> Decimal:
+    normalized_currency = currency.upper()
+
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+
+        if str(item.get("currency") or "").upper() == normalized_currency:
+            return proto_decimal(item)
+
+    return Decimal("0")
+
+
+async def _load_tbank_cash_assets(token: str, account_id: str) -> list[dict[str, Any]]:
+    try:
+        limits = await tbank_client.get_withdraw_limits(token, account_id)
+    except TBankAPIError:
+        return []
+
+    money = [item for item in limits.get("money", []) if isinstance(item, dict)]
+    blocked = [item for item in limits.get("blocked", []) if isinstance(item, dict)]
+    usd_rub_rate = await _get_usd_rub_rate()
+    assets: list[dict[str, Any]] = []
+
+    for item in money:
+        currency = str(item.get("currency") or "").upper()
+        if not currency:
+            continue
+
+        amount = proto_decimal(item)
+        blocked_amount = _get_money_amount(blocked, currency)
+        available_amount = max(amount - blocked_amount, Decimal("0"))
+
+        if available_amount <= 0:
+            continue
+
+        rub_rate = Decimal("1") if currency == "RUB" else usd_rub_rate
+        value_rub = available_amount * rub_rate
+
+        assets.append({
+            "figi": None,
+            "symbol": currency,
+            "name": {
+                "RUB": "Российский рубль",
+                "USD": "Доллар США",
+                "EUR": "Евро",
+            }.get(currency, currency),
+            "shortName": currency,
+            "type": "currency",
+            "provider": "tbank",
+            "providerLabel": PROVIDER_LABELS["tbank"],
+            "iconUrl": _get_money_icon_url(currency),
+            "instrumentType": "currency",
+            "quantity": _decimal_to_precise_float(available_amount, 8),
+            "availableQuantity": _decimal_to_precise_float(available_amount, 8),
+            "currentPriceRub": _decimal_to_precise_float(rub_rate, 8),
+            "valueRub": _decimal_to_float(value_rub),
+            "changeRub": 0,
+            "changePercent": 0,
+        })
+
+    return assets
+
+
+async def _get_tbank_trade_price(token: str, figi: str, fallback_price: Decimal) -> Decimal:
+    try:
+        response = await tbank_client.get_last_prices(token, [figi])
+    except TBankAPIError:
+        response = {}
+
+    for item in response.get("lastPrices", []):
+        if not isinstance(item, dict) or item.get("figi") != figi:
+            continue
+
+        price = proto_decimal(item.get("price"))
+        if price > 0:
+            return price
+
+    if fallback_price > 0:
+        return fallback_price
+
+    raise HTTPException(
+        status_code=status.HTTP_502_BAD_GATEWAY,
+        detail="Не удалось получить актуальную цену Т-Банка.",
+    )
+
+
+async def _get_tbank_position_quantity(token: str, account_id: str, figi: str) -> Decimal:
+    try:
+        portfolio = await tbank_client.get_portfolio(token, account_id, "RUB")
+    except TBankAPIError:
+        return Decimal("0")
+
+    for position in portfolio.get("positions", []):
+        if not isinstance(position, dict) or position.get("figi") != figi:
+            continue
+
+        return Decimal(str(proto_number(_get(position, "quantity"))))
+
+    return Decimal("0")
+
+
+async def _find_active_wallet(user_id, provider: str):
+    pool = get_database_pool()
+
+    async with pool.acquire() as connection:
+        return await connection.fetchrow(
+            """
+            select id, provider, provider_label, api_key, api_secret_encrypted,
+                   permissions, status, last_synced_at, created_at, updated_at
+            from wallet_connections
+            where user_id = $1 and provider = $2 and status = 'active'
+            order by created_at asc
+            limit 1
+            """,
+            user_id,
+            provider,
+        )
+
+
+async def _find_tbank_share_by_symbol(token: str, symbol: str, figi: str | None = None) -> dict[str, Any] | None:
+    normalized_symbol = str(symbol or "").upper()
+
+    if figi:
+        try:
+            response = await tbank_client.get_share_by_figi(token, figi)
+            instrument = response.get("instrument", {})
+            if (
+                isinstance(instrument, dict)
+                and instrument.get("figi")
+                and _is_supported_tbank_market_share(instrument)
+            ):
+                return instrument
+        except TBankAPIError:
+            pass
+
+    cache_key = _cache_token_key(token)
+    now = datetime.now(timezone.utc)
+    cached = _tbank_shares_cache.get(cache_key)
+
+    if cached and cached["expires_at"] > now:
+        instruments = cached["items"]
+    else:
+        response = await tbank_client.get_shares(token)
+        instruments = [
+            item
+            for item in response.get("instruments", [])
+            if isinstance(item, dict) and _is_supported_tbank_market_share(item)
+        ]
+        _tbank_shares_cache[cache_key] = {
+            "items": instruments,
+            "expires_at": now + timedelta(minutes=10),
+        }
+
+    for instrument in instruments:
+        if (
+            _is_supported_tbank_market_share(instrument)
+            and str(instrument.get("ticker") or "").upper() == normalized_symbol
+        ):
+            return instrument
+
+    return None
+
+
+async def _record_trade(
+    user_id,
+    wallet_id,
+    payload: TradeRequest,
+    quantity: Decimal,
+    price: Decimal,
+    total_amount: Decimal,
+    currency: str,
+    status_value: str,
+    provider_order_id: str | None = None,
+):
+    pool = get_database_pool()
+
+    async with pool.acquire() as connection:
+        await connection.execute(
+            """
+            insert into ai_trade_history (
+                user_id, wallet_connection_id, asset_type, asset_symbol, asset_name,
+                action, quantity, price, total_amount, currency, ai_strategy,
+                ai_reason, status
+            )
+            values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+            """,
+            user_id,
+            wallet_id,
+            payload.asset_type,
+            payload.symbol.upper(),
+            payload.asset_name,
+            payload.side,
+            quantity,
+            price,
+            total_amount,
+            currency,
+            "manual_market_order",
+            provider_order_id,
+            status_value,
+        )
+
+
+async def _safe_record_trade(*args, **kwargs) -> bool:
+    try:
+        await _record_trade(*args, **kwargs)
+        return True
+    except Exception:
+        logger.exception("Failed to record provider trade in ai_trade_history")
+        return False
+
+
+async def _execute_bybit_trade(payload: TradeRequest, current_user) -> dict[str, Any]:
+    wallet = await _find_active_wallet(current_user["id"], "bybit")
+
+    if payload.side == "buy" and payload.amount is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Укажите сумму сделки для криптовалюты.",
+        )
+
+    if payload.side == "sell" and payload.quantity is None and payload.amount is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Укажите количество криптовалюты для продажи.",
+        )
+
+    if not wallet:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Для торговли криптовалютой подключите Bybit в настройках.",
+        )
+
+    symbol = payload.symbol.upper()
+    if symbol in BYBIT_STABLE_COINS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Стейблкоины нельзя открыть как торговый актив.",
+        )
+
+    if not symbol.endswith("USDT"):
+        symbol = f"{symbol}USDT"
+
+    try:
+        trade_price, instrument_rules, balances = await asyncio.gather(
+            _get_bybit_trade_price(symbol, payload.side),
+            _get_bybit_spot_rules(symbol),
+            _load_bybit_balances(wallet["api_key"], wallet["api_secret_encrypted"]),
+        )
+    except UpstreamHTTPError as error:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Не удалось проверить баланс или цену Bybit.",
+        ) from error
+
+    lot_size_filter = instrument_rules.get("lotSizeFilter") or {}
+    min_order_amount = _decimal_from_string(
+        lot_size_filter.get("minOrderAmt")
+        or lot_size_filter.get("minOrderAmount")
+        or lot_size_filter.get("minNotionalValue")
+    )
+
+    if payload.side == "buy":
+        available_quote = _get_bybit_coin_balance(balances, "USDT")
+
+        if min_order_amount > 0 and payload.amount < min_order_amount:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Минимальная сумма заявки Bybit для {symbol} — "
+                    f"{_format_decimal_for_provider(min_order_amount, 8)} USDT. "
+                    f"Увеличьте сумму сделки."
+                ),
+            )
+
+        if payload.amount > available_quote:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Недостаточно USDT для покупки.",
+            )
+
+        quantity = payload.amount / trade_price
+        provider_qty = _format_decimal_for_provider(payload.amount, 6)
+        market_unit = "quoteCoin"
+        side = "Buy"
+    else:
+        base_coin = symbol.removesuffix("USDT")
+        quantity = payload.quantity if payload.quantity is not None else payload.amount / trade_price
+        order_value = quantity * trade_price
+        available_base = _get_bybit_coin_balance(balances, base_coin)
+
+        if quantity > available_base:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Недостаточно {base_coin} для продажи.",
+            )
+
+        if min_order_amount > 0 and order_value < min_order_amount:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Минимальная сумма продажи Bybit для {symbol} — "
+                    f"{_format_decimal_for_provider(min_order_amount, 8)} USDT. "
+                    f"При текущей цене это примерно "
+                    f"{_format_decimal_for_provider(min_order_amount / trade_price, 8)} {base_coin}."
+                ),
+            )
+
+        provider_qty = _format_decimal_for_provider(quantity, 8)
+        market_unit = "baseCoin"
+        side = "Sell"
+
+    total_amount = quantity * trade_price
+
+    if quantity <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Количество для заявки должно быть больше нуля.",
+        )
+
+    try:
+        order = await bybit_client.create_order(
+            wallet["api_key"],
+            wallet["api_secret_encrypted"],
+            symbol=symbol,
+            side=side,
+            qty=provider_qty,
+            market_unit=market_unit,
+        )
+    except UpstreamHTTPError as error:
+        detail = "Bybit отклонил заявку. Проверьте торговые права API-ключа и баланс."
+        if error.ret_code == 170140:
+            detail = "Bybit отклонил заявку: сумма ниже минимального лимита для этой пары."
+        if error.ret_code:
+            detail = f"{detail} Код Bybit: {error.ret_code}."
+        if error.ret_msg:
+            detail = f"{detail} Сообщение Bybit: {error.ret_msg}."
+
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=detail,
+        ) from error
+
+    history_recorded = await _safe_record_trade(
+        current_user["id"],
+        wallet["id"],
+        payload,
+        quantity,
+        trade_price,
+        total_amount,
+        "USDT",
+        "completed",
+        str(order.get("orderId") or ""),
+    )
+    _clear_portfolio_summary_cache(current_user["id"])
+
+    return {
+        "provider": "bybit",
+        "providerLabel": PROVIDER_LABELS["bybit"],
+        "orderId": order.get("orderId"),
+        "symbol": symbol,
+        "side": payload.side,
+        "quantity": float(quantity),
+        "price": float(trade_price),
+        "totalAmount": float(total_amount),
+        "currency": "USDT",
+        "status": "completed",
+        "historyRecorded": history_recorded,
+        "message": "Заявка отправлена на Bybit.",
+    }
+
+
+async def _execute_tbank_trade(payload: TradeRequest, current_user) -> dict[str, Any]:
+    wallet = await _find_active_wallet(current_user["id"], "tbank")
+
+    if payload.lots is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Укажите количество лотов для акции.",
+        )
+
+    if not wallet:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Для торговли акциями подключите Т-Банк в настройках.",
+        )
+
+    account = await _resolve_tbank_account(wallet)
+    account_id = account.get("accountId")
+
+    if not account_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Не найден счет Т-Банка для выставления заявки.",
+        )
+
+    try:
+        instrument = await _find_tbank_share_by_symbol(
+            wallet["api_key"],
+            payload.symbol,
+            payload.figi,
+        )
+    except TBankAPIError as error:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Не удалось проверить инструмент в Т-Банке.",
+        ) from error
+
+    if not instrument:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Инструмент не найден в Т-Банке.",
+        )
+
+    instrument_id = instrument.get("uid") or instrument["figi"]
+    api_trade_available = instrument.get("apiTradeAvailableFlag") is not False
+    side_available = (
+        instrument.get("buyAvailableFlag", True)
+        if payload.side == "buy"
+        else instrument.get("sellAvailableFlag", True)
+    ) is not False
+
+    try:
+        trading_status = await tbank_client.get_trading_status(wallet["api_key"], instrument_id)
+    except TBankAPIError:
+        trading_status = {}
+
+    status_code_value = str(trading_status.get("tradingStatus") or "")
+    status_label = TBANK_TRADING_STATUS_LABELS.get(status_code_value, status_code_value or "неизвестный статус")
+    is_market_order_available = trading_status.get("marketOrderAvailableFlag") is not False
+    api_trade_available = api_trade_available and trading_status.get("apiTradeAvailableFlag") is not False
+
+    if not api_trade_available or not side_available:
+        action_label = "покупки" if payload.side == "buy" else "продажи"
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Т-Банк сейчас не разрешает API-заявки для {action_label} этого инструмента.",
+        )
+
+    if not is_market_order_available:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Рыночная заявка сейчас недоступна для этого инструмента в Т-Банке. "
+                f"Текущий статус: {status_label}."
+            ),
+        )
+
+    trade_price = await _get_tbank_trade_price(
+        wallet["api_key"],
+        instrument["figi"],
+        payload.price or Decimal("0"),
+    )
+    lot = int(instrument.get("lot") or 1)
+    lots = payload.lots
+
+    if lots <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Количество лотов должно быть больше нуля.",
+        )
+
+    direction = "ORDER_DIRECTION_BUY" if payload.side == "buy" else "ORDER_DIRECTION_SELL"
+    quantity = Decimal(str(lots * lot))
+    total_amount = quantity * trade_price
+
+    if payload.side == "buy":
+        cash_assets = await _load_tbank_cash_assets(wallet["api_key"], account_id)
+        available_rub = next(
+            (
+                Decimal(str(asset.get("availableQuantity") or asset.get("quantity") or "0"))
+                for asset in cash_assets
+                if asset.get("symbol") == "RUB"
+            ),
+            Decimal("0"),
+        )
+
+        if total_amount > available_rub:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Недостаточно рублей для покупки.",
+            )
+    else:
+        available_quantity = await _get_tbank_position_quantity(
+            wallet["api_key"],
+            account_id,
+            instrument["figi"],
+        )
+
+        if quantity > available_quantity:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Недостаточно {payload.symbol.upper()} для продажи.",
+            )
+
+    try:
+        order = await tbank_client.post_order(
+            wallet["api_key"],
+            account_id,
+            instrument_id,
+            lots,
+            direction,
+        )
+    except TBankAPIError as error:
+        detail = "Т-Банк отклонил заявку. Проверьте торговые права токена, баланс и доступность инструмента."
+        if error.detail:
+            error_detail_text = str(error.detail)
+            if "instrument is not available for trading" in error_detail_text.lower():
+                detail = (
+                    "Торги по этому инструменту сейчас недоступны в Т-Банке. "
+                    f"Текущий статус: {status_label}. Попробуйте во время торговой сессии."
+                )
+            else:
+                detail = f"{detail} Причина T-Invest: {error.detail}."
+        if error.status_code:
+            detail = f"{detail} Ответ T-Invest API: {error.status_code}."
+
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=detail,
+        ) from error
+
+    order_id = str(order.get("orderId") or order.get("order_id") or "")
+
+    history_recorded = await _safe_record_trade(
+        current_user["id"],
+        wallet["id"],
+        payload,
+        quantity,
+        trade_price,
+        total_amount,
+        "RUB",
+        "completed",
+        order_id,
+    )
+    _clear_portfolio_summary_cache(current_user["id"])
+
+    return {
+        "provider": "tbank",
+        "providerLabel": PROVIDER_LABELS["tbank"],
+        "orderId": order_id,
+        "symbol": payload.symbol.upper(),
+        "side": payload.side,
+        "quantity": float(quantity),
+        "price": float(trade_price),
+        "lots": lots,
+        "lot": lot,
+        "totalAmount": float(total_amount),
+        "currency": "RUB",
+        "status": "completed",
+        "historyRecorded": history_recorded,
+        "message": "Заявка отправлена в Т-Банк.",
+    }
+
+
 async def _serialize_tbank_asset(token: str, position: dict[str, Any]) -> dict[str, Any]:
     figi = position.get("figi")
     instrument = await _get_tbank_instrument(token, figi)
@@ -462,8 +1337,10 @@ async def _serialize_tbank_asset(token: str, position: dict[str, Any]) -> dict[s
     )
 
     return {
+        "id": figi,
         "figi": figi,
         "symbol": symbol,
+        "routeSymbol": symbol,
         "name": _normalize_tbank_name(figi, symbol, instrument),
         "shortName": symbol,
         "type": normalized_type,
@@ -472,6 +1349,7 @@ async def _serialize_tbank_asset(token: str, position: dict[str, Any]) -> dict[s
         "iconUrl": _get_tbank_icon_url(instrument, symbol, normalized_type),
         "instrumentType": instrument_type,
         "quantity": quantity,
+        "availableQuantity": quantity,
         "currentPriceRub": _decimal_to_float(current_price),
         "valueRub": _decimal_to_float(asset_value),
         "changeRub": _decimal_to_float(expected_yield),
@@ -491,12 +1369,26 @@ async def _build_tbank_wallet_summary(row) -> dict[str, Any]:
     expected_yield_percent = proto_decimal(_get(portfolio, "expectedYield", "expected_yield"))
     change_value = _portfolio_change_value(total_value, expected_yield_percent)
     positions = portfolio.get("positions", [])
-    assets = await asyncio.gather(
+    position_assets = await asyncio.gather(
         *[
             _serialize_tbank_asset(row["api_key"], position)
             for position in positions
             if isinstance(position, dict)
         ]
+    )
+    cash_assets = await _load_tbank_cash_assets(row["api_key"], account_id)
+    cash_symbols = {asset["symbol"] for asset in cash_assets}
+    assets = [
+        *cash_assets,
+        *[
+            asset
+            for asset in position_assets
+            if asset["symbol"] not in cash_symbols
+        ],
+    ]
+    assets.sort(
+        key=lambda asset: Decimal(str(asset.get("valueRub") or "0")),
+        reverse=True,
     )
 
     return {
@@ -509,7 +1401,7 @@ async def _build_tbank_wallet_summary(row) -> dict[str, Any]:
         "changeRub": _decimal_to_float(change_value),
         "changePercent": round(float(expected_yield_percent), 2),
         "assetCount": len([asset for asset in assets if asset["quantity"] != 0]),
-        "assets": assets[:12],
+        "assets": assets,
         "status": "active",
         "updatedAt": datetime.now(timezone.utc).isoformat(),
     }
@@ -559,6 +1451,11 @@ def _serialize_bybit_asset(coin: dict[str, Any], usd_rub_rate: Decimal) -> dict[
     base_coin = str(coin.get("coin") or "").upper()
     value_usd = _decimal_from_string(coin.get("usdValue"))
     equity = _decimal_from_string(coin.get("equity"))
+    available_quantity = max(
+        _decimal_from_string(coin.get("availableToWithdraw")),
+        _decimal_from_string(coin.get("walletBalance")),
+        equity,
+    )
     current_price_usd = value_usd / equity if equity > 0 else Decimal("0")
     value_rub = value_usd * usd_rub_rate
 
@@ -572,8 +1469,9 @@ def _serialize_bybit_asset(coin: dict[str, Any], usd_rub_rate: Decimal) -> dict[
         "providerLabel": PROVIDER_LABELS["bybit"],
         "iconUrl": get_coinmarketcap_icon_url(base_coin),
         "quantity": float(equity),
-        "currentPriceUsd": _decimal_to_float(current_price_usd),
-        "currentPriceRub": _decimal_to_float(current_price_usd * usd_rub_rate),
+        "availableQuantity": _decimal_to_precise_float(available_quantity, 8),
+        "currentPriceUsd": _decimal_to_precise_float(current_price_usd, 10),
+        "currentPriceRub": _decimal_to_precise_float(current_price_usd * usd_rub_rate, 8),
         "valueUsd": _decimal_to_float(value_usd),
         "valueRub": _decimal_to_float(value_rub),
     }
@@ -703,6 +1601,10 @@ async def _build_bybit_wallet_summary(row) -> dict[str, Any]:
         for coin in balance.get("coin", [])
         if isinstance(coin, dict) and _decimal_from_string(coin.get("equity")) != 0
     ]
+    assets.sort(
+        key=lambda asset: Decimal(str(asset.get("valueRub") or "0")),
+        reverse=True,
+    )
     spot_change_usd, spot_change_percent = await _calculate_bybit_spot_change(assets)
     perp_change_usd = sum(
         _decimal_from_string(balance.get("totalPerpUPL"))
@@ -729,7 +1631,7 @@ async def _build_bybit_wallet_summary(row) -> dict[str, Any]:
         "changeRub": _decimal_to_float(total_change_rub),
         "changePercent": round(float(change_percent), 2),
         "assetCount": len(assets),
-        "assets": assets[:12],
+        "assets": assets,
         "status": "active",
         "updatedAt": datetime.now(timezone.utc).isoformat(),
         "meta": {
@@ -871,6 +1773,8 @@ async def connect_tbank_wallet(payload: ConnectTBankRequest, current_user=Depend
                     }
                 )
 
+    _clear_portfolio_summary_cache(current_user["id"])
+
     return {
         "message": "Т Банк подключен.",
         "wallets": connected_wallets,
@@ -956,6 +1860,8 @@ async def connect_bybit_wallet(payload: ConnectBybitRequest, current_user=Depend
                 json.dumps(permissions),
             )
 
+    _clear_portfolio_summary_cache(current_user["id"])
+
     return {
         "message": "Bybit подключен.",
         "wallets": [
@@ -992,7 +1898,25 @@ async def delete_wallet(wallet_id: UUID, current_user=Depends(get_current_user))
             detail="Кошелек не найден.",
         )
 
+    _clear_portfolio_summary_cache(current_user["id"])
+
     return {"message": "Кошелек удален."}
+
+
+@router.post("/portfolio/trade")
+async def create_portfolio_trade(payload: TradeRequest, current_user=Depends(get_current_user)):
+    normalized_payload = payload.model_copy(
+        update={
+            "symbol": payload.symbol.strip().upper(),
+            "side": payload.side.lower(),
+            "asset_type": payload.asset_type.lower(),
+        }
+    )
+
+    if normalized_payload.asset_type == "crypto":
+        return await _execute_bybit_trade(normalized_payload, current_user)
+
+    return await _execute_tbank_trade(normalized_payload, current_user)
 
 
 @router.get("/portfolio/trades")
@@ -1013,7 +1937,8 @@ async def get_portfolio_trades(current_user=Depends(get_current_user)):
         ai_trade_rows = await connection.fetch(
             """
             select id, wallet_connection_id, asset_type, asset_symbol, asset_name,
-                   action, quantity, price, total_amount, currency, status, executed_at
+                   action, quantity, price, total_amount, currency, status, executed_at,
+                   ai_reason
             from ai_trade_history
             where user_id = $1
             order by executed_at desc
@@ -1059,8 +1984,36 @@ async def get_portfolio_trades(current_user=Depends(get_current_user)):
             "status": row["status"],
             "executedAt": row["executed_at"].isoformat(),
             "time": row["executed_at"].strftime("%H:%M"),
+            "providerOrderId": row["ai_reason"],
         }
         for row in ai_trade_rows
+    ]
+    provider_order_ids = {
+        str(trade.get("id") or "")
+        for trade in provider_trades
+        if trade.get("id")
+    }
+    provider_keys = {
+        (
+            str(trade.get("assetType") or "").lower(),
+            str(trade.get("routeSymbol") or trade.get("symbol") or "").upper(),
+            str(trade.get("action") or "").lower(),
+            round(float(trade.get("quantity") or 0), 8),
+            round(float(trade.get("totalAmount") or 0), 2),
+        )
+        for trade in provider_trades
+    }
+    ai_trades = [
+        trade
+        for trade in ai_trades
+        if str(trade.get("providerOrderId") or "") not in provider_order_ids
+        and (
+            str(trade.get("assetType") or "").lower(),
+            str(trade.get("routeSymbol") or trade.get("symbol") or "").upper(),
+            str(trade.get("action") or "").lower(),
+            round(float(trade.get("quantity") or 0), 8),
+            round(float(trade.get("totalAmount") or 0), 2),
+        ) not in provider_keys
     ]
     trades = sorted(
         [*provider_trades, *ai_trades],
@@ -1074,10 +2027,119 @@ async def get_portfolio_trades(current_user=Depends(get_current_user)):
     }
 
 
+@router.get("/portfolio/tbank/trading-status")
+async def get_tbank_trading_status(
+    symbol: str = Query(min_length=1, max_length=40),
+    figi: str | None = Query(default=None, max_length=64),
+    current_user=Depends(get_current_user),
+):
+    wallet = await _find_active_wallet(current_user["id"], "tbank")
+
+    if not wallet:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Для проверки статуса торгов подключите Т-Банк.",
+        )
+
+    try:
+        instrument = await _find_tbank_share_by_symbol(wallet["api_key"], symbol, figi)
+    except TBankAPIError as error:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Не удалось проверить инструмент в Т-Банке.",
+        ) from error
+
+    if not instrument:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Инструмент не найден в Т-Банке.",
+        )
+
+    instrument_id = instrument.get("uid") or instrument["figi"]
+
+    try:
+        trading_status = await tbank_client.get_trading_status(wallet["api_key"], instrument_id)
+    except TBankAPIError as error:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Не удалось получить торговый статус Т-Банка.",
+        ) from error
+
+    return _serialize_tbank_trading_status(
+        instrument,
+        trading_status,
+        str(instrument.get("ticker") or symbol).upper(),
+    )
+
+
+async def _load_tbank_market_statuses(
+    token: str,
+    instruments: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    token_key = _cache_token_key(token)
+    now = datetime.now(timezone.utc)
+    statuses: dict[str, dict[str, Any]] = {}
+    missing_instruments: list[dict[str, Any]] = []
+
+    for instrument in instruments:
+        figi = instrument.get("figi")
+        instrument_id = instrument.get("uid") or figi
+
+        if not figi or not instrument_id:
+            continue
+
+        cache_key = f"{token_key}:{instrument_id}"
+        cached = _tbank_trading_status_cache.get(cache_key)
+
+        if cached and cached["expires_at"] > now:
+            statuses[figi] = cached["data"]
+        else:
+            missing_instruments.append(instrument)
+
+    if not missing_instruments:
+        return statuses
+
+    semaphore = asyncio.Semaphore(4)
+
+    async def load_status(instrument: dict[str, Any]):
+        figi = instrument.get("figi")
+        instrument_id = instrument.get("uid") or figi
+
+        if not figi or not instrument_id:
+            return None
+
+        async with semaphore:
+            try:
+                trading_status = await tbank_client.get_trading_status(token, instrument_id)
+            except TBankAPIError:
+                trading_status = {}
+
+        cache_key = f"{token_key}:{instrument_id}"
+        _tbank_trading_status_cache[cache_key] = {
+            "data": trading_status,
+            "expires_at": datetime.now(timezone.utc) + timedelta(seconds=TBANK_TRADING_STATUS_CACHE_TTL_SECONDS),
+        }
+
+        return figi, trading_status
+
+    loaded_statuses = await asyncio.gather(*[
+        load_status(instrument)
+        for instrument in missing_instruments
+    ])
+
+    for result in loaded_statuses:
+        if result:
+            figi, trading_status = result
+            statuses[figi] = trading_status
+
+    return statuses
+
+
 @router.get("/portfolio/tbank/stocks")
 async def get_tbank_market_stocks(
     limit: int = Query(default=15, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
+    include_trading_status: bool = Query(default=True),
     current_user=Depends(get_current_user),
 ):
     pool = get_database_pool()
@@ -1121,9 +2183,7 @@ async def get_tbank_market_stocks(
             item
             for item in response.get("instruments", [])
             if isinstance(item, dict)
-            and item.get("figi")
-            and item.get("ticker")
-            and item.get("apiTradeAvailableFlag", True)
+            and _is_supported_tbank_market_share(item)
         ]
         instruments.sort(key=lambda item: str(item.get("ticker") or ""))
         _tbank_shares_cache[cache_key] = {
@@ -1146,11 +2206,16 @@ async def get_tbank_market_stocks(
         except TBankAPIError:
             price_map = {}
 
+    status_map = await _load_tbank_market_statuses(token, page_instruments) if include_trading_status else {}
     items = [
         formatted
         for instrument in page_instruments
-        if (formatted := _format_tbank_share(instrument, price_map))
+        if (formatted := _format_tbank_share(instrument, price_map, status_map.get(instrument.get("figi"))))
     ]
+    items = await asyncio.gather(*[
+        _enrich_tbank_share_with_moex_history(item)
+        for item in items
+    ])
 
     return {
         "items": items,
@@ -1158,6 +2223,67 @@ async def get_tbank_market_stocks(
         "limit": limit,
         "offset": offset,
         "hasMore": offset + limit < len(instruments),
+        "source": "tbank",
+        "includeTradingStatus": include_trading_status,
+    }
+
+
+@router.get("/portfolio/tbank/stocks/{symbol}")
+async def get_tbank_market_stock_detail(
+    symbol: str,
+    figi: str | None = Query(default=None),
+    current_user=Depends(get_current_user),
+):
+    wallet_row = await _find_active_wallet(current_user["id"], "tbank")
+
+    if not wallet_row:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Т Банк не подключен.",
+        )
+
+    token = wallet_row["api_key"]
+    instrument = await _find_tbank_share_by_symbol(token, symbol, figi)
+
+    if not instrument or not _is_supported_tbank_market_share(instrument):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Российская акция не найдена в подключенном портфеле Т-Банка.",
+        )
+
+    price_map: dict[str, Decimal] = {}
+    instrument_figi = instrument.get("figi")
+
+    try:
+        price_response = await tbank_client.get_last_prices(token, [instrument_figi])
+        price_map = {
+            item.get("figi"): proto_decimal(item.get("price"))
+            for item in price_response.get("lastPrices", [])
+            if isinstance(item, dict) and item.get("figi")
+        }
+    except TBankAPIError:
+        price_map = {}
+
+    try:
+        trading_status = await _get_tbank_trading_status(token, instrument)
+    except TBankAPIError:
+        trading_status = None
+
+    formatted = _format_tbank_share(instrument, price_map, trading_status)
+
+    if not formatted:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Не удалось подготовить данные акции Т-Банка.",
+        )
+
+    formatted = await _enrich_tbank_share_with_moex_history(formatted)
+
+    return {
+        **formatted,
+        "currency": "RUB",
+        "quoteCoin": "RUB",
+        "orderbook": {"bids": [], "asks": []},
         "source": "tbank",
     }
 
@@ -1259,6 +2385,20 @@ async def get_portfolio_analytics(
             """,
             current_user["id"],
         )
+        latest_total_row = await connection.fetchrow(
+            """
+            select sum(total_value) as total_value
+            from (
+                select distinct on (wallet_connection_id)
+                       wallet_connection_id,
+                       total_value
+                from portfolio_snapshots
+                where user_id = $1
+                order by wallet_connection_id, created_at desc
+            ) latest_wallet_snapshots
+            """,
+            current_user["id"],
+        )
 
     activity_by_day = {
         row["activity_day"]: int(row["activity_count"] or 0)
@@ -1288,26 +2428,57 @@ async def get_portfolio_analytics(
         for row in hourly_rows
     }
     available_years = [row["chart_year"] for row in available_year_rows]
+    latest_total_value = Decimal(str(latest_total_row["total_value"] or 0)) if latest_total_row else Decimal("0")
+
+    def fill_forward_points(
+        labels: list[str],
+        values_by_key: dict[Any, Decimal],
+        keys: list[Any],
+        fallback_value: Decimal,
+        is_future_slot: Callable[[Any], bool] | None = None,
+    ) -> list[dict[str, Any]]:
+        points: list[dict[str, Any]] = []
+        last_value = fallback_value if fallback_value > 0 else None
+
+        for label, key in zip(labels, keys):
+            if is_future_slot and is_future_slot(key):
+                points.append(_chart_point(label, None, False))
+                continue
+
+            has_snapshot = key in values_by_key
+
+            if has_snapshot:
+                last_value = values_by_key[key]
+
+            points.append(_chart_point(label, last_value, bool(last_value and last_value > 0)))
+
+        return points
 
     return {
         "activityGrid": activity_grid,
         "chart": {
-            "month": [
-                _chart_point(month_labels[index], month_by_number.get(index + 1), index + 1 in month_by_number)
-                for index in range(12)
-            ],
-            "week": [
-                _chart_point(
-                    week_labels[(week_start + timedelta(days=index)).weekday()],
-                    week_by_day.get(week_start + timedelta(days=index)),
-                    week_start + timedelta(days=index) in week_by_day,
-                )
-                for index in range(7)
-            ],
-            "day": [
-                _chart_point(slot.strftime("%H:%M"), hour_by_slot.get(slot), slot in hour_by_slot)
-                for slot in hour_slots
-            ],
+            "month": fill_forward_points(
+                month_labels,
+                month_by_number,
+                list(range(1, 13)),
+                latest_total_value if year == today.year else Decimal("0"),
+                lambda month_number: year > today.year or (year == today.year and month_number > today.month),
+            ),
+            "week": fill_forward_points(
+                [
+                    week_labels[(week_start + timedelta(days=index)).weekday()]
+                    for index in range(7)
+                ],
+                week_by_day,
+                [week_start + timedelta(days=index) for index in range(7)],
+                latest_total_value,
+            ),
+            "day": fill_forward_points(
+                [slot.strftime("%H:%M") for slot in hour_slots],
+                hour_by_slot,
+                hour_slots,
+                latest_total_value,
+            ),
         },
         "availableYears": available_years,
         "updatedAt": datetime.now(timezone.utc).isoformat(),
@@ -1315,7 +2486,20 @@ async def get_portfolio_analytics(
 
 
 @router.get("/portfolio/summary")
-async def get_portfolio_summary(current_user=Depends(get_current_user)):
+async def get_portfolio_summary(
+    force_refresh: bool = Query(default=False),
+    current_user=Depends(get_current_user),
+):
+    cache_key = _portfolio_summary_cache_key(current_user["id"])
+    now = datetime.now(timezone.utc)
+    cached = _portfolio_summary_cache.get(cache_key)
+
+    if not force_refresh and cached and cached["expires_at"] > now:
+        return {
+            **cached["data"],
+            "cached": True,
+        }
+
     pool = get_database_pool()
 
     async with pool.acquire() as connection:
@@ -1331,13 +2515,20 @@ async def get_portfolio_summary(current_user=Depends(get_current_user)):
         )
 
     if not wallet_rows:
-        return {
+        empty_summary = {
             "totalValueRub": 0,
             "changeRub": 0,
             "changePercent": 0,
             "wallets": [],
             "updatedAt": datetime.now(timezone.utc).isoformat(),
+            "cached": False,
         }
+        _portfolio_summary_cache[cache_key] = {
+            "data": empty_summary,
+            "expires_at": now + timedelta(seconds=PORTFOLIO_SUMMARY_CACHE_TTL_SECONDS),
+        }
+
+        return empty_summary
 
     wallets = await asyncio.gather(
         *[_safe_wallet_summary(row) for row in wallet_rows],
@@ -1381,10 +2572,17 @@ async def get_portfolio_summary(current_user=Depends(get_current_user)):
                     json.dumps(wallet["assets"]),
                 )
 
-    return {
+    summary = {
         "totalValueRub": _decimal_to_float(total_value),
         "changeRub": _decimal_to_float(total_change),
         "changePercent": round(float(change_percent), 2),
         "wallets": wallets,
         "updatedAt": datetime.now(timezone.utc).isoformat(),
+        "cached": False,
     }
+    _portfolio_summary_cache[cache_key] = {
+        "data": summary,
+        "expires_at": now + timedelta(seconds=PORTFOLIO_SUMMARY_CACHE_TTL_SECONDS),
+    }
+
+    return summary

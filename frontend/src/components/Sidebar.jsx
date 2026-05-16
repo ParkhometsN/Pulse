@@ -8,12 +8,34 @@ import { useCallback, useEffect, useState } from "react";
 import api from "../lib/api";
 import { getStoredUser, saveStoredUser } from "../lib/auth";
 
+const formatPercent = (value) => {
+  const number = Number(value) || 0;
+  const sign = number > 0 ? "+" : "";
+
+  return `${sign}${number.toFixed(2).replace(".", ",")}%`;
+};
+
+const getPercentTone = (value) => {
+  const number = Number(value) || 0;
+
+  if (number > 0) {
+    return "positive";
+  }
+
+  if (number < 0) {
+    return "negative";
+  }
+
+  return "neutral";
+};
+
 export default function Sidebar({ButtonExit}) {
 
 
   const location = useLocation();
   const [isopen, setIsopen] = useState(true);
   const [user, setUser] = useState(() => getStoredUser());
+  const [portfolioChangePercent, setPortfolioChangePercent] = useState(0);
 
   const userName = user
     ? `${user.firstName || ""} ${user.lastName || ""}`.trim() || user.email
@@ -32,6 +54,28 @@ export default function Sidebar({ButtonExit}) {
       .catch(() => {});
 
     return () => window.removeEventListener("pulse:user-updated", syncUser);
+  }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadPortfolioChange = () => {
+      api.get("/portfolio/summary")
+        .then((response) => {
+          if (isMounted) {
+            setPortfolioChangePercent(Number(response.data?.changePercent) || 0);
+          }
+        })
+        .catch(() => {});
+    };
+
+    loadPortfolioChange();
+    const intervalId = window.setInterval(loadPortfolioChange, 60000);
+
+    return () => {
+      isMounted = false;
+      window.clearInterval(intervalId);
+    };
   }, []);
 
   useEffect(() => {
@@ -70,6 +114,8 @@ export default function Sidebar({ButtonExit}) {
   const isActive = (path) => {
     return location.pathname === path
   }
+  const portfolioPercentText = formatPercent(portfolioChangePercent);
+  const portfolioPercentTone = getPercentTone(portfolioChangePercent);
 
 
   return (
@@ -95,7 +141,9 @@ export default function Sidebar({ButtonExit}) {
                       <div className={['text_account', 'DisabledItemsSideBar'].join(' ')}>
                         <p className="Name_Account">{userName}</p>
                         <p className="Destination">{user?.email || "Аккаунт Pulse"}</p>
-                        <p className="PersentMoney">+0,87%</p>
+                        <p className={`PersentMoney PersentMoney_${portfolioPercentTone}`}>
+                          {portfolioPercentText}
+                        </p>
                       </div>
                   </div>
                 </div>
@@ -251,8 +299,10 @@ export default function Sidebar({ButtonExit}) {
             <p className="DisabledItemsSideBar" >Pulse</p>
           </div>
           <Link to='/app' className="pr-[3vw]">
-            <div className="TodayMoney">
-              <p className="persent_money">(+0,87%)</p>
+            <div className={`TodayMoney TodayMoney_${portfolioPercentTone}`}>
+              <p className={`persent_money persent_money_${portfolioPercentTone}`}>
+                ({portfolioPercentText})
+              </p>
             </div>
           </Link>
           <Buttons onClick={toogleSidebar} type="black_prymary-t">

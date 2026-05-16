@@ -25,6 +25,14 @@ function normalizeValidationMessage(errorItem) {
 }
 
 export function getApiErrorMessage(error, fallback = "Что-то пошло не так.") {
+  if (error?.code === "ECONNABORTED" || String(error?.message || "").includes("timeout")) {
+    return "Сервер долго не отвечает. Перезапустите backend и попробуйте снова.";
+  }
+
+  if (!error?.response && error?.request) {
+    return "Сервер недоступен. Проверьте, что backend запущен.";
+  }
+
   const detail = error?.response?.data?.detail;
 
   if (typeof detail === "string") {

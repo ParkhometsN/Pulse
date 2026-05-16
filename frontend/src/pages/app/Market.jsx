@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Inputs from "../../components/UI/inputs";
 import SearchIcon from "../../assets/svg/searchicon.svg";
 import PulseSvgTag from "../../assets/svg/tagpulsegray.svg";
@@ -12,12 +12,13 @@ import LoaderAnimation from "../../components/ui/loaderAnimation";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
 const ITEMS_PER_PAGE = 15;
-const MARKET_REFRESH_INTERVAL = 15000;
+const MARKET_REFRESH_INTERVAL = 10000;
 const FAVORITES_STORAGE_KEY = "pulse_market_favorites";
 const MARKET_CACHE_MAX_AGE = 1000 * 60 * 5;
-const MARKET_PORTFOLIO_CACHE_KEY = "pulse:market:portfolio-summary:v1";
-const marketCacheKey = (type, page) => `pulse:market:${type}:page:${page}:v1`;
+const marketCacheKey = (type, page, source = "default") => `pulse:market:${type}:${source}:page:${page}:v6`;
 const STABLE_CRYPTO_SYMBOLS = new Set(["USDT", "USDC", "DAI", "USD", "BUSD"]);
+const STOCK_SOURCE_TBANK = "tbank";
+const STOCK_SOURCE_MOEX = "moex";
 
 const MARKET_STRATEGIES = [
   {
@@ -47,7 +48,7 @@ const MARKET_STRATEGIES = [
     id: "ai-long",
     title: "ИИ торговля Long",
     description:
-      "Портфель сбалансирован по отраслям экономики, а фокус внимания на недооцененных бумагах с перспективой улучшения кредитного качества.",
+      "Виртуальная стратегия ищет активы с сильным восходящим импульсом и открывает long-сделки только при вероятности сигнала от 60%.",
     tag: "Long",
     direction: "Растет",
     chartColor: "var(--green)",
@@ -68,9 +69,9 @@ const MARKET_STRATEGIES = [
   },
   {
     id: "ai-short-long",
-    title: "ИИ торговля Short + long",
+    title: "ИИ торговля Short + Long",
     description:
-      "Портфель сбалансирован по отраслям экономики, а фокус внимания на недооцененных бумагах с перспективой улучшения кредитного качества.",
+      "Гибридная стратегия сравнивает вероятность роста и падения, выбирает более сильное направление и ведет paper-портфель на 100 000 ₽.",
     tag: "Hybrid",
     direction: "Смешанный",
     chartColor: "#95959C",
@@ -114,6 +115,135 @@ const getStrategyCapital = (strategy) => {
     roi,
   };
 };
+
+const formatSignedStrategyPercent = (value) => {
+  const number = Number(value) || 0;
+  return `${number > 0 ? "+" : ""}${number.toFixed(2).replace(".", ",")}%`;
+};
+
+const getStrategyTone = (value) => {
+  const number = Number(value) || 0;
+
+  if (number > 0) {
+    return "positive";
+  }
+
+  if (number < 0) {
+    return "negative";
+  }
+
+  return "neutral";
+};
+
+const getStrategyToneColor = (tone) => {
+  if (tone === "positive") {
+    return "var(--green)";
+  }
+
+  if (tone === "negative") {
+    return "var(--red)";
+  }
+
+  return "var(--gray)";
+};
+
+const getChartRoi = (chart = []) => {
+  const firstValue = Number(chart[0]);
+  const lastValue = Number(chart[chart.length - 1]);
+
+  if (!Number.isFinite(firstValue) || firstValue <= 0 || !Number.isFinite(lastValue)) {
+    return 0;
+  }
+
+  return ((lastValue - firstValue) / firstValue) * 100;
+};
+
+const formatStrategyRunDate = (runDate) => {
+  const date = runDate ? new Date(`${runDate}T13:00:00`) : null;
+
+  if (!date || Number.isNaN(date.getTime())) {
+    return "Сегодня, 13:00";
+  }
+
+  return `${date.toLocaleDateString("ru-RU", {
+    day: "numeric",
+    month: "short",
+  })}, 13:00`;
+};
+
+const formatNumberLike = (value) => {
+  const number = Number(value);
+
+  if (!Number.isFinite(number)) {
+    return "0";
+  }
+
+  return number.toFixed(2).replace(".", ",");
+};
+
+const mergeStrategyRun = (baseStrategy, run) => {
+  if (!run) {
+    return baseStrategy;
+  }
+
+  const trades = Array.isArray(run.trades) ? run.trades : [];
+  const history = trades.length
+    ? trades.map((trade, index) => ({
+      date: `${formatStrategyRunDate(run.runDate)} · ${Math.round(Number(trade.probability) || 0)}%`,
+      asset: trade.asset || trade.name || `Сигнал ${index + 1}`,
+      side: trade.side || run.mode || baseStrategy.tag,
+      result: `${formatSignedStrategyPercent(trade.resultPercent)} · ${formatStrategyMoney(trade.virtualAmount || 0)}`,
+    }))
+    : [{
+      date: formatStrategyRunDate(run.runDate),
+      asset: "NO_SIGNAL",
+      side: "Фильтр",
+      result: "Вероятность ниже 60%",
+    }];
+
+  return {
+    ...baseStrategy,
+    chart: Array.isArray(run.chart) && run.chart.length > 1 ? run.chart : baseStrategy.chart,
+    chartColor: getStrategyToneColor(getStrategyTone(run.roi ?? getChartRoi(run.chart))),
+    history,
+    stats: [
+      { label: "Модель", value: baseStrategy.stats[0]?.value || "Pulse AI" },
+      { label: "Paper-режим", value: "100 000 ₽" },
+      { label: "Сделок сегодня", value: String(trades.length) },
+      { label: "Точность сигналов", value: `${formatNumberLike(run.accuracy)}%` },
+      { label: "Просадка", value: formatSignedStrategyPercent(run.maxDrawdown) },
+      { label: "Порог входа", value: `${run.threshold || 60}%` },
+    ],
+    paperRun: run,
+  };
+};
+
+function StrategyCardSkeleton() {
+  return (
+    <div className="marketcard_container strategy_card_skeleton" aria-label="Загружаем стратегию">
+      <div className="market_card_content">
+        <div className="imageCard strategy_skeleton_chart">
+          <LoaderAnimation height={100} rounded="15px" />
+        </div>
+        <div className="titleCardMarket">
+          <div className="textOfcard strategy_skeleton_text">
+            <span />
+            <p />
+            <p />
+          </div>
+          <div className="strategy_skeleton_button" />
+        </div>
+        <div className="wejwedf">
+          <div className="lineeeeeee"></div>
+        </div>
+        <div className="tagcardMarket">
+          <div className="strategy_skeleton_meta" />
+          <div className="strategy_skeleton_tag" />
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function StrategyLineChart({ values = [], color = "var(--primary-blue)", size = "compact" }) {
   const chartValues = values.length > 1 ? values : [0, 1];
@@ -263,10 +393,10 @@ function StrategyDrawer({ strategy, isOpen, aggression, onAggressionChange, onCl
         </div>
 
         <Buttons type="primary-full" className="strategy_connect_button">
-          Подключить стратегию
+          Paper-режим активен
         </Buttons>
         <p className="strategy_warning">
-          Информация не является инвестиционной рекомендацией. Решение о подключении стратегии вы принимаете самостоятельно.
+          Это виртуальная торговля на модельные 100 000 ₽ без реальных заявок. Информация не является инвестиционной рекомендацией.
         </p>
       </aside>
     </div>
@@ -298,7 +428,14 @@ export default function Market() {
   const [currenciesError, setCurrenciesError] = useState("");
   const [isCurrenciesLoading, setIsCurrenciesLoading] = useState(currencies.length === 0);
   const [stocks, setStocks] = useState(
-    () => readCachedValue(marketCacheKey("stocks", 1), MARKET_CACHE_MAX_AGE)?.items || []
+    () => readCachedValue(marketCacheKey("stocks", 1, STOCK_SOURCE_TBANK), MARKET_CACHE_MAX_AGE)?.items
+      || readCachedValue(marketCacheKey("stocks", 1, STOCK_SOURCE_MOEX), MARKET_CACHE_MAX_AGE)?.items
+      || []
+  );
+  const [, setStocksSource] = useState(
+    () => readCachedValue(marketCacheKey("stocks", 1, STOCK_SOURCE_TBANK), MARKET_CACHE_MAX_AGE)?.source
+      || readCachedValue(marketCacheKey("stocks", 1, STOCK_SOURCE_MOEX), MARKET_CACHE_MAX_AGE)?.source
+      || STOCK_SOURCE_MOEX
   );
   const [stocksError, setStocksError] = useState("");
   const [isStocksLoading, setIsStocksLoading] = useState(stocks.length === 0);
@@ -309,27 +446,26 @@ export default function Market() {
     () => readCachedValue(marketCacheKey("crypto", 1), MARKET_CACHE_MAX_AGE)?.total || 0
   );
   const [stocksTotal, setStocksTotal] = useState(
-    () => readCachedValue(marketCacheKey("stocks", 1), MARKET_CACHE_MAX_AGE)?.total || 0
+    () => readCachedValue(marketCacheKey("stocks", 1, STOCK_SOURCE_TBANK), MARKET_CACHE_MAX_AGE)?.total
+      || readCachedValue(marketCacheKey("stocks", 1, STOCK_SOURCE_MOEX), MARKET_CACHE_MAX_AGE)?.total
+      || 0
   );
   const [favorites, setFavorites] = useState(getInitialFavorites);
-  const [portfolioSummary, setPortfolioSummary] = useState(
-    () => readCachedValue(MARKET_PORTFOLIO_CACHE_KEY, MARKET_CACHE_MAX_AGE) || null
-  );
-  const [searchIndex, setSearchIndex] = useState([]);
-  const [isSearchFocused, setIsSearchFocused] = useState(false);
-  const [selectedStrategy, setSelectedStrategy] = useState(null);
-  const [isStrategyDrawerOpen, setIsStrategyDrawerOpen] = useState(false);
-  const [strategyAggression, setStrategyAggression] = useState(MARKET_STRATEGIES[0].aggression);
+	  const [searchIndex, setSearchIndex] = useState([]);
+	  const [isSearchLoading, setIsSearchLoading] = useState(false);
+	  const [isSearchFocused, setIsSearchFocused] = useState(false);
+  const [strategyRuns, setStrategyRuns] = useState([]);
+  const [isStrategiesLoading, setIsStrategiesLoading] = useState(activePage === "strategies");
+  const [strategiesError, setStrategiesError] = useState("");
+	  const [selectedStrategy, setSelectedStrategy] = useState(null);
+	  const [isStrategyDrawerOpen, setIsStrategyDrawerOpen] = useState(false);
+	  const [strategyAggression, setStrategyAggression] = useState(MARKET_STRATEGIES[0].aggression);
   const cryptoAbortRef = useRef(null);
   const stocksAbortRef = useRef(null);
   const cryptoRequestIdRef = useRef(0);
   const stocksRequestIdRef = useRef(0);
   const strategyCloseTimerRef = useRef(null);
   const navigate = useNavigate();
-  const hasTbankWallet = (portfolioSummary?.wallets || []).some(
-    (wallet) => wallet.provider === "tbank" && wallet.status === "active"
-  );
-
   const pages = [
     { id: "strategies", label: "Стратегии" },
     { id: "crypto", label: "Криптовалюта" },
@@ -356,11 +492,18 @@ export default function Market() {
       favoriteKey: getFavoriteKey(type, symbol),
       type,
       id: asset.id,
+      figi: asset.figi,
       symbol,
       name: asset.name,
       shortName: asset.shortName || asset.baseCoin || asset.symbol,
       baseCoin: asset.baseCoin || asset.symbol,
       iconUrl: asset.iconUrl,
+      lotSize: asset.lotSize,
+      provider: asset.provider,
+      providerLabel: asset.providerLabel,
+      tradingStatus: asset.tradingStatus,
+      isTradingOpen: asset.isTradingOpen,
+      isTradable: asset.isTradable,
       price: asset.price,
       priceChangePercent24h: asset.priceChangePercent24h,
       priceChangePercent7d: asset.priceChangePercent7d,
@@ -368,60 +511,6 @@ export default function Market() {
       chart7d: asset.chart7d || [],
     };
   }, [getFavoriteKey]);
-
-  const normalizePortfolioAsset = useCallback((asset) => {
-    const type = asset.provider === "bybit" || asset.type === "crypto" ? "crypto" : "stock";
-    const baseCoin = asset.shortName || asset.coin || asset.symbol;
-    const normalizedBaseCoin = String(baseCoin || "").toUpperCase().replace("USDT", "");
-    const symbol = type === "crypto"
-      ? STABLE_CRYPTO_SYMBOLS.has(normalizedBaseCoin)
-        ? normalizedBaseCoin
-        : asset.symbol || `${normalizedBaseCoin}USDT`
-      : asset.symbol || asset.shortName;
-    const price = type === "crypto"
-      ? asset.currentPriceUsd || asset.currentPriceRub
-      : asset.currentPriceRub;
-
-    return {
-      id: `portfolio-${asset.provider}-${symbol}`,
-      symbol,
-      name: asset.name || symbol,
-      shortName: asset.shortName || asset.coin || symbol,
-      baseCoin: type === "crypto" ? normalizedBaseCoin : asset.shortName || asset.coin || symbol,
-      iconUrl: asset.iconUrl,
-      price,
-      priceChangePercent24h: asset.changePercent,
-      priceChangePercent7d: asset.changePercent,
-      priceChangePercent30d: asset.changePercent,
-      chart7d: [],
-      isPortfolioAsset: true,
-      isTradable: !(type === "crypto" && STABLE_CRYPTO_SYMBOLS.has(normalizedBaseCoin)),
-    };
-  }, []);
-
-  const mergePortfolioAssets = useCallback((items, type) => {
-    const portfolioAssets = (portfolioSummary?.wallets || [])
-      .flatMap((wallet) => wallet.assets || [])
-      .filter((asset) => {
-        const assetType = asset.provider === "bybit" || asset.type === "crypto" ? "crypto" : "stock";
-        return assetType === type && Number(asset.valueRub) > 0;
-      })
-      .map(normalizePortfolioAsset);
-
-    if (!portfolioAssets.length) {
-      return items;
-    }
-
-    const portfolioKeys = new Set(
-      portfolioAssets.map((asset) => String(asset.symbol || asset.baseCoin || "").toUpperCase())
-    );
-    const filteredItems = items.filter((item) => {
-      const key = String(item.symbol || item.baseCoin || "").toUpperCase();
-      return !portfolioKeys.has(key);
-    });
-
-    return [...portfolioAssets, ...filteredItems];
-  }, [normalizePortfolioAsset, portfolioSummary]);
 
   const toggleFavorite = useCallback((asset) => {
     setFavorites((currentFavorites) => {
@@ -441,18 +530,41 @@ export default function Market() {
     });
   }, []);
 
-  const openAssetPage = useCallback((type, symbol) => {
-    if (type === "crypto" && STABLE_CRYPTO_SYMBOLS.has(String(symbol || "").toUpperCase())) {
-      return;
+	  const openAssetPage = useCallback((type, assetOrSymbol) => {
+	    const asset = typeof assetOrSymbol === "object" && assetOrSymbol !== null
+	      ? assetOrSymbol
+	      : null;
+	    const symbol = asset?.symbol || asset?.baseCoin || assetOrSymbol;
+	    const normalizedSymbol = String(symbol || "").trim();
+
+	    if (!normalizedSymbol) {
+	      return;
+	    }
+
+	    if (type === "crypto" && STABLE_CRYPTO_SYMBOLS.has(normalizedSymbol.toUpperCase())) {
+	      return;
+	    }
+
+	    const params = new URLSearchParams({
+	      type,
+	      symbol: normalizedSymbol,
+	    });
+
+    if (type === "stock" && asset?.figi) {
+      params.set("figi", asset.figi);
     }
 
-    navigate(`coin-page?type=${type}&symbol=${encodeURIComponent(symbol)}`);
+    if (type === "stock" && asset?.provider) {
+      params.set("source", asset.provider);
+    }
+
+    navigate(`/app/market/coin-page?${params.toString()}`);
   }, [navigate]);
 
   const openSearchResult = useCallback((asset) => {
     setSearchQuery("");
     setIsSearchFocused(false);
-    openAssetPage(asset.type, asset.symbol);
+    openAssetPage(asset.type, asset);
   }, [openAssetPage]);
 
   const openStrategy = useCallback((strategy) => {
@@ -465,8 +577,8 @@ export default function Market() {
     window.requestAnimationFrame(() => setIsStrategyDrawerOpen(true));
   }, []);
 
-  const closeStrategy = useCallback(() => {
-    setIsStrategyDrawerOpen(false);
+	  const closeStrategy = useCallback(() => {
+	    setIsStrategyDrawerOpen(false);
 
     if (strategyCloseTimerRef.current) {
       window.clearTimeout(strategyCloseTimerRef.current);
@@ -475,7 +587,13 @@ export default function Market() {
     strategyCloseTimerRef.current = window.setTimeout(() => {
       setSelectedStrategy(null);
     }, 260);
-  }, []);
+	  }, []);
+
+  const marketStrategies = useMemo(() => {
+    const runsById = new Map(strategyRuns.map((run) => [run.id, run]));
+
+    return MARKET_STRATEGIES.map((strategy) => mergeStrategyRun(strategy, runsById.get(strategy.id)));
+  }, [strategyRuns]);
 
   const renderInformationBlock = () => {
     switch (activePage) {
@@ -491,23 +609,42 @@ export default function Market() {
 
 	                <div className="cardList_marketbot">
 	                  <div className="cardmarketblocklist">
-	                    {MARKET_STRATEGIES.map((strategy) => (
-	                      <MarketCardBot
-	                        key={strategy.id}
-	                        titleCardstrategi={strategy.title}
-	                        desritioncardStrategy={strategy.description}
-	                        onClick={() => openStrategy(strategy)}
-		                        contentBottomCard={null}
-			                        ImgContentCard={
-			                          <div className="strategy_chart_preview">
-			                            <StrategyLineChart
-			                              values={strategy.chart}
-			                              color={strategy.chartColor}
-			                            />
-			                          </div>
-			                        }
-	                      />
-	                    ))}
+                        {strategiesError ? (
+                          <p className="market_error">{strategiesError}</p>
+                        ) : null}
+			                    {isStrategiesLoading && !strategyRuns.length ? (
+                          MARKET_STRATEGIES.map((strategy) => (
+                            <StrategyCardSkeleton key={`strategy-skeleton-${strategy.id}`} />
+                          ))
+                        ) : marketStrategies.map((strategy) => {
+                          const capital = getStrategyCapital(strategy);
+                          const tone = getStrategyTone(capital.roi);
+
+                          return (
+		                      <MarketCardBot
+		                        key={strategy.id}
+		                        titleCardstrategi={strategy.title}
+		                        desritioncardStrategy={strategy.description}
+		                        onClick={() => openStrategy(strategy)}
+			                        contentBottomCard={
+                              <div className="strategy_card_meta strategy_card_meta_visible">
+                                <span>{formatStrategyMoney(capital.current)}</span>
+                                <strong className={`strategy_card_roi strategy_card_roi_${tone}`}>
+                                  {formatSignedStrategyPercent(capital.roi)}
+                                </strong>
+                              </div>
+                            }
+				                        ImgContentCard={
+				                          <div className="strategy_chart_preview">
+				                            <StrategyLineChart
+				                              values={strategy.chart}
+				                              color={strategy.chartColor}
+				                            />
+				                          </div>
+				                        }
+		                      />
+		                    );
+                        })}
 	                  </div>
 	                </div>
 
@@ -624,6 +761,7 @@ export default function Market() {
                       percent_change_24h={coin.priceChangePercent24h}
                       percent_change_7d={coin.priceChangePercent7d}
                       percent_change_30d={coin.priceChangePercent30d}
+                      chartData={coin.chart7d}
                       isFavorite={isFavorite("crypto", coin.symbol || coin.baseCoin)}
                       onToggleFavorite={() => {
                         toggleFavorite(createFavoriteAsset("crypto", coin));
@@ -682,18 +820,18 @@ export default function Market() {
               <div className="coins_list">
                 {sortedStocks.map((stock, index) => {
                   return (
-                    <CointButtonMarket
-                      key={stock.id || stock.symbol || index}
-                      onClick={() => {
-                        openAssetPage("stock", stock.symbol);
-                      }}
-                      NameCoin={stock.name}
-                      NMC={stock.shortName || stock.symbol}
-                      baseCoin={stock.symbol}
-                      iconUrl={stock.iconUrl}
-                      assetType="stock"
-                      currencySymbol="₽"
-                      priceCoin={stock.price}
+	                    <CointButtonMarket
+	                      key={stock.id || stock.symbol || index}
+	                      onClick={() => {
+	                        openAssetPage("stock", stock);
+	                      }}
+	                      NameCoin={stock.name}
+	                      NMC={stock.shortName || stock.symbol}
+		                      baseCoin={stock.symbol}
+		                      iconUrl={stock.iconUrl}
+		                      assetType="stock"
+		                      currencySymbol="₽"
+	                      priceCoin={stock.price}
                       percent_change_24h={stock.priceChangePercent24h}
                       percent_change_7d={stock.priceChangePercent7d}
                       percent_change_30d={stock.priceChangePercent30d}
@@ -727,17 +865,17 @@ export default function Market() {
             ) : (
               <div className="coins_list">
                 {favorites.map((asset) => (
-                  <CointButtonMarket
-                    key={asset.favoriteKey}
-                    onClick={() => {
-                      openAssetPage(asset.type, asset.symbol);
-                    }}
+	                  <CointButtonMarket
+	                    key={asset.favoriteKey}
+	                    onClick={() => {
+	                      openAssetPage(asset.type, asset);
+	                    }}
                     NameCoin={asset.name}
                     NMC={asset.shortName}
                     baseCoin={asset.baseCoin}
-                    iconUrl={asset.iconUrl}
-                    assetType={asset.type === "stock" ? "stock" : "crypto"}
-                    currencySymbol={asset.type === "stock" ? "₽" : "$"}
+		                    iconUrl={asset.iconUrl}
+		                    assetType={asset.type === "stock" ? "stock" : "crypto"}
+		                    currencySymbol={asset.type === "stock" ? "₽" : "$"}
                     priceCoin={asset.price}
                     percent_change_24h={asset.priceChangePercent24h}
                     percent_change_7d={asset.priceChangePercent7d}
@@ -776,20 +914,29 @@ export default function Market() {
         coin?.priceChangePercent7d ?? quoteUsd?.percent_change_7d,
       priceChangePercent30d:
         coin?.priceChangePercent30d ?? quoteUsd?.percent_change_30d,
+      chart7d: coin?.chart7d || [],
+      quoteCoin: coin?.quoteCoin,
     };
   }, []);
 
-  const normalizeStock = useCallback((stock) => {
-    return {
-      id: stock?.id,
-      symbol: stock?.symbol,
-      name: stock?.name || stock?.shortName || stock?.symbol,
-      shortName: stock?.shortName || stock?.symbol,
-      baseCoin: stock?.symbol,
-      iconUrl: stock?.iconUrl,
-      price: stock?.price,
-      priceChangePercent24h: stock?.priceChangePercent24h,
-      priceChangePercent7d: stock?.priceChangePercent7d,
+	  const normalizeStock = useCallback((stock) => {
+	    return {
+	      id: stock?.id,
+	      figi: stock?.figi,
+	      symbol: stock?.symbol,
+	      name: stock?.name || stock?.shortName || stock?.symbol,
+	      shortName: stock?.shortName || stock?.symbol,
+	      baseCoin: stock?.symbol,
+	      iconUrl: stock?.iconUrl,
+	      lotSize: stock?.lotSize || stock?.lot || 1,
+	      provider: stock?.provider,
+	      providerLabel: stock?.providerLabel,
+	      tradingStatus: stock?.tradingStatus,
+	      isTradingOpen: stock?.isTradingOpen,
+	      isTradable: stock?.isTradable,
+	      price: stock?.price,
+	      priceChangePercent24h: stock?.priceChangePercent24h,
+	      priceChangePercent7d: stock?.priceChangePercent7d,
       priceChangePercent30d: stock?.priceChangePercent30d,
       chart7d: stock?.chart7d || [],
     };
@@ -855,12 +1002,13 @@ export default function Market() {
 
   const fetchStocks = useCallback(() => {
     stocksAbortRef.current?.abort();
-    const stockSource = hasTbankWallet ? "stocks:tbank" : "stocks";
-    const cachedPage = readCachedValue(marketCacheKey(stockSource, stocksPage), MARKET_CACHE_MAX_AGE);
+    const cachedPage = readCachedValue(marketCacheKey("stocks", stocksPage, STOCK_SOURCE_TBANK), MARKET_CACHE_MAX_AGE)
+      || readCachedValue(marketCacheKey("stocks", stocksPage, STOCK_SOURCE_MOEX), MARKET_CACHE_MAX_AGE);
 
     if (cachedPage) {
       setStocks(cachedPage.items || []);
       setStocksTotal(cachedPage.total || 0);
+      setStocksSource(cachedPage.source || STOCK_SOURCE_MOEX);
       setIsStocksLoading(false);
     }
 
@@ -870,29 +1018,59 @@ export default function Market() {
     stocksAbortRef.current = controller;
     stocksRequestIdRef.current = requestId;
 
-    api
-      .get(hasTbankWallet ? "/portfolio/tbank/stocks" : "/stocks", {
+    const requestParams = {
+      limit: ITEMS_PER_PAGE,
+      offset: (stocksPage - 1) * ITEMS_PER_PAGE,
+    };
+    const loadBrokerStocks = () => api
+      .get("/portfolio/tbank/stocks", {
         params: {
-          limit: ITEMS_PER_PAGE,
-          offset: (stocksPage - 1) * ITEMS_PER_PAGE,
+          ...requestParams,
+          include_trading_status: true,
         },
         signal: controller.signal,
+      })
+      .then((response) => ({
+        response,
+        source: STOCK_SOURCE_TBANK,
+      }));
+    const loadMoexStocks = () => api
+      .get("/stocks", {
+        params: requestParams,
+        signal: controller.signal,
+      })
+      .then((response) => ({
+        response,
+        source: STOCK_SOURCE_MOEX,
+      }));
+
+    loadBrokerStocks()
+      .catch((error) => {
+        if (error.code === "ERR_CANCELED") {
+          throw error;
+        }
+
+        return loadMoexStocks();
       })
       .then((response) => {
         if (requestId !== stocksRequestIdRef.current) {
           return;
         }
 
-        const data = Array.isArray(response.data)
-          ? response.data
-          : response.data.items || [];
+        const source = response.source || STOCK_SOURCE_MOEX;
+        const payload = response.response?.data;
+        const data = Array.isArray(payload)
+          ? payload
+          : payload?.items || [];
         const nextStocks = data.map(normalizeStock);
-        const nextTotal = response.data.total || data.length;
+        const nextTotal = payload?.total || data.length;
         setStocks(nextStocks);
         setStocksTotal(nextTotal);
-        writeCachedValue(marketCacheKey(stockSource, stocksPage), {
+        setStocksSource(source);
+        writeCachedValue(marketCacheKey("stocks", stocksPage, source), {
           items: nextStocks,
           total: nextTotal,
+          source,
         });
         setStocksError("");
       })
@@ -901,7 +1079,7 @@ export default function Market() {
           return;
         }
 
-        setStocksError(hasTbankWallet ? "Не удалось загрузить акции из Т-Банка" : "Не удалось загрузить акции");
+        setStocksError("Не удалось загрузить акции");
       })
       .finally(() => {
         if (requestId !== stocksRequestIdRef.current) {
@@ -910,49 +1088,45 @@ export default function Market() {
 
         setIsStocksLoading(false);
       });
-  }, [hasTbankWallet, normalizeStock, stocksPage]);
+  }, [normalizeStock, stocksPage]);
 
-  const fetchSearchIndex = useCallback(() => {
-    const controller = new AbortController();
+  const fetchSearchIndex = useCallback(async () => {
+    if (searchIndex.length > 0) {
+      return searchIndex;
+    }
 
-    Promise.all([
-      api.get("/cryptocurrencies/search-index", {
-        signal: controller.signal,
-      }),
-      api.get("/stocks/search-index", {
-        signal: controller.signal,
-      }),
-    ])
-      .then(([cryptoResponse, stocksResponse]) => {
-        const cryptoItems = cryptoResponse.data?.items || [];
-        const stockItems = stocksResponse.data?.items || [];
+    setIsSearchLoading(true);
 
-        setSearchIndex([...cryptoItems, ...stockItems]);
-      })
-      .catch((error) => {
-        if (error.code === "ERR_CANCELED") {
-          return;
-        }
+	    try {
+	      const [cryptoResponse, stocksResponse] = await Promise.all([
+	        api.get("/cryptocurrencies/search-index"),
+	        api.get("/portfolio/tbank/stocks", {
+	          params: {
+	            limit: 100,
+	            offset: 0,
+	            include_trading_status: false,
+	          },
+	        }).catch(() => api.get("/stocks/search-index")),
+	      ]);
+	      const cryptoItems = cryptoResponse.data?.items || [];
+	      const stockItems = (stocksResponse.data?.items || []).map((stock) => ({
+	        ...stock,
+	        type: "stock",
+	      }));
+	      const nextIndex = [...cryptoItems, ...stockItems];
 
-        setSearchIndex([]);
-      });
+      setSearchIndex(nextIndex);
+      return nextIndex;
+    } catch {
+      setSearchIndex([]);
+      return [];
+    } finally {
+      setIsSearchLoading(false);
+    }
+  }, [searchIndex]);
 
-    return () => controller.abort();
-  }, []);
-
-  const fetchPortfolioSummary = useCallback(() => {
-    api.get("/portfolio/summary")
-      .then((response) => {
-        setPortfolioSummary(response.data);
-        writeCachedValue(MARKET_PORTFOLIO_CACHE_KEY, response.data);
-      })
-      .catch(() => {
-        setPortfolioSummary((currentSummary) => currentSummary);
-      });
-  }, []);
-
-  const getSearchRank = useCallback((asset) => {
-    const query = searchQuery.trim().toLowerCase();
+  const getSearchRank = useCallback((asset, rawQuery = searchQuery) => {
+    const query = rawQuery.trim().toLowerCase();
 
     if (!query) {
       return 0;
@@ -993,26 +1167,47 @@ export default function Market() {
     return 0;
   }, [searchQuery]);
 
-  const sortedCurrencies = mergePortfolioAssets(currencies, "crypto");
+  const getRankedSearchResults = useCallback((items, rawQuery) => {
+    return items
+      .map((asset, index) => ({
+        asset,
+        index,
+        rank: getSearchRank(asset, rawQuery),
+      }))
+      .filter((item) => item.rank > 0)
+      .sort((a, b) => {
+        if (b.rank !== a.rank) {
+          return b.rank - a.rank;
+        }
 
-  const sortedStocks = mergePortfolioAssets(stocks, "stock");
+        return a.index - b.index;
+      })
+      .map((item) => item.asset);
+  }, [getSearchRank]);
 
-  const searchResults = searchIndex
-    .map((asset, index) => ({
-      asset,
-      index,
-      rank: getSearchRank(asset),
-    }))
-    .filter((item) => item.rank > 0)
-    .sort((a, b) => {
-      if (b.rank !== a.rank) {
-        return b.rank - a.rank;
-      }
+  const runSearchSubmit = useCallback(async () => {
+    const query = searchQuery.trim();
 
-      return a.index - b.index;
-    })
-    .slice(0, 8)
-    .map((item) => item.asset);
+    if (!query) {
+      return;
+    }
+
+    const items = await fetchSearchIndex();
+    const [firstResult] = getRankedSearchResults(items, query);
+
+    if (firstResult) {
+      openSearchResult(firstResult);
+      return;
+    }
+
+    setIsSearchFocused(true);
+  }, [fetchSearchIndex, getRankedSearchResults, openSearchResult, searchQuery]);
+
+  const sortedCurrencies = currencies;
+
+  const sortedStocks = stocks;
+
+  const searchResults = getRankedSearchResults(searchIndex, searchQuery).slice(0, 8);
 
   const cryptoTotalPages = Math.max(
     1,
@@ -1137,10 +1332,6 @@ export default function Market() {
   };
 
   useEffect(() => {
-    fetchPortfolioSummary();
-  }, [fetchPortfolioSummary]);
-
-  useEffect(() => {
     if (activePage !== "crypto") {
       cryptoAbortRef.current?.abort();
       return;
@@ -1187,6 +1378,45 @@ export default function Market() {
   }, [activePage, fetchStocks]);
 
   useEffect(() => {
+    if (activePage !== "strategies") {
+      return;
+    }
+
+    let isMounted = true;
+    const loadingTimer = window.setTimeout(() => {
+      if (isMounted) {
+        setIsStrategiesLoading(true);
+      }
+    }, 0);
+
+    api
+      .get("/ai/strategies")
+      .then((response) => {
+        if (!isMounted) {
+          return;
+        }
+
+        setStrategyRuns(response.data?.items || []);
+        setStrategiesError("");
+      })
+      .catch(() => {
+        if (isMounted) {
+          setStrategiesError("Не удалось обновить paper-стратегии. Показываю последнюю локальную модель.");
+        }
+      })
+      .finally(() => {
+        if (isMounted) {
+          setIsStrategiesLoading(false);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+      window.clearTimeout(loadingTimer);
+    };
+  }, [activePage]);
+
+  useEffect(() => {
     return () => {
       if (strategyCloseTimerRef.current) {
         window.clearTimeout(strategyCloseTimerRef.current);
@@ -1222,6 +1452,12 @@ export default function Market() {
                       fetchSearchIndex();
                     }
                   }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      runSearchSubmit();
+                    }
+                  }}
                   onBlur={() => {
                     setTimeout(() => setIsSearchFocused(false), 120);
                   }}
@@ -1231,7 +1467,11 @@ export default function Market() {
                 />
                 {isSearchFocused && searchQuery.trim() && (
                   <div className="market_search_results">
-                    {searchResults.length > 0 ? (
+                    {isSearchLoading ? (
+                      <div className="market_search_empty">
+                        Ищем активы...
+                      </div>
+                    ) : searchResults.length > 0 ? (
                       searchResults.map((asset) => (
                         <button
                           className="market_search_result"

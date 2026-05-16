@@ -8,6 +8,7 @@ import json
 import secrets
 import smtplib
 import re
+import asyncpg
 from uuid import UUID
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
@@ -198,15 +199,28 @@ async def get_current_user(authorization: str | None = Header(default=None)):
 
     payload = _decode_access_token(authorization.split(" ", 1)[1])
     pool = get_database_pool()
-    async with pool.acquire() as connection:
-        user = await connection.fetchrow(
-            """
-            select id, first_name, last_name, email, avatar_url, is_email_verified
-            from users
-            where id = $1
-            """,
-            UUID(payload["sub"]),
-        )
+    user = None
+
+    for attempt in range(2):
+        try:
+            async with pool.acquire() as connection:
+                user = await connection.fetchrow(
+                    """
+                    select id, first_name, last_name, email, avatar_url, is_email_verified
+                    from users
+                    where id = $1
+                    """,
+                    UUID(payload["sub"]),
+                )
+            break
+        except (asyncpg.ConnectionDoesNotExistError, asyncpg.InterfaceError):
+            if attempt == 1:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Соединение с базой данных временно недоступно. Повторите запрос.",
+                ) from None
+
+            await asyncio.sleep(0.1)
 
     if not user:
         raise HTTPException(

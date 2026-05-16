@@ -1,4 +1,5 @@
 import asyncio
+import re
 import time
 from datetime import date, timedelta
 
@@ -119,15 +120,32 @@ def get_change_from_candles(price, candles: list, days: int):
 
 
 def get_stock_icon_url(secid: str | None):
-    if not secid:
-        return None
+    return None
 
-    domain = STOCK_DOMAINS.get(secid.upper())
 
-    if not domain:
-        return None
+def normalize_stock_name(value: str | None, fallback: str | None = None) -> str:
+    text = str(value or fallback or "").strip()
+    if not text:
+        return ""
 
-    return f"https://icons.duckduckgo.com/ip3/{domain}.ico"
+    replacements = {
+        r"\(ПАО\)": "",
+        r"\(ОАО\)": "",
+        r"\bПАО\b": "",
+        r"\bОАО\b": "",
+        r"\bао\b": "",
+        r"\bап\b": "",
+    }
+
+    for pattern, replacement in replacements.items():
+        text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+
+    text = text.replace("росс.авиалин", "Российские авиалинии")
+    text = re.sub(r"\s+", " ", text)
+    text = re.sub(r"\s*-\s*", " - ", text)
+    text = text.strip(" -")
+
+    return text or str(fallback or "").strip()
 
 
 async def get_cached_moex_data(cache_key: str, loader, ttl_seconds: int):
@@ -194,6 +212,8 @@ async def get_stock_candles(
 def format_stock(security: dict, marketdata: dict, candles: list):
     secid = security.get("SECID")
     price = to_float(marketdata.get("LAST") or marketdata.get("LCURRENTPRICE"))
+    short_name = normalize_stock_name(security.get("SHORTNAME"), secid)
+    full_name = normalize_stock_name(security.get("SECNAME"), short_name)
 
     if price == 0 and candles:
         price = candles[-1].get("close", 0)
@@ -201,9 +221,10 @@ def format_stock(security: dict, marketdata: dict, candles: list):
     return {
         "id": secid,
         "symbol": secid,
-        "name": security.get("SECNAME") or security.get("SHORTNAME") or secid,
-        "shortName": security.get("SHORTNAME") or secid,
+        "name": full_name,
+        "shortName": short_name,
         "baseCoin": secid,
+        "lotSize": int(to_float(security.get("LOTSIZE"), 1) or 1),
         "iconUrl": get_stock_icon_url(secid),
         "price": price,
         "priceChangePercent24h": to_float(marketdata.get("LASTCHANGEPRCNT")),

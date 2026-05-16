@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -8,15 +9,27 @@ from src.stocks_router import router as router_stocks
 from src.news_router import router as router_news
 from src.auth_router import router as router_auth
 from src.wallets_router import router as router_wallets
+from src.ai_router import paper_strategy_scheduler, router as router_ai
 from src.database import close_database, connect_database, ensure_auth_schema
 from src.init import bybit_client, coingecko_client, moex_client, tbank_client
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await connect_database()
-    await ensure_auth_schema()
-    yield
+    await asyncio.wait_for(connect_database(), timeout=15)
+    await asyncio.wait_for(ensure_auth_schema(), timeout=30)
+    stop_strategy_scheduler = asyncio.Event()
+    strategy_scheduler_task = asyncio.create_task(paper_strategy_scheduler(stop_strategy_scheduler))
+
+    try:
+        yield
+    finally:
+        stop_strategy_scheduler.set()
+        strategy_scheduler_task.cancel()
+        try:
+            await strategy_scheduler_task
+        except asyncio.CancelledError:
+            pass
     await close_database()
     await bybit_client.close()
     await moex_client.close()
@@ -31,6 +44,7 @@ app.include_router(router_stocks)
 app.include_router(router_news)
 app.include_router(router_auth)
 app.include_router(router_wallets)
+app.include_router(router_ai)
 
 # Health check endpoint
 @app.get("/health")

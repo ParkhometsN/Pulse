@@ -12,17 +12,27 @@ const MARKET_MOOD_CACHE_KEY = "pulse:news:market-mood:v1";
 const NEWS_CACHE_MAX_AGE = 1000 * 60 * 30;
 const MARKET_MOOD_CACHE_MAX_AGE = 1000 * 60 * 10;
 
-const DEFAULT_MARKET_MOOD = {
-  current: { value: 50, label: "Нейтрально", date: "2026-05-11" },
-  history: {
-    yesterday: { value: 50, label: "Нейтрально", date: "2026-05-10" },
-    weekAgo: { value: 50, label: "Нейтрально", date: "2026-05-04" },
-    monthAgo: { value: 50, label: "Нейтрально", date: "2026-04-11" },
-  },
-  year: {
-    max: { value: 50, label: "Нейтрально", date: "2026-05-11" },
-    min: { value: 50, label: "Нейтрально", date: "2026-05-11" },
-  },
+const createDefaultMarketMood = () => {
+  const today = new Date();
+  const toDateKey = (date) => date.toISOString().slice(0, 10);
+  const shiftDays = (days) => {
+    const nextDate = new Date(today);
+    nextDate.setDate(today.getDate() - days);
+    return toDateKey(nextDate);
+  };
+
+  return {
+    current: { value: 50, label: "Нейтрально", date: toDateKey(today) },
+    history: {
+      yesterday: { value: 50, label: "Нейтрально", date: shiftDays(1) },
+      weekAgo: { value: 50, label: "Нейтрально", date: shiftDays(7) },
+      monthAgo: { value: 50, label: "Нейтрально", date: shiftDays(30) },
+    },
+    year: {
+      max: { value: 50, label: "Нейтрально", date: toDateKey(today) },
+      min: { value: 50, label: "Нейтрально", date: toDateKey(today) },
+    },
+  };
 };
 
 const NEWS_SOURCES = [
@@ -74,6 +84,33 @@ function NewsListLoader() {
   );
 }
 
+const normalizeMoodItem = (item, fallbackItem) => {
+  const value = Math.min(100, Math.max(0, Number(item?.value ?? fallbackItem.value) || 0));
+
+  return {
+    value,
+    label: item?.label || fallbackItem.label,
+    date: item?.date || fallbackItem.date,
+  };
+};
+
+const normalizeMarketMood = (mood) => {
+  const fallback = createDefaultMarketMood();
+
+  return {
+    current: normalizeMoodItem(mood?.current, fallback.current),
+    history: {
+      yesterday: normalizeMoodItem(mood?.history?.yesterday, fallback.history.yesterday),
+      weekAgo: normalizeMoodItem(mood?.history?.weekAgo, fallback.history.weekAgo),
+      monthAgo: normalizeMoodItem(mood?.history?.monthAgo, fallback.history.monthAgo),
+    },
+    year: {
+      max: normalizeMoodItem(mood?.year?.max, fallback.year.max),
+      min: normalizeMoodItem(mood?.year?.min, fallback.year.min),
+    },
+  };
+};
+
 const formatMoodValue = (item) => `${item.label} - ${item.value}`;
 
 const formatMoodDate = (value) => {
@@ -109,7 +146,7 @@ export default function News() {
   const [newsItems, setNewsItems] = useState(() => getInitialNewsFeed().items);
   const [seenNewsIds, setSeenNewsIds] = useState(() => readCachedValue(NEWS_SEEN_KEY, Infinity) || []);
   const [marketMood, setMarketMood] = useState(
-    () => readCachedValue(MARKET_MOOD_CACHE_KEY, MARKET_MOOD_CACHE_MAX_AGE) || DEFAULT_MARKET_MOOD
+    () => normalizeMarketMood(readCachedValue(MARKET_MOOD_CACHE_KEY, MARKET_MOOD_CACHE_MAX_AGE))
   );
   const [hasMore, setHasMore] = useState(() => getInitialNewsFeed().hasMore);
   const [isLoading, setIsLoading] = useState(false);
@@ -199,11 +236,11 @@ export default function News() {
   const loadMarketMood = useCallback(async () => {
     try {
       const response = await api.get("/news/market-mood");
-      const nextMarketMood = response.data || DEFAULT_MARKET_MOOD;
+      const nextMarketMood = normalizeMarketMood(response.data);
       setMarketMood(nextMarketMood);
       writeCachedValue(MARKET_MOOD_CACHE_KEY, nextMarketMood);
     } catch {
-      setMarketMood((currentMood) => currentMood || DEFAULT_MARKET_MOOD);
+      setMarketMood((currentMood) => normalizeMarketMood(currentMood));
     }
   }, []);
 

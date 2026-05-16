@@ -1,3 +1,5 @@
+import CoinIcon from "./coinIcon";
+
 export default function BuysellCardMinicard({
   sourceLabel = "Bybit",
   name = "Ethereum",
@@ -8,26 +10,20 @@ export default function BuysellCardMinicard({
   change = "+0,58 ₽ (0,87%)",
   changeTone = "positive",
   time = "",
+  assetType = "crypto",
   onClick,
 }) {
-  const fallbackLabel = (symbol || name || "?").slice(0, 2).toUpperCase();
-
   return (
     <button type="button" className="containerbuttonbusell" onClick={onClick}>
       <div className="idificatorCointbuysell">
         <div className="itemtitleimg">
-          <span className="sellbuy_asset_icon" aria-hidden="true">
-            <span>{fallbackLabel}</span>
-            {icon ? (
-              <img
-                src={icon}
-                alt=""
-                onError={(event) => {
-                  event.currentTarget.style.display = "none";
-                }}
-              />
-            ) : null}
-          </span>
+          <CoinIcon
+            baseCoin={symbol}
+            iconUrl={icon}
+            label={name}
+            type={assetType}
+            className="sellbuy_asset_icon"
+          />
           <div className="name_coinbuysell">
             <h1>{name}</h1>
             <p className="NMC">
