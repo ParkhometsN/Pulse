@@ -1,33 +1,29 @@
-# Build stage
-FROM node:20-alpine as builder
+# Base stage: install dependencies and copy source
+FROM node:20-alpine AS base
 
 WORKDIR /app
 
-# Copy package files
 COPY package*.json ./
-
-# Install dependencies
 RUN npm ci
 
-# Copy application code
 COPY . .
 
-# Build the application
+FROM base AS dev
+
+EXPOSE 5173
+CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
+
+FROM base AS builder
+
+ARG VITE_API_BASE_URL=/api
+ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
+
 RUN npm run build
 
-# Production stage
-FROM node:20-alpine
+FROM nginx:alpine AS production
 
-WORKDIR /app
+COPY --from=builder /app/dist /usr/share/nginx/html
+COPY nginx.conf /etc/nginx/nginx.conf
 
-# Install serve to run the built application
-RUN npm install -g serve
-
-# Copy built files from builder
-COPY --from=builder /app/dist ./dist
-
-# Expose port
-EXPOSE 5173
-
-# Run the application
-CMD ["serve", "-s", "dist", "-l", "5173"]
+EXPOSE 80 443
+CMD ["nginx", "-g", "daemon off;"]

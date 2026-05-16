@@ -21,6 +21,11 @@ app = FastAPI(lifespan=lifespan)
 app.include_router(router_crypto)
 app.include_router(router_stocks)
 
+# Health check endpoint
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy"}
+
 origins = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
@@ -28,6 +33,11 @@ origins = [
     "http://127.0.0.1:5174",
     "http://localhost:5176",
     "http://127.0.0.1:5176",
+    "http://91.229.11.184",
+    "http://pulse-investment.ru",
+    "https://pulse-investment.ru",
+    "http://www.pulse-investment.ru",
+    "https://www.pulse-investment.ru",
     "http://frontend:5173",  # Docker container
     "http://localhost:8000",  # Docker localhost
     "http://127.0.0.1:8000",

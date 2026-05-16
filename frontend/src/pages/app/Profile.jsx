@@ -1,6 +1,6 @@
 import Buttons from "../../components/ui/buttons";
 import GoogleSvg from "../../assets/svg/svg_google.svg";
-import Inputs from "../../components/ui/inputs.jsx";
+import Inputs from "../../components/ui/inputs";
 
 export default function Profile() {
   return (

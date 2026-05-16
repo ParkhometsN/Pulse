@@ -28,7 +28,7 @@ import {
 import { useState } from "react";
 import AreYouShure from "../../components/ui/DilogShure";
 import Buttons from "../../components/ui/buttons";
-import Inputs from "../../components/ui/inputs.jsx";
+import Inputs from "../../components/ui/inputs";
 import { Trash2 } from "lucide-react"; // Добавьте импорт иконки
 
 export default function Settings() {

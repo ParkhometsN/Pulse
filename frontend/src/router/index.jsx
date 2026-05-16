@@ -10,12 +10,12 @@ import Settings from "../pages/app/Settings";
 
 import AppLayout from "../layouts/AppLayout";
 
-import Register from "../pages/public/Register.jsx";
+import Register from "../pages/public/Register";
 
-import ForgotPassword from "../pages/public/ForgotPassword.jsx";
+import ForgotPassword from "../pages/public/ForgotPassword";
 
-import Profile from "../pages/app/Profile.jsx";
-import CoinPage from "../pages/app/coinPage.jsx";
+import Profile from "../pages/app/Profile";
+import CoinPage from "../pages/app/coinPage";
 
 export default function Router() {
   return (

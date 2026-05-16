@@ -1,4 +1,4 @@
-import CoinIcon from "./coinIcon.jsx";
+import CoinIcon from "./coinIcon";
 
 const getSmoothPath = (points) => {
   if (points.length < 2) {

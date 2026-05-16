@@ -5,38 +5,38 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: pulse_backend
+    environment:
+      - ENVIRONMENT=production
     ports:
       - "8000:8000"
-    environment:
-      - PYTHONUNBUFFERED=1
-    volumes:
-      - ./backend/src:/app/src
-    command: uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
     networks:
       - pulse_network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
 
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-    container_name: pulse_frontend
-    ports:
-      - "5173:5173"
+      args:
+        VITE_API_BASE_URL: /api
     environment:
-      - VITE_API_URL=http://backend:8000
+      - NODE_ENV=production
+      - VITE_API_BASE_URL=/api
+    ports:
+      - "80:80"
+      - "443:443"
     volumes:
-      - ./frontend/src:/app/src
-      - ./frontend/index.html:/app/index.html
-    networks:
-      - pulse_network
+      - ./SSL:/etc/nginx/ssl:ro
     depends_on:
       - backend
+    networks:
+      - pulse_network
+    restart: unless-stopped
 
 networks:
   pulse_network:

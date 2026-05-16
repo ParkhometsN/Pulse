@@ -13,12 +13,12 @@ import PulseSvgTag from "../../assets/svg/tagpulsegray.svg";
 import LogoSvg from "../../assets/svg/pulse_logo.svg";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useSearchParams } from "react-router-dom";
-import axios from "axios";
+import api from "../../lib/api";
 import { Link} from "react-router-dom";
 
-import LoaderAnimation from "../../components/ui/loaderAnimation.jsx";
+import LoaderAnimation from "../../components/ui/loaderAnimation";
 import Buttons from "../../components/ui/buttons";
-import CoinIcon from "../../components/ui/coinIcon.jsx";
+import CoinIcon from "../../components/ui/coinIcon";
 import TextAlert from "../../components/ui/TextAlert";
 
 const ASSET_REFRESH_INTERVAL = 1000;
@@ -596,7 +596,7 @@ export default function CoinPage() {
     requestIdRef.current = requestId;
     isRequestRunningRef.current = true;
 
-    axios
+    api
       .get(targetEndpoint, { signal: controller.signal })
       .then((response) => {
         if (
@@ -877,7 +877,7 @@ export default function CoinPage() {
         interval: rangeSettings.interval || "D",
       };
 
-    axios
+    api
       .get(chartEndpoint, {
         params,
         signal: controller.signal,

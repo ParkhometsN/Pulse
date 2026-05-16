@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import Inputs from "../../components/ui/inputs.jsx";
+import Inputs from "../../components/ui/inputs";
 import SearchIcon from "../../assets/svg/searchicon.svg";
 import PulseSvgTag from "../../assets/svg/tagpulsegray.svg";
 import Buttons from "../../components/ui/buttons";
-import MarketCardBot from "../../components/ui/marketCard.jsx";
-import CointButtonMarket from "../../components/ui/cointmarketButton.jsx";
-import CoinIcon from "../../components/ui/coinIcon.jsx";
-import axios from "axios";
-import LoaderAnimation from "../../components/ui/loaderAnimation.jsx";
+import MarketCardBot from "../../components/ui/marketCard";
+import CointButtonMarket from "../../components/ui/cointmarketButton";
+import CoinIcon from "../../components/ui/coinIcon";
+import api from "../../lib/api";
+import LoaderAnimation from "../../components/ui/loaderAnimation";
 import { useNavigate } from "react-router-dom";
 
 const ITEMS_PER_PAGE = 15;
@@ -442,8 +442,8 @@ export default function Market() {
     cryptoAbortRef.current = controller;
     cryptoRequestIdRef.current = requestId;
 
-    axios
-      .get("http://127.0.0.1:8000/cryptocurrencies", {
+    api
+      .get("/cryptocurrencies", {
         params: {
           limit: ITEMS_PER_PAGE,
           offset: (cryptoPage - 1) * ITEMS_PER_PAGE,
@@ -488,8 +488,8 @@ export default function Market() {
     stocksAbortRef.current = controller;
     stocksRequestIdRef.current = requestId;
 
-    axios
-      .get("http://127.0.0.1:8000/stocks", {
+    api
+      .get("/stocks", {
         params: {
           limit: ITEMS_PER_PAGE,
           offset: (stocksPage - 1) * ITEMS_PER_PAGE,
@@ -528,12 +528,12 @@ export default function Market() {
   const fetchSearchIndex = useCallback(() => {
     const controller = new AbortController();
 
-    axios
+    api
       .all([
-        axios.get("http://127.0.0.1:8000/cryptocurrencies/search-index", {
+        api.get("/cryptocurrencies/search-index", {
           signal: controller.signal,
         }),
-        axios.get("http://127.0.0.1:8000/stocks/search-index", {
+        api.get("/stocks/search-index", {
           signal: controller.signal,
         }),
       ])
