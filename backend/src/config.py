@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     cors_origins: str | None = None
 
     jwt_secret: str = DEFAULT_JWT_SECRET
+    masive_key: str | None = None
     jwt_expires_minutes: int = 60 * 24 * 7
 
     smtp_host: str | None = None
@@ -46,6 +47,10 @@ class Settings(BaseSettings):
     @property
     def resolved_database_url(self) -> str | None:
         return self.pulse_database_url or self.database_url
+
+    @property
+    def resolved_jwt_secret(self) -> str:
+        return self.jwt_secret if self.jwt_secret != DEFAULT_JWT_SECRET else (self.masive_key or self.jwt_secret)
 
     @property
     def is_production(self) -> bool:
@@ -67,13 +72,15 @@ class Settings(BaseSettings):
         ]
 
     def validate_runtime(self) -> None:
+        jwt_secret = self.resolved_jwt_secret
+
         if self.is_production and (
-            not self.jwt_secret
-            or self.jwt_secret == DEFAULT_JWT_SECRET
-            or len(self.jwt_secret) < 32
+            not jwt_secret
+            or jwt_secret == DEFAULT_JWT_SECRET
+            or len(jwt_secret) < 32
         ):
             raise RuntimeError(
-                "JWT_SECRET must be set to a unique 32+ character value in production"
+                "JWT_SECRET or legacy MASIVE_KEY must be set to a unique 32+ character value in production"
             )
 
 

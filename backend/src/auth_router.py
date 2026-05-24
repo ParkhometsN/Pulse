@@ -146,7 +146,7 @@ def _create_access_token(user_id: str, email: str) -> str:
         ]
     )
     signature = hmac.new(
-        settings.jwt_secret.encode("utf-8"),
+        settings.resolved_jwt_secret.encode("utf-8"),
         signing_input.encode("utf-8"),
         hashlib.sha256,
     ).digest()
@@ -159,7 +159,7 @@ def _decode_access_token(token: str) -> dict[str, Any]:
         header_raw, payload_raw, signature_raw = token.split(".", 2)
         signing_input = f"{header_raw}.{payload_raw}"
         expected_signature = hmac.new(
-            settings.jwt_secret.encode("utf-8"),
+            settings.resolved_jwt_secret.encode("utf-8"),
             signing_input.encode("utf-8"),
             hashlib.sha256,
         ).digest()
@@ -233,7 +233,7 @@ async def get_current_user(authorization: str | None = Header(default=None)):
 
 def _hash_reset_code(code: str) -> str:
     return hmac.new(
-        settings.jwt_secret.encode("utf-8"),
+        settings.resolved_jwt_secret.encode("utf-8"),
         code.encode("utf-8"),
         hashlib.sha256,
     ).hexdigest()
