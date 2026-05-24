@@ -28,6 +28,7 @@ from src.wallets_router import (
     _find_active_wallet,
     _find_tbank_share_by_symbol,
     _format_tbank_share,
+    _get_tbank_icon_url,
     _get_tbank_trading_status,
 )
 
@@ -35,12 +36,31 @@ from src.wallets_router import (
 router = APIRouter(tags=["ai"])
 MOSCOW_TZ = timezone(timedelta(hours=3))
 PAPER_START_CAPITAL = 100_000.0
+PAPER_USD_RUB_RATE = 92.0
+PAPER_STRATEGY_SCHEMA_VERSION = 4
+PAPER_STRATEGY_IDS = ("ai-short", "ai-long", "ai-short-long")
+PAPER_UNIVERSES = {"crypto", "stocks", "mixed"}
+PAPER_RISK_PROFILES = {"careful", "balanced", "active"}
+PAPER_TAKE_PROFIT_PERCENT = 1.2
+PAPER_STOP_LOSS_PERCENT = -0.8
+PAPER_MAX_HOLD_MINUTES = 240
+PAPER_RISK_MAX_ALLOCATION = {
+    "careful": 0.10,
+    "balanced": 0.14,
+    "active": 0.18,
+}
 
 
 class SaveAISettingsRequest(BaseModel):
     provider: str = Field(default="openai", max_length=40)
     api_key: str | None = Field(default=None, max_length=255)
     model: str = Field(default="gpt-4.1-mini", max_length=120)
+
+
+class ConnectPaperStrategyRequest(BaseModel):
+    virtual_capital: float = Field(default=PAPER_START_CAPITAL, gt=0, le=100_000_000)
+    universe: str = Field(default="mixed", max_length=30)
+    risk_profile: str = Field(default="balanced", max_length=30)
 
 
 def _mask_api_key(value: str | None) -> str | None:
@@ -499,6 +519,125 @@ async def _store_asset_score(
         )
 
 
+async def _load_strategy_connection(user_id: Any, strategy_id: str) -> dict[str, Any] | None:
+    pool = get_database_pool()
+
+    async with pool.acquire() as connection:
+        row = await connection.fetchrow(
+            """
+            select strategy_id, virtual_capital, universe, risk_profile, is_active, connected_at, updated_at
+            from ai_strategy_connections
+            where user_id = $1 and strategy_id = $2 and is_active = true
+            """,
+            user_id,
+            strategy_id,
+        )
+
+    if not row:
+        return None
+
+    return {
+        "strategyId": row["strategy_id"],
+        "virtualCapital": float(row["virtual_capital"] or PAPER_START_CAPITAL),
+        "universe": row["universe"],
+        "riskProfile": row["risk_profile"],
+        "isActive": row["is_active"],
+        "connectedAt": row["connected_at"].isoformat() if row["connected_at"] else None,
+        "updatedAt": row["updated_at"].isoformat() if row["updated_at"] else None,
+    }
+
+
+async def _record_paper_strategy_trades(user_id: Any, strategy_id: str, payload: dict[str, Any]) -> None:
+    trades = payload.get("trades") or []
+    if not trades:
+        return
+
+    pool = get_database_pool()
+
+    async with pool.acquire() as connection:
+        for trade in trades:
+            trade_key = (
+                f"paper_strategy:{strategy_id}:{payload.get('runDate')}:"
+                f"{trade.get('asset')}:{trade.get('side')}:{trade.get('executedAt')}"
+            )
+            executed_at = trade.get("executedAt") or payload.get("startedAt")
+            if isinstance(executed_at, str):
+                try:
+                    executed_at = datetime.fromisoformat(executed_at)
+                except ValueError:
+                    executed_at = datetime.now(timezone.utc)
+
+            await connection.execute(
+                """
+                insert into ai_trade_history (
+                    user_id, wallet_connection_id, asset_type, asset_symbol, asset_name,
+                    action, quantity, price, total_amount, currency, ai_strategy,
+                    ai_reason, status, executed_at
+                )
+                select $1, null, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'completed', $12
+                where not exists (
+                    select 1
+                    from ai_trade_history
+                    where user_id = $1 and ai_reason = $11
+                )
+                """,
+                user_id,
+                trade.get("assetType") or "crypto",
+                trade.get("asset"),
+                trade.get("name") or trade.get("asset"),
+                "sell" if trade.get("side") == "Short" else "buy",
+                trade.get("quantity") or 0,
+                trade.get("entryPrice") or 0,
+                trade.get("virtualAmount") or 0,
+                trade.get("settlementCurrency") or "RUB",
+                f"paper_{strategy_id}",
+                trade_key,
+                executed_at or datetime.now(timezone.utc),
+            )
+
+            if trade.get("status") != "closed" or not trade.get("closedAt"):
+                continue
+
+            close_key = (
+                f"paper_strategy_close:{strategy_id}:{payload.get('runDate')}:"
+                f"{trade.get('asset')}:{trade.get('side')}:{trade.get('closedAt')}"
+            )
+            closed_at = trade.get("closedAt")
+            if isinstance(closed_at, str):
+                try:
+                    closed_at = datetime.fromisoformat(closed_at)
+                except ValueError:
+                    closed_at = datetime.now(timezone.utc)
+
+            await connection.execute(
+                """
+                insert into ai_trade_history (
+                    user_id, wallet_connection_id, asset_type, asset_symbol, asset_name,
+                    action, quantity, price, total_amount, currency, ai_strategy,
+                    ai_reason, status, executed_at
+                )
+                select $1, null, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'completed', $12
+                where not exists (
+                    select 1
+                    from ai_trade_history
+                    where user_id = $1 and ai_reason = $11
+                )
+                """,
+                user_id,
+                trade.get("assetType") or "crypto",
+                trade.get("asset"),
+                trade.get("name") or trade.get("asset"),
+                "buy" if trade.get("side") == "Short" else "sell",
+                trade.get("quantity") or 0,
+                trade.get("currentPrice") or trade.get("exitPrice") or trade.get("entryPrice") or 0,
+                (trade.get("virtualAmount") or 0) + (trade.get("resultAmount") or 0),
+                trade.get("settlementCurrency") or "RUB",
+                f"paper_{strategy_id}",
+                close_key,
+                closed_at or datetime.now(timezone.utc),
+            )
+
+
 def _strategy_run_date() -> date:
     now = datetime.now(MOSCOW_TZ)
     current_day = now.date()
@@ -506,20 +645,120 @@ def _strategy_run_date() -> date:
     return current_day if now.hour >= 13 else current_day - timedelta(days=1)
 
 
-async def _load_strategy_candidates() -> list[dict[str, Any]]:
+def _strategy_start_datetime(run_date: date) -> datetime:
+    return datetime(
+        year=run_date.year,
+        month=run_date.month,
+        day=run_date.day,
+        hour=13,
+        minute=0,
+        tzinfo=MOSCOW_TZ,
+    )
+
+
+def _strategy_now() -> datetime:
+    return datetime.now(MOSCOW_TZ)
+
+
+def _strategy_asset_matches_universe(asset: dict[str, Any], universe: str) -> bool:
+    asset_type = asset.get("assetType") or "crypto"
+
+    if universe == "crypto":
+        return asset_type == "crypto"
+
+    if universe == "stocks":
+        return asset_type == "stock"
+
+    return asset_type in {"crypto", "stock"}
+
+
+def _paper_price_rate(asset_type: str, quote_currency: str) -> float:
+    if asset_type == "stock" or quote_currency == "RUB":
+        return 1.0
+
+    return PAPER_USD_RUB_RATE
+
+
+def _parse_strategy_datetime(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return value
+
+    if not isinstance(value, str) or not value:
+        return None
+
+    try:
+        parsed = datetime.fromisoformat(value)
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=MOSCOW_TZ)
+    except ValueError:
+        return None
+
+
+def _strategy_candidates_by_symbol(candidates: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    return {
+        str(candidate.get("symbol") or "").upper(): candidate
+        for candidate in candidates
+        if candidate.get("symbol")
+    }
+
+
+def _calculate_short_probability(score_payload: dict[str, Any]) -> float:
+    factors = score_payload.get("factors") or {}
+    change_1d = to_float(factors.get("change1d"))
+    change_7d = to_float(factors.get("change7d"))
+    change_30d = to_float(factors.get("change30d"))
+    liquidity = to_float(factors.get("liquidity"))
+    risk = to_float(factors.get("risk"))
+    bearish_momentum = (
+        max(-change_1d, 0) * 2.4
+        + max(-change_7d, 0) * 1.15
+        + max(-change_30d, 0) * 0.45
+    )
+    bullish_penalty = (
+        max(change_1d, 0) * 1.35
+        + max(change_7d, 0) * 0.65
+        + max(change_30d, 0) * 0.25
+    )
+
+    return _clamp(
+        50 + bearish_momentum - bullish_penalty + (liquidity - 50) * 0.12 + (risk - 50) * 0.08,
+        0,
+        100,
+    )
+
+
+async def _load_strategy_candidates(user_id: Any | None = None) -> list[dict[str, Any]]:
     candidates: list[dict[str, Any]] = []
+    tbank_token: str | None = None
+
+    if user_id:
+        try:
+            tbank_wallet = await _find_active_wallet(user_id, "tbank")
+            tbank_token = tbank_wallet["api_key"] if tbank_wallet else None
+        except Exception:
+            tbank_token = None
 
     try:
         tickers = await bybit_client.get_tickers("spot")
-        crypto_tickers = sorted(
-            [
-                item for item in tickers
-                if str(item.get("symbol") or "").endswith("USDT")
-                and str(item.get("symbol") or "").removesuffix("USDT") not in {"USDT", "USDC", "DAI", "BUSD"}
-            ],
+        tradable_tickers = [
+            item for item in tickers
+            if str(item.get("symbol") or "").endswith("USDT")
+            and str(item.get("symbol") or "").removesuffix("USDT") not in {"USDT", "USDC", "DAI", "BUSD"}
+        ]
+        top_by_turnover = sorted(
+            tradable_tickers,
             key=lambda item: to_float(item.get("turnover24h")),
             reverse=True,
-        )[:14]
+        )[:18]
+        top_fallers = sorted(
+            tradable_tickers,
+            key=lambda item: to_float(item.get("price24hPcnt")),
+        )[:18]
+        crypto_tickers = {
+            str(item.get("symbol") or ""): item
+            for item in [*top_by_turnover, *top_fallers]
+            if item.get("symbol")
+        }.values()
+
         for item in crypto_tickers:
             symbol = str(item.get("symbol") or "")
             base = symbol.removesuffix("USDT")
@@ -558,6 +797,16 @@ async def _load_strategy_candidates() -> list[dict[str, Any]]:
             try:
                 candles = await get_stock_candles(item["SECID"], "TQBR", days=35)
                 stock = format_stock(securities_map[item["SECID"]], item, candles)
+                if tbank_token:
+                    try:
+                        instrument = await _find_tbank_share_by_symbol(tbank_token, item["SECID"])
+                        if instrument:
+                            stock["figi"] = instrument.get("figi")
+                            stock["lotSize"] = int(instrument.get("lot") or stock.get("lotSize") or 1)
+                            stock["iconUrl"] = _get_tbank_icon_url(instrument, stock["symbol"], "stock")
+                            stock["provider"] = "tbank"
+                    except Exception:
+                        pass
                 return {**stock, "assetType": "stock"}
             except Exception:
                 return None
@@ -570,61 +819,118 @@ async def _load_strategy_candidates() -> list[dict[str, Any]]:
     return candidates
 
 
-def _build_strategy_payload(strategy_id: str, candidates: list[dict[str, Any]]) -> dict[str, Any]:
+def _build_strategy_payload(
+    strategy_id: str,
+    candidates: list[dict[str, Any]],
+    run_date: date,
+    start_capital: float = PAPER_START_CAPITAL,
+    connection: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     config = {
         "ai-short": {"title": "ИИ торговля Short", "mode": "short", "color": "var(--red)"},
         "ai-long": {"title": "ИИ торговля Long", "mode": "long", "color": "var(--green)"},
         "ai-short-long": {"title": "ИИ торговля Short + Long", "mode": "hybrid", "color": "var(--primary-blue)"},
     }[strategy_id]
-    ranked = []
+    long_ranked = []
+    short_ranked = []
+    connection = connection or {}
+    universe = str(connection.get("universe") or "mixed").lower()
+    risk_profile = str(connection.get("riskProfile") or connection.get("risk_profile") or "balanced").lower()
+    max_allocation = PAPER_RISK_MAX_ALLOCATION.get(risk_profile, PAPER_RISK_MAX_ALLOCATION["balanced"])
 
     for asset in candidates:
+        if not _strategy_asset_matches_universe(asset, universe):
+            continue
+
         score_payload = _calculate_asset_score(asset)
         long_probability = score_payload["score"]
-        short_probability = 100 - long_probability
+        short_probability = _calculate_short_probability(score_payload)
         mode = config["mode"]
-        probability = (
-            short_probability if mode == "short"
-            else max(long_probability, short_probability) if mode == "hybrid"
-            else long_probability
+
+        if mode in {"long", "hybrid"} and long_probability >= 60:
+            long_ranked.append((long_probability, "Long", asset, score_payload))
+
+        if mode in {"short", "hybrid"} and short_probability >= 60:
+            short_ranked.append((short_probability, "Short", asset, score_payload))
+
+    long_ranked.sort(key=lambda item: item[0], reverse=True)
+    short_ranked.sort(key=lambda item: item[0], reverse=True)
+
+    if config["mode"] == "hybrid":
+        selected = [*long_ranked[:1], *short_ranked[:1]]
+        rest = sorted(
+            [*long_ranked[1:4], *short_ranked[1:4]],
+            key=lambda item: item[0],
+            reverse=True,
         )
-        side = "Short" if (mode == "short" or (mode == "hybrid" and short_probability > long_probability)) else "Long"
+        for item in rest:
+            if len(selected) >= 5:
+                break
+            selected.append(item)
+    else:
+        selected = (short_ranked if config["mode"] == "short" else long_ranked)[:5]
 
-        if probability >= 60:
-            ranked.append((probability, side, asset, score_payload))
-
-    ranked.sort(key=lambda item: item[0], reverse=True)
-    selected = ranked[:5]
-    capital = PAPER_START_CAPITAL
+    now = _strategy_now()
+    scheduled_at = _strategy_start_datetime(run_date)
+    start_at = now if run_date == now.date() else scheduled_at
+    normalized_start_capital = max(float(start_capital or PAPER_START_CAPITAL), 1)
+    capital = normalized_start_capital
     chart = [round(capital, 2)]
+    chart_points = [{
+        "time": start_at.isoformat(),
+        "value": round(capital, 2),
+        "label": "Старт",
+    }]
     trades = []
 
-    for probability, side, asset, score_payload in selected:
-        change = to_float(asset.get("priceChangePercent24h"))
-        result_percent = change if side == "Long" else -change
-        allocation = capital * min(0.24, 0.10 + probability / 700)
-        pnl = allocation * result_percent / 100
-        capital += pnl
-        chart.append(round(capital, 2))
+    for index, (probability, side, asset, score_payload) in enumerate(selected):
+        entry_price = to_float(asset.get("price"))
+        allocation = normalized_start_capital * min(max_allocation, 0.055 + max(probability - 60, 0) / 900)
+        asset_type = asset.get("assetType") or "crypto"
+        quote_currency = "RUB" if asset_type == "stock" else "USDT"
+        price_currency_rate = _paper_price_rate(asset_type, quote_currency)
+        quantity = allocation / (entry_price * price_currency_rate) if entry_price > 0 else 0
+        executed_at = start_at + timedelta(seconds=index + 1)
         trades.append({
             "asset": asset.get("symbol"),
             "name": asset.get("name") or asset.get("shortName") or asset.get("symbol"),
-            "assetType": asset.get("assetType"),
+            "assetType": asset_type,
             "side": side,
             "probability": round(probability, 2),
-            "entryPrice": asset.get("price"),
+            "entryPrice": round(entry_price, 8),
+            "currentPrice": round(entry_price, 8),
+            "exitPrice": round(entry_price, 8),
+            "quantity": round(quantity, 10),
+            "quoteCurrency": quote_currency,
+            "settlementCurrency": "RUB",
             "virtualAmount": round(allocation, 2),
-            "resultPercent": round(result_percent, 2),
-            "resultAmount": round(pnl, 2),
+            "resultPercent": 0,
+            "resultAmount": 0,
             "signal": score_payload["signal"],
+            "status": "open",
+            "closeReason": None,
             "iconUrl": asset.get("iconUrl"),
+            "executedAt": executed_at.isoformat(),
+            "routeSymbol": asset.get("symbol"),
         })
 
     if not trades:
-        chart.extend([PAPER_START_CAPITAL] * 4)
+        chart.extend([normalized_start_capital] * 4)
+        chart_points.append({
+            "time": (start_at + timedelta(seconds=1)).isoformat(),
+            "value": round(capital, 2),
+            "label": "Нет сигнала",
+        })
+    else:
+        chart.append(round(capital, 2))
+        chart_points.append({
+            "time": (start_at + timedelta(seconds=max(len(trades), 1))).isoformat(),
+            "value": round(capital, 2),
+            "label": "Позиции открыты",
+        })
 
-    profit = capital - PAPER_START_CAPITAL
-    roi = (profit / PAPER_START_CAPITAL) * 100
+    profit = capital - normalized_start_capital
+    roi = (profit / normalized_start_capital) * 100
     wins = sum(1 for trade in trades if trade["resultAmount"] > 0)
     accuracy = wins / len(trades) * 100 if trades else 0
     peak = chart[0]
@@ -634,57 +940,153 @@ def _build_strategy_payload(strategy_id: str, candidates: list[dict[str, Any]]) 
         drawdown = (value - peak) / peak * 100 if peak else 0
         max_drawdown = min(max_drawdown, drawdown)
 
-    while len(chart) < 12:
-        drift = roi / max(12 - len(chart), 1)
-        chart.append(round(chart[-1] * (1 + drift / 100), 2))
-
     return {
         "id": strategy_id,
         "title": config["title"],
         "mode": config["mode"],
         "chartColor": config["color"],
-        "startCapital": PAPER_START_CAPITAL,
+        "startCapital": round(normalized_start_capital, 2),
         "currentCapital": round(capital, 2),
         "profit": round(profit, 2),
         "roi": round(roi, 2),
         "accuracy": round(accuracy, 2),
         "maxDrawdown": round(max_drawdown, 2),
         "chart": chart[:12],
+        "chartPoints": chart_points[:12],
         "trades": trades,
         "threshold": 60,
+        "schemaVersion": PAPER_STRATEGY_SCHEMA_VERSION,
+        "connection": connection,
+        "startedAt": start_at.isoformat(),
         "updatedAt": datetime.now(timezone.utc).isoformat(),
     }
 
 
-async def _get_or_create_strategy_run(user_id: Any, strategy_id: str) -> dict[str, Any]:
-    run_date = _strategy_run_date()
-    pool = get_database_pool()
+def _mark_strategy_to_market(payload: dict[str, Any], candidates: list[dict[str, Any]]) -> dict[str, Any]:
+    candidate_map = _strategy_candidates_by_symbol(candidates)
+    start_capital = float(payload.get("startCapital") or PAPER_START_CAPITAL)
+    updated_trades = []
+    total_pnl = 0.0
 
-    async with pool.acquire() as connection:
-        row = await connection.fetchrow(
-            """
-            select strategy_id, run_date, start_capital, current_capital, roi,
-                   accuracy, max_drawdown, chart, trades, metadata, created_at
-            from ai_paper_strategy_runs
-            where user_id = $1 and strategy_id = $2 and run_date = $3
-            """,
-            user_id,
-            strategy_id,
-            run_date,
-        )
+    for trade in payload.get("trades") or []:
+        if trade.get("status") == "closed":
+            total_pnl += to_float(trade.get("resultAmount"))
+            updated_trades.append(trade)
+            continue
 
-    if row:
-        metadata = row["metadata"] if isinstance(row["metadata"], dict) else json.loads(row["metadata"])
-        return {
-            **metadata,
-            "id": row["strategy_id"],
-            "runDate": row["run_date"].isoformat(),
-            "chart": row["chart"] if isinstance(row["chart"], list) else json.loads(row["chart"]),
-            "trades": row["trades"] if isinstance(row["trades"], list) else json.loads(row["trades"]),
+        symbol = str(trade.get("routeSymbol") or trade.get("asset") or "").upper()
+        candidate = candidate_map.get(symbol)
+        current_price = to_float(candidate.get("price")) if candidate else to_float(trade.get("currentPrice") or trade.get("entryPrice"))
+        entry_price = to_float(trade.get("entryPrice"))
+        quantity = to_float(trade.get("quantity"))
+        virtual_amount = to_float(trade.get("virtualAmount"))
+        asset_type = trade.get("assetType") or "crypto"
+        quote_currency = trade.get("quoteCurrency") or ("RUB" if asset_type == "stock" else "USDT")
+        price_currency_rate = _paper_price_rate(asset_type, quote_currency)
+
+        if entry_price <= 0 or current_price <= 0 or quantity <= 0:
+            pnl = 0.0
+        elif trade.get("side") == "Short":
+            pnl = quantity * (entry_price - current_price) * price_currency_rate
+        else:
+            pnl = quantity * (current_price - entry_price) * price_currency_rate
+
+        result_percent = (pnl / virtual_amount) * 100 if virtual_amount else 0
+        status_value = "open"
+        close_reason = None
+        closed_at = None
+        opened_at = _parse_strategy_datetime(trade.get("executedAt"))
+        hold_minutes = ((_strategy_now() - opened_at).total_seconds() / 60) if opened_at else 0
+
+        if result_percent >= PAPER_TAKE_PROFIT_PERCENT:
+            status_value = "closed"
+            close_reason = "take_profit"
+            closed_at = _strategy_now().isoformat()
+        elif result_percent <= PAPER_STOP_LOSS_PERCENT:
+            status_value = "closed"
+            close_reason = "stop_loss"
+            closed_at = _strategy_now().isoformat()
+        elif hold_minutes >= PAPER_MAX_HOLD_MINUTES and abs(result_percent) >= 0.25:
+            status_value = "closed"
+            close_reason = "time_exit"
+            closed_at = _strategy_now().isoformat()
+
+        total_pnl += pnl
+        updated_trades.append({
+            **trade,
+            "currentPrice": round(current_price, 8),
+            "exitPrice": round(current_price, 8),
+            "resultPercent": round(result_percent, 2),
+            "resultAmount": round(pnl, 2),
+            "status": status_value,
+            "closeReason": close_reason,
+            "closedAt": closed_at,
+            "updatedAt": _strategy_now().isoformat(),
+        })
+
+    current_capital = start_capital + total_pnl
+    chart = payload.get("chart") if isinstance(payload.get("chart"), list) else []
+    chart = [float(value) for value in chart if isinstance(value, (int, float))]
+    chart_points = payload.get("chartPoints") if isinstance(payload.get("chartPoints"), list) else []
+    now = _strategy_now()
+    last_point_time = _parse_strategy_datetime(chart_points[-1].get("time")) if chart_points else None
+    next_point = {
+        "time": now.isoformat(),
+        "value": round(current_capital, 2),
+        "label": "Переоценка",
+    }
+
+    if not chart:
+        chart = [round(start_capital, 2)]
+
+    if not chart_points:
+        started_at = _parse_strategy_datetime(payload.get("startedAt")) or now
+        chart_points = [{
+            "time": started_at.isoformat(),
+            "value": round(start_capital, 2),
+            "label": "Старт",
+        }]
+
+    if not last_point_time or (now - last_point_time).total_seconds() >= 60 * 10:
+        chart.append(round(current_capital, 2))
+        chart_points.append(next_point)
+    else:
+        chart[-1] = round(current_capital, 2)
+        chart_points[-1] = {
+            **chart_points[-1],
+            **next_point,
         }
 
-    candidates = await _load_strategy_candidates()
-    payload = _build_strategy_payload(strategy_id, candidates)
+    chart = chart[-48:]
+    chart_points = chart_points[-48:]
+    wins = sum(1 for trade in updated_trades if to_float(trade.get("resultAmount")) > 0)
+    accuracy = wins / len(updated_trades) * 100 if updated_trades else 0
+    peak = chart[0] if chart else start_capital
+    max_drawdown = 0.0
+
+    for value in chart:
+        peak = max(peak, value)
+        drawdown = (value - peak) / peak * 100 if peak else 0
+        max_drawdown = min(max_drawdown, drawdown)
+
+    profit = current_capital - start_capital
+
+    return {
+        **payload,
+        "currentCapital": round(current_capital, 2),
+        "profit": round(profit, 2),
+        "roi": round((profit / start_capital) * 100 if start_capital else 0, 2),
+        "accuracy": round(accuracy, 2),
+        "maxDrawdown": round(max_drawdown, 2),
+        "chart": chart,
+        "chartPoints": chart_points,
+        "trades": updated_trades,
+        "updatedAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+async def _persist_strategy_run(user_id: Any, strategy_id: str, run_date: date, payload: dict[str, Any]) -> None:
+    pool = get_database_pool()
 
     async with pool.acquire() as connection:
         await connection.execute(
@@ -695,6 +1097,7 @@ async def _get_or_create_strategy_run(user_id: Any, strategy_id: str) -> dict[st
             )
             values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11::jsonb)
             on conflict (user_id, strategy_id, run_date) do update set
+                start_capital = excluded.start_capital,
                 current_capital = excluded.current_capital,
                 roi = excluded.roi,
                 accuracy = excluded.accuracy,
@@ -715,6 +1118,72 @@ async def _get_or_create_strategy_run(user_id: Any, strategy_id: str) -> dict[st
             json.dumps(payload["trades"]),
             json.dumps(payload),
         )
+
+
+async def _get_or_create_strategy_run(
+    user_id: Any,
+    strategy_id: str,
+    start_capital: float | None = None,
+    force_reset: bool = False,
+) -> dict[str, Any]:
+    run_date = _strategy_run_date()
+    pool = get_database_pool()
+    connection_settings = await _load_strategy_connection(user_id, strategy_id)
+    configured_capital = float(
+        start_capital
+        or (connection_settings.get("virtualCapital") if connection_settings else None)
+        or PAPER_START_CAPITAL
+    )
+
+    async with pool.acquire() as connection:
+        row = await connection.fetchrow(
+            """
+            select strategy_id, run_date, start_capital, current_capital, roi,
+                   accuracy, max_drawdown, chart, trades, metadata, created_at
+            from ai_paper_strategy_runs
+            where user_id = $1 and strategy_id = $2 and run_date = $3
+            """,
+            user_id,
+            strategy_id,
+            run_date,
+        )
+
+    if row and not force_reset:
+        metadata = row["metadata"] if isinstance(row["metadata"], dict) else json.loads(row["metadata"])
+        existing_capital = float(metadata.get("startCapital") or row["start_capital"] or PAPER_START_CAPITAL)
+        should_reuse = (
+            metadata.get("schemaVersion") == PAPER_STRATEGY_SCHEMA_VERSION
+            and abs(existing_capital - configured_capital) < 0.01
+        )
+        if should_reuse:
+            strategy_payload = {
+                **metadata,
+                "id": row["strategy_id"],
+                "runDate": row["run_date"].isoformat(),
+                "chart": row["chart"] if isinstance(row["chart"], list) else json.loads(row["chart"]),
+                "trades": row["trades"] if isinstance(row["trades"], list) else json.loads(row["trades"]),
+                "connection": connection_settings or metadata.get("connection"),
+            }
+            candidates = await _load_strategy_candidates(user_id)
+            updated_payload = _mark_strategy_to_market(strategy_payload, candidates)
+            await _persist_strategy_run(user_id, strategy_id, run_date, updated_payload)
+            await _record_paper_strategy_trades(user_id, strategy_id, updated_payload)
+            return {
+                **updated_payload,
+            }
+
+    candidates = await _load_strategy_candidates(user_id)
+    payload = _build_strategy_payload(
+        strategy_id,
+        candidates,
+        run_date,
+        configured_capital,
+        connection_settings,
+    )
+    payload["runDate"] = run_date.isoformat()
+
+    await _persist_strategy_run(user_id, strategy_id, run_date, payload)
+    await _record_paper_strategy_trades(user_id, strategy_id, payload)
 
     return {**payload, "runDate": run_date.isoformat()}
 
@@ -894,10 +1363,9 @@ async def get_ai_asset_summary(
 
 @router.get("/ai/strategies")
 async def get_ai_strategies(current_user=Depends(get_current_user)):
-    strategy_ids = ["ai-short", "ai-long", "ai-short-long"]
     items = await asyncio.gather(*[
         _get_or_create_strategy_run(current_user["id"], strategy_id)
-        for strategy_id in strategy_ids
+        for strategy_id in PAPER_STRATEGY_IDS
     ])
 
     return {
@@ -909,18 +1377,78 @@ async def get_ai_strategies(current_user=Depends(get_current_user)):
     }
 
 
+@router.post("/ai/strategies/{strategy_id}/connect")
+async def connect_ai_strategy(
+    strategy_id: str,
+    payload: ConnectPaperStrategyRequest,
+    current_user=Depends(get_current_user),
+):
+    if strategy_id not in PAPER_STRATEGY_IDS:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Стратегия не найдена")
+
+    universe = payload.universe.strip().lower()
+    risk_profile = payload.risk_profile.strip().lower()
+
+    if universe not in PAPER_UNIVERSES:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Неизвестный рынок стратегии")
+
+    if risk_profile not in PAPER_RISK_PROFILES:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Неизвестный риск-профиль")
+
+    virtual_capital = max(float(payload.virtual_capital), 1.0)
+    pool = get_database_pool()
+
+    async with pool.acquire() as connection:
+        await connection.execute(
+            """
+            insert into ai_strategy_connections (
+                user_id, strategy_id, virtual_capital, universe, risk_profile, is_active
+            )
+            values ($1, $2, $3, $4, $5, true)
+            on conflict (user_id, strategy_id) do update set
+                virtual_capital = excluded.virtual_capital,
+                universe = excluded.universe,
+                risk_profile = excluded.risk_profile,
+                is_active = true,
+                updated_at = now()
+            """,
+            current_user["id"],
+            strategy_id,
+            virtual_capital,
+            universe,
+            risk_profile,
+        )
+
+    strategy_run = await _get_or_create_strategy_run(
+        current_user["id"],
+        strategy_id,
+        virtual_capital,
+        force_reset=True,
+    )
+
+    return {
+        "connected": True,
+        "strategyId": strategy_id,
+        "connection": {
+            "virtualCapital": virtual_capital,
+            "universe": universe,
+            "riskProfile": risk_profile,
+        },
+        "strategy": strategy_run,
+    }
+
+
 async def run_due_paper_strategies_for_all_users() -> None:
     pool = get_database_pool()
 
     async with pool.acquire() as connection:
         rows = await connection.fetch("select id from users")
 
-    strategy_ids = ["ai-short", "ai-long", "ai-short-long"]
     for row in rows:
         user_id = row["id"]
         await asyncio.gather(*[
             _get_or_create_strategy_run(user_id, strategy_id)
-            for strategy_id in strategy_ids
+            for strategy_id in PAPER_STRATEGY_IDS
         ], return_exceptions=True)
 
 

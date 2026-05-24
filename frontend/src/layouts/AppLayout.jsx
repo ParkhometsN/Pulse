@@ -10,6 +10,7 @@ import AreYouShure from "../components/ui/DilogShure";
 
 const MARQUEE_CACHE_KEY = "pulse:app-layout:marquee:v1";
 const MARQUEE_CACHE_MAX_AGE = 1000 * 60 * 10;
+const MARQUEE_REFRESH_INTERVAL = 1000 * 60;
 
 export default function AppLayout() {
     const [currencies, setCurrencies] = useState(
@@ -39,14 +40,19 @@ export default function AppLayout() {
       };
     }, []);
 
-    const fetchCurrency = useCallback(() => {
+    const fetchCurrency = useCallback((signal) => {
       api.get("/cryptocurrencies", {
         params: {
           limit: 15,
           offset: 0,
         },
+        signal,
       })
       .then((response) => {
+        if (signal?.aborted) {
+          return;
+        }
+
         const data = Array.isArray(response.data)
           ? response.data
           : response.data.items || [];
@@ -54,11 +60,17 @@ export default function AppLayout() {
         setCurrencies(nextCurrencies);
         writeCachedValue(MARQUEE_CACHE_KEY, nextCurrencies);
       })
-      .catch(() => {
+      .catch((error) => {
+        if (signal?.aborted || error?.code === "ERR_CANCELED") {
+          return;
+        }
+
         setCurrencies((currentCurrencies) => currentCurrencies);
       })
       .finally(() => {
-        setIsCurrenciesLoading(false);
+        if (!signal?.aborted) {
+          setIsCurrenciesLoading(false);
+        }
       });
     }, [normalizeCurrency]);
 
@@ -95,7 +107,26 @@ export default function AppLayout() {
     }, [navigation]);
 
     useEffect(() => {
-      fetchCurrency();
+      let controller = new AbortController();
+
+      const refreshCurrencies = () => {
+        controller.abort();
+        controller = new AbortController();
+        fetchCurrency(controller.signal);
+      };
+
+      refreshCurrencies();
+
+      const refreshInterval = window.setInterval(() => {
+        if (!document.hidden) {
+          refreshCurrencies();
+        }
+      }, MARQUEE_REFRESH_INTERVAL);
+
+      return () => {
+        controller.abort();
+        window.clearInterval(refreshInterval);
+      };
     }, [fetchCurrency]);
 
   if (isAuthChecking) {

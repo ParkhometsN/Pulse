@@ -10,6 +10,7 @@ from src.init import moex_client
 router = APIRouter(prefix="/stocks")
 STOCK_LIST_CACHE_TTL_SECONDS = 10
 STOCK_CANDLES_CACHE_TTL_SECONDS = 60
+MAX_STOCK_CACHE_ITEMS = 240
 _stocks_cache: dict[str, dict] = {}
 _stocks_cache_locks: dict[str, asyncio.Lock] = {}
 
@@ -171,6 +172,11 @@ async def get_cached_moex_data(cache_key: str, loader, ttl_seconds: int):
                 return cached["data"]
 
             raise
+
+        if len(_stocks_cache) >= MAX_STOCK_CACHE_ITEMS and cache_key not in _stocks_cache:
+            oldest_key = min(_stocks_cache, key=lambda key: _stocks_cache[key]["created_at"])
+            _stocks_cache.pop(oldest_key, None)
+            _stocks_cache_locks.pop(oldest_key, None)
 
         _stocks_cache[cache_key] = {
             "created_at": time.monotonic(),

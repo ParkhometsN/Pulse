@@ -13,6 +13,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 
 const ITEMS_PER_PAGE = 15;
 const MARKET_REFRESH_INTERVAL = 10000;
+const STRATEGY_REFRESH_INTERVAL = 10000;
 const FAVORITES_STORAGE_KEY = "pulse_market_favorites";
 const MARKET_CACHE_MAX_AGE = 1000 * 60 * 5;
 const marketCacheKey = (type, page, source = "default") => `pulse:market:${type}:${source}:page:${page}:v6`;
@@ -171,6 +172,85 @@ const formatStrategyRunDate = (runDate) => {
   })}, 13:00`;
 };
 
+const formatStrategyDateTime = (value) => {
+  const date = value ? new Date(value) : null;
+
+  if (!date || Number.isNaN(date.getTime())) {
+    return "Сегодня, 13:00";
+  }
+
+  return date.toLocaleString("ru-RU", {
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+};
+
+const formatStrategyPrice = (value, currency = "USDT") => {
+  const number = Number(value);
+
+  if (!Number.isFinite(number)) {
+    return `0 ${currency}`;
+  }
+
+  return `${number.toLocaleString("ru-RU", {
+    maximumFractionDigits: number >= 100 ? 2 : 6,
+  })} ${currency}`;
+};
+
+const formatStrategyQuantity = (value) => {
+  const number = Number(value);
+
+  if (!Number.isFinite(number)) {
+    return "0";
+  }
+
+  return number.toLocaleString("ru-RU", {
+    maximumFractionDigits: number >= 1 ? 4 : 8,
+  });
+};
+
+const getStrategyTradeBase = (trade) => {
+  const symbol = String(trade.asset || trade.routeSymbol || "").toUpperCase();
+
+  return symbol.endsWith("USDT") ? symbol.replace(/USDT$/, "") : symbol;
+};
+
+const getStrategyTradeStatusText = (trade) => {
+  if (trade.status !== "closed") {
+    return "Открыта";
+  }
+
+  if (trade.closeReason === "take_profit") {
+    return "Тейк-профит";
+  }
+
+  if (trade.closeReason === "stop_loss") {
+    return "Стоп-лосс";
+  }
+
+  if (trade.closeReason === "time_exit") {
+    return "Выход по времени";
+  }
+
+  return "Зафиксировано";
+};
+
+const getStrategyChartPoints = (strategy) => {
+  if (Array.isArray(strategy.chartPoints) && strategy.chartPoints.length > 1) {
+    return strategy.chartPoints;
+  }
+
+  const startDate = strategy.startedAt ? new Date(strategy.startedAt) : new Date();
+
+  return (strategy.chart || []).map((value, index) => ({
+    value,
+    time: new Date(startDate.getTime() + index * 11 * 60 * 1000).toISOString(),
+    label: index === 0 ? "Старт" : `Шаг ${index}`,
+  }));
+};
+
 const formatNumberLike = (value) => {
   const number = Number(value);
 
@@ -189,9 +269,27 @@ const mergeStrategyRun = (baseStrategy, run) => {
   const trades = Array.isArray(run.trades) ? run.trades : [];
   const history = trades.length
     ? trades.map((trade, index) => ({
-      date: `${formatStrategyRunDate(run.runDate)} · ${Math.round(Number(trade.probability) || 0)}%`,
+      date: `${formatStrategyDateTime(trade.executedAt || run.startedAt)} · ${Math.round(Number(trade.probability) || 0)}%`,
       asset: trade.asset || trade.name || `Сигнал ${index + 1}`,
+      name: trade.name || trade.asset || `Сигнал ${index + 1}`,
+      routeSymbol: trade.routeSymbol || trade.asset,
+      assetType: trade.assetType || "crypto",
+      iconUrl: trade.iconUrl,
       side: trade.side || run.mode || baseStrategy.tag,
+      probability: Number(trade.probability) || 0,
+      entryPrice: trade.entryPrice,
+      exitPrice: trade.exitPrice,
+      quoteCurrency: trade.quoteCurrency || "USDT",
+      settlementCurrency: trade.settlementCurrency || "RUB",
+      quantity: trade.quantity,
+      virtualAmount: trade.virtualAmount,
+      resultPercent: trade.resultPercent,
+      resultAmount: trade.resultAmount,
+      currentPrice: trade.currentPrice || trade.exitPrice,
+      status: trade.status || "open",
+      closeReason: trade.closeReason,
+      closedAt: trade.closedAt,
+      executedAt: trade.executedAt,
       result: `${formatSignedStrategyPercent(trade.resultPercent)} · ${formatStrategyMoney(trade.virtualAmount || 0)}`,
     }))
     : [{
@@ -204,11 +302,13 @@ const mergeStrategyRun = (baseStrategy, run) => {
   return {
     ...baseStrategy,
     chart: Array.isArray(run.chart) && run.chart.length > 1 ? run.chart : baseStrategy.chart,
+    chartPoints: Array.isArray(run.chartPoints) && run.chartPoints.length > 1 ? run.chartPoints : null,
     chartColor: getStrategyToneColor(getStrategyTone(run.roi ?? getChartRoi(run.chart))),
+    startedAt: run.startedAt,
     history,
     stats: [
       { label: "Модель", value: baseStrategy.stats[0]?.value || "Pulse AI" },
-      { label: "Paper-режим", value: "100 000 ₽" },
+      { label: "Paper-режим", value: formatStrategyMoney(run.startCapital || 100000) },
       { label: "Сделок сегодня", value: String(trades.length) },
       { label: "Точность сигналов", value: `${formatNumberLike(run.accuracy)}%` },
       { label: "Просадка", value: formatSignedStrategyPercent(run.maxDrawdown) },
@@ -299,7 +399,286 @@ function StrategyLineChart({ values = [], color = "var(--primary-blue)", size = 
   );
 }
 
-function StrategyDrawer({ strategy, isOpen, aggression, onAggressionChange, onClose }) {
+function StrategyCapitalChart({ strategy, color }) {
+  const [hoveredPoint, setHoveredPoint] = useState(null);
+  const chartPoints = getStrategyChartPoints(strategy)
+    .map((point) => ({
+      ...point,
+      value: Number(point.value),
+      date: point.time ? new Date(point.time) : null,
+    }))
+    .filter((point) => Number.isFinite(point.value));
+  const width = 620;
+  const height = 250;
+  const padding = { top: 18, right: 86, bottom: 36, left: 18 };
+
+  if (chartPoints.length < 2) {
+    return (
+      <div className="strategy_capital_chart strategy_capital_chart_empty">
+        <span>График появится после первых сигналов стратегии</span>
+      </div>
+    );
+  }
+
+  const minValue = Math.min(...chartPoints.map((point) => point.value));
+  const maxValue = Math.max(...chartPoints.map((point) => point.value));
+  const range = maxValue - minValue || 1;
+  const chartWidth = width - padding.left - padding.right;
+  const chartHeight = height - padding.top - padding.bottom;
+  const gradientId = `strategy-capital-gradient-${strategy.id}-${String(color).replace(/[^a-zA-Z0-9]/g, "")}`;
+  const visualMin = minValue - range * 0.12;
+  const visualMax = maxValue + range * 0.12;
+  const visualRange = visualMax - visualMin || 1;
+  const points = chartPoints.map((point, index) => {
+    const x = padding.left + (index / Math.max(chartPoints.length - 1, 1)) * chartWidth;
+    const y = padding.top + (1 - ((point.value - visualMin) / visualRange)) * chartHeight;
+
+    return { ...point, x, y };
+  });
+  const linePath = points
+    .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x.toFixed(1)} ${point.y.toFixed(1)}`)
+    .join(" ");
+  const areaPath = `${linePath} L ${width - padding.right} ${height - padding.bottom} L ${padding.left} ${height - padding.bottom} Z`;
+  const gridValues = [visualMax, visualMax - visualRange * 0.33, visualMax - visualRange * 0.66, visualMin];
+  const lastPoint = points[points.length - 1] || { x: padding.left, y: padding.top, value: 0 };
+  const tooltipGoesLeft = hoveredPoint ? hoveredPoint.x > width - 230 : false;
+
+  const handlePointerMove = (event) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const x = ((event.clientX - rect.left) / rect.width) * width;
+    const nearestPoint = points.reduce((nearest, point) => (
+      Math.abs(point.x - x) < Math.abs(nearest.x - x) ? point : nearest
+    ), points[0]);
+
+    setHoveredPoint(nearestPoint);
+  };
+
+  return (
+    <div className="strategy_capital_chart">
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        preserveAspectRatio="none"
+        onPointerMove={handlePointerMove}
+        onPointerLeave={() => setHoveredPoint(null)}
+      >
+        <defs>
+          <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={color} stopOpacity="0.24" />
+            <stop offset="100%" stopColor={color} stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        {gridValues.map((value, index) => {
+          const y = padding.top + (1 - ((value - visualMin) / visualRange)) * chartHeight;
+
+          return (
+            <g key={`strategy-grid-${index}`}>
+              <line x1={padding.left} x2={width - padding.right} y1={y} y2={y} className="strategy_capital_grid" />
+              <text x={width - padding.right + 10} y={y + 4} className="strategy_capital_axis">
+                {formatStrategyMoney(value)}
+              </text>
+            </g>
+          );
+        })}
+        <path d={areaPath} fill={`url(#${gradientId})`} />
+        <path
+          d={linePath}
+          fill="none"
+          stroke={color}
+          strokeWidth="3"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className="strategy_capital_line"
+        />
+        <circle cx={lastPoint.x} cy={lastPoint.y} r="5" fill={color} stroke="white" strokeWidth="2" />
+        {hoveredPoint ? (
+          <>
+            <line x1={hoveredPoint.x} x2={hoveredPoint.x} y1={padding.top} y2={height - padding.bottom} className="strategy_capital_hover" />
+            <circle cx={hoveredPoint.x} cy={hoveredPoint.y} r="5" fill={color} stroke="white" strokeWidth="2" />
+          </>
+        ) : null}
+        {points.map((point, index) => (
+          <text
+            key={`strategy-date-${point.time || index}`}
+            x={point.x}
+            y={height - 10}
+            textAnchor={index === 0 ? "start" : index === points.length - 1 ? "end" : "middle"}
+            className="strategy_capital_axis"
+          >
+            {index === 0 || index === points.length - 1 ? formatStrategyDateTime(point.time).replace(",", "") : ""}
+          </text>
+        ))}
+      </svg>
+      {hoveredPoint ? (
+        <div
+          className={`strategy_capital_tooltip ${tooltipGoesLeft ? "strategy_capital_tooltip_left" : ""}`}
+          style={{
+            left: `${(hoveredPoint.x / width) * 100}%`,
+            top: `${(Math.min(Math.max(hoveredPoint.y, 72), height - 66) / height) * 100}%`,
+          }}
+        >
+          <strong>{formatStrategyMoney(hoveredPoint.value)}</strong>
+          <span>{formatStrategyDateTime(hoveredPoint.time)}</span>
+          <p>{hoveredPoint.label || "Изменение капитала"}</p>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function StrategyConnectPanel({
+  strategy,
+  form,
+  message,
+  isConnecting,
+  onChange,
+  onBack,
+  onConnect,
+}) {
+  const amount = Number(String(form.amount).replace(",", "."));
+  const normalizedAmount = Number.isFinite(amount) && amount > 0 ? amount : 0;
+  const universeLabels = {
+    crypto: "Криптовалюта",
+    stocks: "Ценные бумаги",
+    mixed: "Смешанный рынок",
+  };
+  const riskLabels = {
+    careful: "Осторожный",
+    balanced: "Баланс",
+    active: "Активный",
+  };
+
+  return (
+    <div className="strategy_connect_panel">
+      <div className="strategy_section_title">
+        <h3>Подключение стратегии</h3>
+        <p>Paper-режим. Стратегия открывает виртуальные позиции, реальные заявки брокеру или бирже не отправляются.</p>
+      </div>
+
+      <div className="strategy_trade_side_switch">
+        {[
+          ["crypto", "Крипта"],
+          ["stocks", "Акции"],
+          ["mixed", "Смешанный"],
+        ].map(([value, label]) => (
+          <button
+            key={value}
+            type="button"
+            className={form.universe === value ? "active" : ""}
+            onClick={() => onChange({ universe: value })}
+            aria-pressed={form.universe === value}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      <div className="strategy_trade_balance_grid">
+        <div>
+          <span>Виртуальный капитал</span>
+          <p>{formatStrategyMoney(normalizedAmount || 100000)}</p>
+        </div>
+        <div className="border_blue">
+          <span>Порог входа</span>
+          <p>60%</p>
+        </div>
+      </div>
+
+      <label className="strategy_trade_input_label">
+        <span>Сумма стратегии, RUB</span>
+        <input
+          value={form.amount}
+          onChange={(event) => onChange({ amount: event.target.value })}
+          inputMode="decimal"
+          placeholder="100000"
+        />
+      </label>
+
+      <div className="strategy_trade_quick_amounts" aria-label="Быстрый выбор суммы стратегии">
+        {[
+          ["25000", "25%"],
+          ["50000", "50%"],
+          ["100000", "Макс."],
+        ].map(([value, label]) => (
+          <button
+            key={value}
+            type="button"
+            onClick={() => onChange({ amount: value })}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      <div className="strategy_trade_result_card">
+        <div>
+          <span>Стратегия</span>
+          <strong>{strategy.title}</strong>
+        </div>
+        <div>
+          <span>Торговый режим</span>
+          <strong>{strategy.tag}</strong>
+        </div>
+        <div>
+          <span>Рынок</span>
+          <strong>{universeLabels[form.universe]}</strong>
+        </div>
+        <div>
+          <span>Риск-профиль</span>
+          <strong>{riskLabels[form.risk]}</strong>
+        </div>
+      </div>
+
+      <div className="strategy_connect_field strategy_connect_risk_box">
+        <span>Риск-профиль</span>
+        <div className="strategy_connect_chips">
+          {[
+            ["careful", "Осторожный"],
+            ["balanced", "Баланс"],
+            ["active", "Активный"],
+          ].map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              className={form.risk === value ? "active" : ""}
+              onClick={() => onChange({ risk: value })}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {message ? <p className="strategy_connect_message">{message}</p> : null}
+      {!message ? (
+        <p className="strategy_connect_hint">
+          После подключения стратегия стартует с нулевым PnL и будет переоценивать позиции от цены входа.
+        </p>
+      ) : null}
+
+      <div className="strategy_connect_actions">
+        <Buttons type="text" onClick={onBack}>Назад</Buttons>
+        <Buttons type="primary-full" onClick={onConnect} disabled={isConnecting}>
+          {isConnecting ? "Подключаем..." : "Подключить стратегию"}
+        </Buttons>
+      </div>
+    </div>
+  );
+}
+
+function StrategyDrawer({
+  strategy,
+  isOpen,
+  mode,
+  connectForm,
+  connectMessage,
+  isConnecting,
+  onConnectFormChange,
+  onOpenConnect,
+  onBackToOverview,
+  onConnectStrategy,
+  onOpenAsset,
+  onClose,
+}) {
   if (!strategy) {
     return null;
   }
@@ -312,6 +691,7 @@ function StrategyDrawer({ strategy, isOpen, aggression, onAggressionChange, onCl
     { label: "Заработано", value: formatSignedStrategyMoney(capital.profit), accent: true },
     ...strategy.stats.filter((item) => item.label !== "Модель"),
   ];
+  const startedAtLabel = formatStrategyDateTime(strategy.startedAt || strategy.paperRun?.startedAt);
 
   return (
     <div
@@ -325,79 +705,137 @@ function StrategyDrawer({ strategy, isOpen, aggression, onAggressionChange, onCl
         onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="strategy_drawer_hero">
-          <StrategyLineChart values={strategy.chart} color={strategy.chartColor} size="hero" />
+          {mode === "connect" ? (
+            <div className="strategy_connect_hero">
+              <span>{strategy.tag}</span>
+              <h2>{strategy.title}</h2>
+              <p>Подключение paper-стратегии без реальных заявок и риска для счета.</p>
+            </div>
+          ) : (
+            <StrategyCapitalChart strategy={strategy} color={strategy.chartColor} />
+          )}
           <button className="strategy_drawer_close" type="button" onClick={onClose} aria-label="Закрыть стратегию">
             ×
           </button>
         </div>
 
-        <div className="strategy_drawer_intro">
-          <div className="flex items-center gap-[10px]">
-            <span>{strategy.tag}</span>
-            <h2>{strategy.title}</h2>
-          </div>
-          <p>{strategy.description}</p>
-        </div>
-
-        <div className="strategy_stats_grid">
-          {strategyStats.map((item) => (
-            <div
-              className={[
-                "strategy_stat_card",
-                item.accent ? "strategy_stat_card_accent" : "",
-                item.tone ? `strategy_stat_card_${item.tone}` : "",
-              ].filter(Boolean).join(" ")}
-              key={`${strategy.id}-${item.label}`}
-            >
-              <p>{item.label}</p>
-              <h4>{item.value}</h4>
-            </div>
-          ))}
-        </div>
-
-        <div className="strategy_drawer_section">
-          <div className="strategy_section_title">
-            <h3>История торговли</h3>
-            <p>Последние сигналы стратегии</p>
-          </div>
-          <div className="strategy_history_list">
-            {strategy.history.map((item) => (
-              <div className="strategy_history_item" key={`${strategy.id}-${item.date}-${item.asset}`}>
-                <div>
-                  <h4>{item.asset}</h4>
-                  <p>{item.date}</p>
-                </div>
-                <span>{item.side}</span>
-                <strong>{item.result}</strong>
+        {mode === "connect" ? (
+          <StrategyConnectPanel
+            strategy={strategy}
+            form={connectForm}
+            message={connectMessage}
+            isConnecting={isConnecting}
+            onChange={onConnectFormChange}
+            onBack={onBackToOverview}
+            onConnect={onConnectStrategy}
+          />
+        ) : (
+          <>
+            <div className="strategy_drawer_intro">
+              <div className="strategy_drawer_title_row">
+                <span>{strategy.tag}</span>
+                <h2>{strategy.title}</h2>
               </div>
-            ))}
-          </div>
-        </div>
+              <p>{strategy.description}</p>
+              <div className="strategy_start_badge">
+                <span>Старт стратегии</span>
+                <strong>{startedAtLabel}</strong>
+              </div>
+            </div>
 
-        <div className="strategy_drawer_section">
-          <div className="strategy_section_title">
-            <h3>Настройки торговли</h3>
-            <p>{strategy.note}</p>
-          </div>
-          <label className="strategy_slider_box">
-            <span>Агрессивность торговли</span>
-            <strong>{aggression}%</strong>
-            <input
-              type="range"
-              min="0"
-              max="100"
-              value={aggression}
-              onChange={(event) => onAggressionChange(Number(event.target.value))}
-            />
-          </label>
-        </div>
+            <div className="strategy_stats_grid">
+              {strategyStats.map((item) => (
+                <div
+                  className={[
+                    "strategy_stat_card",
+                    item.accent ? "strategy_stat_card_accent" : "",
+                    item.tone ? `strategy_stat_card_${item.tone}` : "",
+                  ].filter(Boolean).join(" ")}
+                  key={`${strategy.id}-${item.label}`}
+                >
+                  <p>{item.label}</p>
+                  <h4>{item.value}</h4>
+                </div>
+              ))}
+            </div>
 
-        <Buttons type="primary-full" className="strategy_connect_button">
-          Paper-режим активен
-        </Buttons>
-        <p className="strategy_warning">
-          Это виртуальная торговля на модельные 100 000 ₽ без реальных заявок. Информация не является инвестиционной рекомендацией.
-        </p>
+            <div className="strategy_drawer_section">
+              <div className="strategy_section_title">
+                <h3>История торговли</h3>
+                <p>Последние виртуальные сделки стратегии</p>
+              </div>
+              <div className="strategy_history_list">
+                {strategy.history.map((item) => {
+                  const tone = getStrategyTone(item.resultPercent);
+                  const baseAsset = getStrategyTradeBase(item);
+                  const isNavigable = item.asset && item.asset !== "NO_SIGNAL";
+
+                  if (!isNavigable) {
+                    return (
+                      <button
+                        className="strategy_history_item"
+                        key={`${strategy.id}-${item.date}-${item.asset}`}
+                        type="button"
+                        disabled
+                      >
+                        <div className="strategy_history_asset">
+                          <CoinIcon baseCoin="AI" label="AI" />
+                          <div>
+                            <h4>Сигналов пока нет</h4>
+                            <p>{item.result || "Вероятность входа ниже 60%"}</p>
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  }
+
+                  return (
+                    <button
+                      className="strategy_history_item"
+                      key={`${strategy.id}-${item.date}-${item.asset}`}
+                      type="button"
+                      onClick={() => onOpenAsset(item)}
+                    >
+                      <div className="strategy_history_asset">
+                        <CoinIcon
+                          baseCoin={baseAsset}
+                          iconUrl={item.iconUrl}
+                          label={item.name || item.asset}
+                          type={item.assetType === "stock" ? "stock" : "crypto"}
+                        />
+                        <div>
+                          <h4>{item.name || item.asset}</h4>
+                          <p>{item.date}</p>
+                        </div>
+                      </div>
+                      <div className="strategy_history_prices">
+                        <span>{formatStrategyQuantity(item.quantity)} {baseAsset}</span>
+                        <small>
+                          {formatStrategyMoney(item.virtualAmount || 0)} · вход {formatStrategyPrice(item.entryPrice, item.quoteCurrency)}
+                        </small>
+                        <small>
+                          {getStrategyTradeStatusText(item)} · {item.status === "closed" ? "выход" : "сейчас"}{" "}
+                          {formatStrategyPrice(item.currentPrice || item.exitPrice, item.quoteCurrency)}
+                        </small>
+                      </div>
+                      <strong className={`strategy_history_result strategy_history_result_${tone}`}>
+                        {formatSignedStrategyPercent(item.resultPercent)}
+                        <small>{formatSignedStrategyMoney(item.resultAmount || 0)}</small>
+                      </strong>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <Buttons type="primary-full" className="strategy_connect_button" onClick={onOpenConnect}>
+              Подключить стратегию
+            </Buttons>
+            <p className="strategy_warning">
+              Это виртуальная торговля без реальных заявок. Сигналы нужны для проверки гипотез и не являются инвестиционной рекомендацией.
+            </p>
+          </>
+        )}
       </aside>
     </div>
   );
@@ -457,13 +895,21 @@ export default function Market() {
   const [strategyRuns, setStrategyRuns] = useState([]);
   const [isStrategiesLoading, setIsStrategiesLoading] = useState(activePage === "strategies");
   const [strategiesError, setStrategiesError] = useState("");
-	  const [selectedStrategy, setSelectedStrategy] = useState(null);
-	  const [isStrategyDrawerOpen, setIsStrategyDrawerOpen] = useState(false);
-	  const [strategyAggression, setStrategyAggression] = useState(MARKET_STRATEGIES[0].aggression);
+		  const [selectedStrategy, setSelectedStrategy] = useState(null);
+		  const [isStrategyDrawerOpen, setIsStrategyDrawerOpen] = useState(false);
+		  const [strategyDrawerMode, setStrategyDrawerMode] = useState("overview");
+		  const [strategyConnectForm, setStrategyConnectForm] = useState({
+		    amount: "100000",
+		    universe: "mixed",
+		    risk: "balanced",
+		  });
+		  const [strategyConnectMessage, setStrategyConnectMessage] = useState("");
+		  const [isConnectingStrategy, setIsConnectingStrategy] = useState(false);
   const cryptoAbortRef = useRef(null);
   const stocksAbortRef = useRef(null);
   const cryptoRequestIdRef = useRef(0);
   const stocksRequestIdRef = useRef(0);
+  const strategiesRequestIdRef = useRef(0);
   const strategyCloseTimerRef = useRef(null);
   const navigate = useNavigate();
   const pages = [
@@ -561,35 +1007,161 @@ export default function Market() {
     navigate(`/app/market/coin-page?${params.toString()}`);
   }, [navigate]);
 
-  const openSearchResult = useCallback((asset) => {
-    setSearchQuery("");
-    setIsSearchFocused(false);
-    openAssetPage(asset.type, asset);
-  }, [openAssetPage]);
+	  const openSearchResult = useCallback((asset) => {
+	    setSearchQuery("");
+	    setIsSearchFocused(false);
+	    openAssetPage(asset.type, asset);
+	  }, [openAssetPage]);
 
-  const openStrategy = useCallback((strategy) => {
-    if (strategyCloseTimerRef.current) {
-      window.clearTimeout(strategyCloseTimerRef.current);
-    }
+	  const openStrategyTradeAsset = useCallback((trade) => {
+	    const assetType = trade.assetType === "stock" ? "stock" : "crypto";
+	    const symbol = trade.routeSymbol || trade.asset;
 
-    setSelectedStrategy(strategy);
-    setStrategyAggression(strategy.aggression);
-    window.requestAnimationFrame(() => setIsStrategyDrawerOpen(true));
-  }, []);
+	    openAssetPage(assetType, {
+	      symbol,
+	      baseCoin: symbol,
+	      name: trade.name || symbol,
+	      iconUrl: trade.iconUrl,
+	    });
+	  }, [openAssetPage]);
 
-	  const closeStrategy = useCallback(() => {
-	    setIsStrategyDrawerOpen(false);
+	  const openStrategy = useCallback((strategy) => {
+	    if (strategyCloseTimerRef.current) {
+	      window.clearTimeout(strategyCloseTimerRef.current);
+	    }
 
-    if (strategyCloseTimerRef.current) {
-      window.clearTimeout(strategyCloseTimerRef.current);
-    }
-
-    strategyCloseTimerRef.current = window.setTimeout(() => {
-      setSelectedStrategy(null);
-    }, 260);
+	    setSelectedStrategy(strategy);
+	    setStrategyDrawerMode("overview");
+	    setStrategyConnectMessage("");
+	    window.requestAnimationFrame(() => setIsStrategyDrawerOpen(true));
 	  }, []);
 
-  const marketStrategies = useMemo(() => {
+		  const closeStrategy = useCallback(() => {
+		    setIsStrategyDrawerOpen(false);
+
+    if (strategyCloseTimerRef.current) {
+      window.clearTimeout(strategyCloseTimerRef.current);
+    }
+
+	    strategyCloseTimerRef.current = window.setTimeout(() => {
+	      setSelectedStrategy(null);
+	      setStrategyDrawerMode("overview");
+	      setStrategyConnectMessage("");
+	      setIsConnectingStrategy(false);
+	    }, 260);
+		  }, []);
+
+	  const updateStrategyConnectForm = useCallback((patch) => {
+	    setStrategyConnectForm((currentForm) => ({
+	      ...currentForm,
+	      ...patch,
+	    }));
+	    setStrategyConnectMessage("");
+	  }, []);
+
+	  const connectStrategy = useCallback(async () => {
+	    if (!selectedStrategy || isConnectingStrategy) {
+	      return;
+	    }
+
+	    const amount = Number(String(strategyConnectForm.amount).replace(",", "."));
+	    const normalizedAmount = Number.isFinite(amount) && amount > 0 ? amount : 100000;
+	    const universeLabels = {
+	      crypto: "криптовалютам",
+	      stocks: "ценным бумагам",
+	      mixed: "смешанному рынку",
+	    };
+
+	    setIsConnectingStrategy(true);
+	    setStrategyConnectMessage("");
+
+	    try {
+	      const response = await api.post(`/ai/strategies/${selectedStrategy.id}/connect`, {
+	        virtual_capital: normalizedAmount,
+	        universe: strategyConnectForm.universe,
+	        risk_profile: strategyConnectForm.risk,
+	      });
+	      const nextRun = response.data?.strategy;
+
+	      if (nextRun) {
+	        setStrategyRuns((currentRuns) => {
+	          const hasRun = currentRuns.some((run) => run.id === nextRun.id);
+	          return hasRun
+	            ? currentRuns.map((run) => (run.id === nextRun.id ? nextRun : run))
+	            : [nextRun, ...currentRuns];
+	        });
+	        const baseStrategy = MARKET_STRATEGIES.find((strategy) => strategy.id === nextRun.id) || selectedStrategy;
+	        setSelectedStrategy(mergeStrategyRun(baseStrategy, nextRun));
+	      }
+
+	      setStrategyConnectForm((currentForm) => ({
+	        ...currentForm,
+	        amount: String(Math.round(normalizedAmount)),
+	      }));
+	      setStrategyConnectMessage(
+	        `Paper-стратегия подключена на ${formatStrategyMoney(normalizedAmount)} по ${universeLabels[strategyConnectForm.universe] || "рынку"}.`
+	      );
+	    } catch {
+	      setStrategyConnectMessage("Не удалось сохранить подключение стратегии. Проверьте backend и попробуйте еще раз.");
+	    } finally {
+	      setIsConnectingStrategy(false);
+	    }
+	  }, [
+	    isConnectingStrategy,
+	    selectedStrategy,
+	    strategyConnectForm.amount,
+	    strategyConnectForm.risk,
+	    strategyConnectForm.universe,
+	  ]);
+
+	  const applyStrategyRuns = useCallback((nextRuns) => {
+	    setStrategyRuns(nextRuns);
+	    setSelectedStrategy((currentStrategy) => {
+	      if (!currentStrategy) {
+	        return currentStrategy;
+	      }
+
+	      const nextRun = nextRuns.find((run) => run.id === currentStrategy.id);
+	      if (!nextRun) {
+	        return currentStrategy;
+	      }
+
+	      const baseStrategy = MARKET_STRATEGIES.find((strategy) => strategy.id === nextRun.id) || currentStrategy;
+	      return mergeStrategyRun(baseStrategy, nextRun);
+	    });
+	  }, []);
+
+	  const fetchStrategies = useCallback((showLoading = false) => {
+	    const requestId = strategiesRequestIdRef.current + 1;
+	    strategiesRequestIdRef.current = requestId;
+
+	    if (showLoading) {
+	      setIsStrategiesLoading(true);
+	    }
+
+	    return api
+	      .get("/ai/strategies")
+	      .then((response) => {
+	        if (requestId !== strategiesRequestIdRef.current) {
+	          return;
+	        }
+
+	        applyStrategyRuns(response.data?.items || []);
+	        setStrategiesError("");
+	      })
+	      .catch(() => {
+	        if (requestId === strategiesRequestIdRef.current) {
+	          setStrategiesError("Не удалось обновить paper-стратегии. Показываю последнюю локальную модель.");
+	        }
+	      })
+	      .finally(() => {
+	        if (showLoading && requestId === strategiesRequestIdRef.current) {
+	          setIsStrategiesLoading(false);
+	        }
+	      });
+	  }, [applyStrategyRuns]);
+
+	  const marketStrategies = useMemo(() => {
     const runsById = new Map(strategyRuns.map((run) => [run.id, run]));
 
     return MARKET_STRATEGIES.map((strategy) => mergeStrategyRun(strategy, runsById.get(strategy.id)));
@@ -608,7 +1180,7 @@ export default function Market() {
                 </div>
 
 	                <div className="cardList_marketbot">
-	                  <div className="cardmarketblocklist">
+		                  <div className="cardmarketblocklist cardmarketblocklist_strategies">
                         {strategiesError ? (
                           <p className="market_error">{strategiesError}</p>
                         ) : null}
@@ -652,8 +1224,8 @@ export default function Market() {
                   <p>Пассивный доход</p>
                 </div>
 
-                <div className="cardList_marketbot">
-                  <div className="cardmarketblocklist">
+	                <div className="cardList_marketbot">
+	                  <div className="cardmarketblocklist cardmarketblocklist_strategies cardmarketblocklist_passive">
                     <MarketCardBot
                     titleCardstrategi = 'Bybit Earn '
                     desritioncardStrategy = 'Easy Earn BTC с гибким сроком — это удобный вариант инвестирования без периода блокировки. Можно инвестировать и выводить средства когда угодно.'
@@ -1377,44 +1949,27 @@ export default function Market() {
     };
   }, [activePage, fetchStocks]);
 
-  useEffect(() => {
-    if (activePage !== "strategies") {
-      return;
-    }
+		  useEffect(() => {
+		    if (activePage !== "strategies") {
+		      return;
+		    }
 
-    let isMounted = true;
-    const loadingTimer = window.setTimeout(() => {
-      if (isMounted) {
-        setIsStrategiesLoading(true);
-      }
-    }, 0);
+		    const initialFetchTimer = window.setTimeout(() => {
+		      fetchStrategies(strategyRuns.length === 0);
+		    }, 0);
+	    const interval = window.setInterval(() => {
+	      if (document.hidden) {
+	        return;
+	      }
 
-    api
-      .get("/ai/strategies")
-      .then((response) => {
-        if (!isMounted) {
-          return;
-        }
+		      fetchStrategies(false);
+		    }, STRATEGY_REFRESH_INTERVAL);
 
-        setStrategyRuns(response.data?.items || []);
-        setStrategiesError("");
-      })
-      .catch(() => {
-        if (isMounted) {
-          setStrategiesError("Не удалось обновить paper-стратегии. Показываю последнюю локальную модель.");
-        }
-      })
-      .finally(() => {
-        if (isMounted) {
-          setIsStrategiesLoading(false);
-        }
-      });
-
-    return () => {
-      isMounted = false;
-      window.clearTimeout(loadingTimer);
-    };
-  }, [activePage]);
+		    return () => {
+	      window.clearTimeout(initialFetchTimer);
+	      window.clearInterval(interval);
+	    };
+	  }, [activePage, fetchStrategies, strategyRuns.length]);
 
   useEffect(() => {
     return () => {
@@ -1535,13 +2090,23 @@ export default function Market() {
 	              <div className="renderInformationBlcok">
 	                {renderInformationBlock()}
 	              </div>
-	              <StrategyDrawer
-	                strategy={selectedStrategy}
-	                isOpen={isStrategyDrawerOpen}
-	                aggression={strategyAggression}
-	                onAggressionChange={setStrategyAggression}
-	                onClose={closeStrategy}
-	              />
+		              <StrategyDrawer
+		                strategy={selectedStrategy}
+		                isOpen={isStrategyDrawerOpen}
+		                mode={strategyDrawerMode}
+		                connectForm={strategyConnectForm}
+		                connectMessage={strategyConnectMessage}
+		                isConnecting={isConnectingStrategy}
+		                onConnectFormChange={updateStrategyConnectForm}
+		                onOpenConnect={() => setStrategyDrawerMode("connect")}
+		                onBackToOverview={() => {
+		                  setStrategyDrawerMode("overview");
+		                  setStrategyConnectMessage("");
+		                }}
+		                onConnectStrategy={connectStrategy}
+		                onOpenAsset={openStrategyTradeAsset}
+		                onClose={closeStrategy}
+		              />
 	            </div>
 	          </div>
         </div>

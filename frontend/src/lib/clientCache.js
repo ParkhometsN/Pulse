@@ -17,8 +17,19 @@ export const readCachedValue = (key, maxAgeMs = DEFAULT_MAX_AGE_MS) => {
     const cached = JSON.parse(rawValue);
     const isExpired = maxAgeMs !== Infinity && Date.now() - cached.savedAt > maxAgeMs;
 
-    return isExpired ? null : cached.value;
+    if (isExpired) {
+      window.localStorage.removeItem(key);
+      return null;
+    }
+
+    return cached.value;
   } catch {
+    try {
+      window.localStorage.removeItem(key);
+    } catch {
+      // Ignore cleanup failures; cache must never break rendering.
+    }
+
     return null;
   }
 };
@@ -38,5 +49,17 @@ export const writeCachedValue = (key, value) => {
     );
   } catch {
     // localStorage can be full or blocked; cache failures should never break UI.
+  }
+};
+
+export const removeCachedValue = (key) => {
+  if (!isStorageAvailable()) {
+    return;
+  }
+
+  try {
+    window.localStorage.removeItem(key);
+  } catch {
+    // Ignore cleanup failures.
   }
 };

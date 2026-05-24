@@ -23,6 +23,17 @@
     background: rgba(0, 224, 164, 0.08);
 }
 
+.settings_api_loading {
+    display: grid;
+    grid-template-columns: 48px 1fr;
+    align-items: center;
+    gap: 10px;
+}
+
+.settings_api_loading .container_loading_element {
+    min-width: 0;
+}
+
 @keyframes pageElementIn {
     from {
         opacity: 0;

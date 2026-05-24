@@ -10,6 +10,7 @@ CACHE_TTL_SECONDS = 10
 CHART_CACHE_TTL_SECONDS = 60
 ORDERBOOK_CACHE_TTL_SECONDS = 1
 ICON_CACHE_TTL_SECONDS = 60 * 60 * 24
+MAX_MARKET_CACHE_ITEMS = 240
 _market_cache: dict[str, dict] = {}
 _market_cache_locks: dict[str, asyncio.Lock] = {}
 
@@ -304,6 +305,11 @@ async def get_cached_bybit_list(
                 return cached["data"]
 
             raise
+
+        if len(_market_cache) >= MAX_MARKET_CACHE_ITEMS and cache_key not in _market_cache:
+            oldest_key = min(_market_cache, key=lambda key: _market_cache[key]["created_at"])
+            _market_cache.pop(oldest_key, None)
+            _market_cache_locks.pop(oldest_key, None)
 
         _market_cache[cache_key] = {
             "created_at": time.monotonic(),

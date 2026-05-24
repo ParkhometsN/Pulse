@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/accordion";
 import Buttons from "../../components/UI/buttons";
 import Inputs from "../../components/UI/inputs";
+import LoaderAnimation from "../../components/ui/loaderAnimation";
 import api from "../../lib/api";
 import { clearAuthSession, getStoredUser } from "../../lib/auth";
 import { getApiErrorMessage } from "../../lib/apiError";
@@ -49,7 +50,16 @@ export default function Settings() {
         setSavedAISettings(response.data);
         setAiModel(response.data?.model || "gpt-4.1-mini");
       })
-      .catch(() => {})
+      .catch((error) => {
+        if (!isMounted) {
+          return;
+        }
+
+        setAlert({
+          type: "error",
+          text: getApiErrorMessage(error, "Не удалось загрузить настройки AI."),
+        });
+      })
       .finally(() => {
         if (isMounted) {
           setIsSettingsLoading(false);
@@ -180,7 +190,10 @@ export default function Settings() {
                   )}
 	                  <div className="settings_api_key">
                     {isSettingsLoading ? (
-                      <p className="settings_api_hint">Проверяем сохраненный ключ...</p>
+                      <div className="settings_api_hint settings_api_loading">
+                        <LoaderAnimation height={34} rounded="12px" />
+                        <span>Проверяем сохраненный ключ...</span>
+                      </div>
                     ) : savedAISettings?.hasApiKey ? (
                       <p className="settings_api_hint settings_api_hint_success">
                         Ключ подключен{savedAISettings.maskedApiKey ? `: ${savedAISettings.maskedApiKey}` : " через .env"}.

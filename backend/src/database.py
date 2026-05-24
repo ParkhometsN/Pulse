@@ -21,6 +21,24 @@ def _normalize_neon_dsn(dsn: str) -> str:
     return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
 
 
+def _resolve_database_ssl(dsn: str) -> str | bool:
+    ssl_setting = (settings.database_ssl or "auto").lower()
+
+    if ssl_setting in {"require", "required", "true", "1"}:
+        return "require"
+
+    if ssl_setting in {"disable", "disabled", "false", "0", "off"}:
+        return False
+
+    host = (urlsplit(dsn).hostname or "").lower()
+    local_hosts = {"", "localhost", "127.0.0.1", "::1", "postgres", "db", "database"}
+
+    if host in local_hosts or host.endswith(".local"):
+        return False
+
+    return "require"
+
+
 async def connect_database() -> None:
     global _pool
 
@@ -33,10 +51,11 @@ async def connect_database() -> None:
 
     _pool = await asyncpg.create_pool(
         dsn=_normalize_neon_dsn(dsn),
-        ssl="require",
+        ssl=_resolve_database_ssl(dsn),
         min_size=1,
         max_size=5,
         command_timeout=15,
+        max_inactive_connection_lifetime=60,
     )
 
 
@@ -183,6 +202,33 @@ async def ensure_auth_schema() -> None:
         )
         await connection.execute(
             """
+            create table if not exists ai_strategy_connections (
+                id uuid primary key default gen_random_uuid(),
+                user_id uuid not null references users(id) on delete cascade,
+                strategy_id varchar(80) not null,
+                virtual_capital numeric(24, 10) not null default 100000,
+                universe varchar(30) not null default 'mixed',
+                risk_profile varchar(30) not null default 'balanced',
+                is_active boolean not null default true,
+                connected_at timestamptz not null default now(),
+                updated_at timestamptz not null default now(),
+                unique(user_id, strategy_id)
+            )
+            """
+        )
+        await connection.execute(
+            """
+            alter table ai_strategy_connections
+            add column if not exists virtual_capital numeric(24, 10) not null default 100000,
+            add column if not exists universe varchar(30) not null default 'mixed',
+            add column if not exists risk_profile varchar(30) not null default 'balanced',
+            add column if not exists is_active boolean not null default true,
+            add column if not exists connected_at timestamptz not null default now(),
+            add column if not exists updated_at timestamptz not null default now()
+            """
+        )
+        await connection.execute(
+            """
             create table if not exists password_reset_codes (
                 id uuid primary key default gen_random_uuid(),
                 user_id uuid not null references users(id) on delete cascade,
@@ -221,4 +267,7 @@ async def ensure_auth_schema() -> None:
         )
         await connection.execute(
             "create index if not exists idx_ai_paper_strategy_runs_user_date on ai_paper_strategy_runs(user_id, run_date desc)"
+        )
+        await connection.execute(
+            "create index if not exists idx_ai_strategy_connections_user on ai_strategy_connections(user_id, is_active)"
         )

@@ -10,12 +10,14 @@ from src.news_router import router as router_news
 from src.auth_router import router as router_auth
 from src.wallets_router import router as router_wallets
 from src.ai_router import paper_strategy_scheduler, router as router_ai
+from src.config import settings
 from src.database import close_database, connect_database, ensure_auth_schema
 from src.init import bybit_client, coingecko_client, moex_client, tbank_client
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    settings.validate_runtime()
     await asyncio.wait_for(connect_database(), timeout=15)
     await asyncio.wait_for(ensure_auth_schema(), timeout=30)
     stop_strategy_scheduler = asyncio.Event()
@@ -51,26 +53,9 @@ app.include_router(router_ai)
 async def health_check():
     return {"status": "healthy"}
 
-origins = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-    "http://localhost:5174",
-    "http://127.0.0.1:5174",
-    "http://localhost:5176",
-    "http://127.0.0.1:5176",
-    "http://91.229.11.184",
-    "http://pulse-investment.ru",
-    "https://pulse-investment.ru",
-    "http://www.pulse-investment.ru",
-    "https://www.pulse-investment.ru",
-    "http://frontend:5173",  # Docker container
-    "http://localhost:8000",  # Docker localhost
-    "http://127.0.0.1:8000",
-]
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=settings.resolved_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -102,10 +102,23 @@ grid-template-columns: repeat(1, 1fr);
     overflow-x: auto;
 }
 
+.cardmarketblocklist_strategies{
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+    align-items: stretch;
+    overflow: visible;
+}
+
 /* контейнер карточки */
 .marketcard_container {
     flex: 0 0 380px;
     width: 450px;
+}
+
+.cardmarketblocklist_strategies .marketcard_container {
+    flex: 1 1 auto;
+    width: 100%;
+    min-width: 0;
 }
 
 /* сама карточка */
@@ -369,7 +382,7 @@ grid-template-columns: repeat(1, 1fr);
 }
 
 .strategy_drawer {
-    width: min(460px, 100%);
+    width: min(760px, 100%);
     height: 100%;
     border: 2px solid var(--black-t);
     border-radius: 18px;
@@ -387,7 +400,7 @@ grid-template-columns: repeat(1, 1fr);
 
 .strategy_drawer_hero {
     position: relative;
-    min-height: 170px;
+    min-height: 280px;
     border: 2px solid var(--black-t);
     border-radius: 16px;
     overflow: hidden;
@@ -402,6 +415,114 @@ grid-template-columns: repeat(1, 1fr);
         linear-gradient(90deg, transparent 24.6667%, var(--color) 25%, var(--color) 25.3333%, transparent 25.6666%,
         transparent 74.3334%, var(--color) 74.6667%, var(--color) 75%, transparent 75.3333%);
     background-size: 150px 150px;
+}
+
+.strategy_capital_chart {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    min-height: 260px;
+    padding: 12px;
+}
+
+.strategy_capital_chart svg {
+    width: 100%;
+    height: 100%;
+    display: block;
+    overflow: visible;
+}
+
+.strategy_capital_chart_empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: rgba(255, 255, 255, 0.55);
+    font-size: 13px;
+}
+
+.strategy_capital_grid {
+    stroke: rgba(255, 255, 255, 0.08);
+    stroke-width: 1;
+    vector-effect: non-scaling-stroke;
+}
+
+.strategy_capital_axis {
+    fill: rgba(255, 255, 255, 0.46);
+    font-size: 10px;
+}
+
+.strategy_capital_line {
+    filter: drop-shadow(0 10px 22px rgba(0, 0, 0, 0.24));
+    stroke-dasharray: 1;
+    stroke-dashoffset: 1;
+    animation: chartLineDraw 0.78s ease forwards;
+    vector-effect: non-scaling-stroke;
+}
+
+.strategy_capital_hover {
+    stroke: rgba(255, 255, 255, 0.2);
+    stroke-dasharray: 4 6;
+    vector-effect: non-scaling-stroke;
+}
+
+.strategy_capital_tooltip {
+    position: absolute;
+    z-index: 2;
+    min-width: 170px;
+    transform: translate(14px, -50%);
+    border: 1.5px solid var(--black-t);
+    border-radius: 14px;
+    background: rgba(20, 20, 22, 0.94);
+    box-shadow: 0 18px 50px rgba(0, 0, 0, 0.35);
+    padding: 10px;
+    pointer-events: none;
+}
+
+.strategy_capital_tooltip_left {
+    transform: translate(calc(-100% - 14px), -50%);
+}
+
+.strategy_capital_tooltip strong {
+    display: block;
+    color: var(--white);
+    font-size: 14px;
+}
+
+.strategy_capital_tooltip span,
+.strategy_capital_tooltip p {
+    display: block;
+    margin-top: 4px;
+    color: rgba(255, 255, 255, 0.58);
+    font-size: 12px;
+}
+
+.strategy_connect_hero {
+    max-width: 520px;
+    padding: 24px;
+    text-align: center;
+}
+
+.strategy_connect_hero span {
+    display: inline-flex;
+    border-radius: 999px;
+    padding: 6px 10px;
+    background: var(--primary-blue-glass);
+    color: var(--primary-blue);
+    font-size: 12px;
+    font-weight: 700;
+    margin-bottom: 12px;
+}
+
+.strategy_connect_hero h2 {
+    margin: 0;
+    font-size: 28px;
+}
+
+.strategy_connect_hero p {
+    margin-top: 10px;
+    color: rgba(255, 255, 255, 0.58);
+    font-size: 14px;
+    line-height: 1.45;
 }
 
 .strategy_drawer_close {
@@ -432,6 +553,13 @@ grid-template-columns: repeat(1, 1fr);
     padding: 16px 4px 10px;
 }
 
+.strategy_drawer_title_row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
 .strategy_drawer_intro span {
     display: inline-flex;
     width: fit-content;
@@ -449,6 +577,31 @@ grid-template-columns: repeat(1, 1fr);
     margin: 0px 0 0;
     font-size: 24px;
     line-height: 1.1;
+}
+
+.strategy_start_badge {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    border: 1.5px solid var(--black-t);
+    border-radius: 14px;
+    background: var(--black-s);
+    padding: 10px 12px;
+}
+
+.strategy_start_badge span {
+    width: auto;
+    padding: 0;
+    border-radius: 0;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.48);
+    font-size: 12px;
+}
+
+.strategy_start_badge strong {
+    font-size: 13px;
+    color: var(--white);
 }
 
 .strategy_drawer_intro p,
@@ -527,16 +680,54 @@ grid-template-columns: repeat(1, 1fr);
 
 .strategy_history_item {
     display: grid;
-    grid-template-columns: 1fr auto auto;
+    grid-template-columns: minmax(0, 1.15fr) minmax(180px, 0.9fr) auto;
     align-items: center;
-    gap: 8px;
+    gap: 12px;
+    width: 100%;
+    border: 1.5px solid transparent;
     border-radius: 12px;
     background: var(--black);
     padding: 10px;
+    color: white;
+    cursor: pointer;
+    text-align: left;
+    transition: border-color 0.2s ease, background 0.2s ease, transform 0.2s ease;
+}
+
+.strategy_history_item:hover:not(:disabled) {
+    border-color: var(--primary-blue);
+    background: rgba(30, 117, 255, 0.08);
+    transform: translateY(-1px);
+}
+
+.strategy_history_item:disabled {
+    cursor: default;
+    opacity: 0.72;
+}
+
+.strategy_history_asset {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+}
+
+.strategy_history_asset .coin_icon,
+.strategy_history_asset .coin_icon_fallback {
+    width: 38px;
+    height: 38px;
+}
+
+.strategy_history_asset div,
+.strategy_history_prices {
+    min-width: 0;
 }
 
 .strategy_history_item h4 {
     font-size: 14px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .strategy_history_item p {
@@ -544,39 +735,284 @@ grid-template-columns: repeat(1, 1fr);
     font-size: 12px;
 }
 
-.strategy_history_item span {
-    border-radius: 999px;
-    background: var(--black-t);
-    color: rgba(255, 255, 255, 0.72);
-    font-size: 12px;
-    padding: 5px 8px;
+.strategy_history_prices {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.strategy_history_prices span {
+    color: rgba(255, 255, 255, 0.86);
+    font-size: 13px;
+    font-weight: 700;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.strategy_history_prices small {
+    color: rgba(255, 255, 255, 0.46);
+    font-size: 11px;
+    line-height: 1.35;
 }
 
 .strategy_history_item strong {
+    font-size: 13px;
+}
+
+.strategy_history_result {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 4px;
+    white-space: nowrap;
+}
+
+.strategy_history_result small {
+    font-size: 11px;
+    color: inherit;
+    opacity: 0.72;
+}
+
+.strategy_history_result_positive {
     color: var(--green);
-    font-size: 13px;
 }
 
-.strategy_slider_box {
+.strategy_history_result_negative {
+    color: var(--red);
+}
+
+.strategy_history_result_neutral {
+    color: var(--gray);
+}
+
+.strategy_connect_panel {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding-top: 14px;
+}
+
+.strategy_trade_side_switch {
     display: grid;
-    grid-template-columns: 1fr auto;
-    gap: 10px;
-    align-items: center;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+    padding: 6px;
+    border-radius: 16px;
+    border: 1px solid var(--black-t);
+    background-color: var(--black);
 }
 
-.strategy_slider_box span {
-    color: rgba(255, 255, 255, 0.72);
-    font-size: 13px;
+.strategy_trade_side_switch button {
+    min-height: 42px;
+    border: 0;
+    border-radius: 12px;
+    color: var(--gray);
+    background-color: transparent;
+    font-size: 14px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background-color 0.2s ease, color 0.2s ease;
 }
 
-.strategy_slider_box strong {
+.strategy_trade_side_switch button.active {
+    color: white;
+    background-color: var(--primary-blue);
+}
+
+.strategy_trade_balance_grid,
+.strategy_trade_result_card {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.strategy_trade_balance_grid div,
+.strategy_trade_result_card div {
+    padding: 12px;
+    border-radius: 14px;
+    border: 1px solid var(--black-t);
+    background-color: var(--black);
+}
+
+.strategy_trade_balance_grid .border_blue {
+    border-color: rgba(30, 117, 255, 0.44);
+    background: var(--primary-blue-glass);
+}
+
+.strategy_trade_balance_grid span,
+.strategy_trade_result_card span,
+.strategy_trade_input_label span {
+    color: var(--gray);
+    font-size: 12px;
+}
+
+.strategy_trade_balance_grid p {
+    padding-top: 5px;
+    color: white;
+    font-size: 15px;
+    font-weight: 700;
+}
+
+.strategy_trade_balance_grid .border_blue p {
     color: var(--primary-blue);
 }
 
-.strategy_slider_box input {
+.strategy_trade_result_card strong {
+    display: block;
+    padding-top: 5px;
+    color: white;
+    font-size: 14px;
+    font-weight: 700;
+}
+
+.strategy_trade_result_card div:first-child {
     grid-column: 1 / -1;
+}
+
+.strategy_trade_input_label {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+}
+
+.strategy_trade_input_label input {
     width: 100%;
-    accent-color: var(--primary-blue);
+    min-height: 48px;
+    border-radius: 14px;
+    border: 1px solid var(--black-t);
+    background-color: var(--black);
+    color: white;
+    padding: 0 14px;
+    font-size: 16px;
+    outline: none;
+}
+
+.strategy_trade_input_label input:focus {
+    border-color: var(--primary-blue);
+}
+
+.strategy_trade_quick_amounts {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.strategy_trade_quick_amounts button {
+    min-height: 38px;
+    border: 1px solid var(--black-t);
+    border-radius: 12px;
+    background-color: var(--black);
+    color: white;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: border-color 0.2s ease, color 0.2s ease, background-color 0.2s ease;
+}
+
+.strategy_trade_quick_amounts button:hover {
+    border-color: var(--primary-blue);
+    color: var(--primary-blue);
+}
+
+.strategy_connect_field {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    border: 1.5px solid var(--black-t);
+    border-radius: 16px;
+    background: var(--black-s);
+    padding: 12px;
+}
+
+.strategy_connect_field span {
+    color: rgba(255, 255, 255, 0.58);
+    font-size: 12px;
+}
+
+.strategy_connect_field input {
+    width: 100%;
+    border: 1.5px solid var(--black-t);
+    border-radius: 12px;
+    background: var(--black);
+    color: var(--white);
+    outline: none;
+    padding: 12px;
+    font-size: 18px;
+    font-weight: 700;
+}
+
+.strategy_connect_field input:focus {
+    border-color: var(--primary-blue);
+}
+
+.strategy_connect_chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.strategy_connect_chips button {
+    border: 1.5px solid var(--black-t);
+    border-radius: 999px;
+    background: var(--black);
+    color: rgba(255, 255, 255, 0.72);
+    padding: 9px 12px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.strategy_connect_chips button:hover,
+.strategy_connect_chips button.active {
+    border-color: var(--primary-blue);
+    background: var(--primary-blue-glass);
+    color: var(--primary-blue);
+}
+
+.strategy_connect_summary {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.strategy_connect_summary div {
+    border: 1.5px solid var(--black-t);
+    border-radius: 14px;
+    background: var(--black-s);
+    padding: 12px;
+}
+
+.strategy_connect_summary span {
+    display: block;
+    color: rgba(255, 255, 255, 0.48);
+    font-size: 12px;
+    margin-bottom: 6px;
+}
+
+.strategy_connect_summary strong {
+    color: var(--white);
+    font-size: 13px;
+}
+
+.strategy_connect_message {
+    border: 1.5px solid rgba(0, 255, 171, 0.24);
+    border-radius: 14px;
+    background: rgba(0, 255, 171, 0.08);
+    color: var(--green);
+    padding: 12px;
+    font-size: 13px;
+}
+
+.strategy_connect_hint {
+    color: var(--gray);
+    font-size: 12px;
+    line-height: 1.35;
+}
+
+.strategy_connect_actions {
+    display: grid;
+    grid-template-columns: 0.45fr 1fr;
+    gap: 10px;
 }
 
 .strategy_connect_button {
@@ -855,11 +1291,29 @@ padding-right: 70px;
     flex-basis: 320px;
     width: 320px;
 }
+.cardmarketblocklist_strategies {
+    grid-template-columns: 1fr;
+}
+.cardmarketblocklist_strategies .marketcard_container {
+    width: 100%;
+}
 .strategy_drawer_overlay {
     padding: 8px;
 }
 .strategy_drawer {
     width: 100%;
+}
+.strategy_drawer_hero {
+    min-height: 240px;
+}
+.strategy_connect_summary {
+    grid-template-columns: 1fr;
+}
+.strategy_trade_side_switch,
+.strategy_trade_balance_grid,
+.strategy_trade_result_card,
+.strategy_trade_quick_amounts {
+    grid-template-columns: 1fr;
 }
 .ttcoinww{
     padding-left: 0px !important;
@@ -882,10 +1336,17 @@ padding-right: 70px;
     grid-template-columns: 1fr;
 }
 .strategy_history_item {
-    grid-template-columns: 1fr auto;
+    grid-template-columns: 1fr;
+    align-items: flex-start;
 }
 .strategy_history_item strong {
-    grid-column: 1 / -1;
+    grid-column: auto;
+}
+.strategy_history_result {
+    align-items: flex-start;
+}
+.strategy_connect_actions {
+    grid-template-columns: 1fr;
 }
 .disMob{
     display: none;

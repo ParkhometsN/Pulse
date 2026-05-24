@@ -36,6 +36,7 @@
 
 .app_pages{
     height: 100%;
+    animation: appPageIn 0.24s ease both;
 }
 
 .app_outlet_wrapper {
@@ -54,10 +55,20 @@
 .usV{
     min-width: 870px;
 }
+@keyframes appPageIn {
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
 @container app-container (max-width: 1216px) {
     .contentmarketstategy {
-        display: inline !important;  /* временно с !important для теста */
-        background: red; /* добавим для проверки, что правило срабатывает */
+        display: block;
     }
     .chartUserContainer {
     gap: 10px;
