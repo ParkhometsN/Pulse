@@ -9,6 +9,8 @@ from src.config import settings
 
 _pool: asyncpg.Pool | None = None
 
+SCHEMA_COMMAND_TIMEOUT_SECONDS = 60
+
 
 def _normalize_neon_dsn(dsn: str) -> str:
     parts = urlsplit(dsn)
@@ -54,7 +56,7 @@ async def connect_database() -> None:
         ssl=_resolve_database_ssl(dsn),
         min_size=1,
         max_size=5,
-        command_timeout=15,
+        command_timeout=SCHEMA_COMMAND_TIMEOUT_SECONDS,
         max_inactive_connection_lifetime=60,
     )
 
@@ -222,19 +224,74 @@ async def ensure_auth_schema() -> None:
         )
         await connection.execute(
             """
-            alter table ai_strategy_connections
-            add column if not exists virtual_capital numeric(24, 10) not null default 100000,
-            add column if not exists universe varchar(30) not null default 'mixed',
-            add column if not exists risk_profile varchar(30) not null default 'balanced',
-            add column if not exists capital_currency varchar(12) not null default 'RUB',
-            add column if not exists margin_enabled boolean not null default false,
-            add column if not exists margin_mode varchar(30) not null default 'none',
-            add column if not exists leverage numeric(8, 3) not null default 1,
-            add column if not exists is_active boolean not null default true,
-            add column if not exists connected_at timestamptz not null default now(),
-            add column if not exists updated_at timestamptz not null default now()
+            create table if not exists ai_strategy_events (
+                id uuid primary key default gen_random_uuid(),
+                user_id uuid not null references users(id) on delete cascade,
+                strategy_id varchar(80) not null,
+                event_key varchar(255) not null,
+                asset_symbol varchar(40) not null,
+                event_type varchar(60) not null,
+                severity numeric(8, 4) not null default 0,
+                result_percent numeric(12, 6) not null default 0,
+                result_amount numeric(24, 10) not null default 0,
+                close_reason varchar(80),
+                context jsonb not null default '{}'::jsonb,
+                lesson jsonb not null default '{}'::jsonb,
+                created_at timestamptz not null default now(),
+                unique(user_id, event_key)
+            )
             """
         )
+        await connection.execute(
+            """
+            create table if not exists ai_strategy_memory (
+                id uuid primary key default gen_random_uuid(),
+                user_id uuid not null references users(id) on delete cascade,
+                strategy_id varchar(80) not null,
+                asset_symbol varchar(40) not null,
+                trades_count integer not null default 0,
+                wins_count integer not null default 0,
+                losses_count integer not null default 0,
+                net_result_amount numeric(24, 10) not null default 0,
+                avg_result_percent numeric(12, 6) not null default 0,
+                memory_score numeric(8, 4) not null default 0,
+                last_event_type varchar(60),
+                last_lesson jsonb not null default '{}'::jsonb,
+                gpt_review jsonb not null default '{}'::jsonb,
+                last_reviewed_at timestamptz,
+                created_at timestamptz not null default now(),
+                updated_at timestamptz not null default now(),
+                unique(user_id, strategy_id, asset_symbol)
+            )
+            """
+        )
+        strategy_connection_columns = {
+            row["column_name"]
+            for row in await connection.fetch(
+                """
+                select column_name
+                from information_schema.columns
+                where table_schema = current_schema()
+                  and table_name = 'ai_strategy_connections'
+                """
+            )
+        }
+        strategy_connection_migrations = {
+            "virtual_capital": "alter table ai_strategy_connections add column virtual_capital numeric(24, 10) not null default 100000",
+            "universe": "alter table ai_strategy_connections add column universe varchar(30) not null default 'mixed'",
+            "risk_profile": "alter table ai_strategy_connections add column risk_profile varchar(30) not null default 'balanced'",
+            "capital_currency": "alter table ai_strategy_connections add column capital_currency varchar(12) not null default 'RUB'",
+            "margin_enabled": "alter table ai_strategy_connections add column margin_enabled boolean not null default false",
+            "margin_mode": "alter table ai_strategy_connections add column margin_mode varchar(30) not null default 'none'",
+            "leverage": "alter table ai_strategy_connections add column leverage numeric(8, 3) not null default 1",
+            "is_active": "alter table ai_strategy_connections add column is_active boolean not null default true",
+            "connected_at": "alter table ai_strategy_connections add column connected_at timestamptz not null default now()",
+            "updated_at": "alter table ai_strategy_connections add column updated_at timestamptz not null default now()",
+        }
+
+        for column_name, statement in strategy_connection_migrations.items():
+            if column_name not in strategy_connection_columns:
+                await connection.execute(statement)
         await connection.execute(
             """
             create table if not exists password_reset_codes (
@@ -278,4 +335,10 @@ async def ensure_auth_schema() -> None:
         )
         await connection.execute(
             "create index if not exists idx_ai_strategy_connections_user on ai_strategy_connections(user_id, is_active)"
+        )
+        await connection.execute(
+            "create index if not exists idx_ai_strategy_events_user_strategy on ai_strategy_events(user_id, strategy_id, created_at desc)"
+        )
+        await connection.execute(
+            "create index if not exists idx_ai_strategy_memory_user_strategy on ai_strategy_memory(user_id, strategy_id, memory_score desc)"
         )

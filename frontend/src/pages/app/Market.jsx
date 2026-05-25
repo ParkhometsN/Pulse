@@ -150,6 +150,23 @@ const getStrategyCapitalRub = (value, currency = "RUB") => {
 const formatSignedStrategyMoney = (value) => `${value >= 0 ? "+" : ""}${formatStrategyMoney(value)}`;
 
 const getStrategyCapital = (strategy) => {
+  const backendInitial = Number(strategy.startCapital ?? strategy.paperRun?.startCapital);
+  const backendCurrent = Number(strategy.currentCapital ?? strategy.paperRun?.currentCapital);
+  const backendProfit = Number(strategy.profit ?? strategy.paperRun?.profit);
+  const backendRoi = Number(strategy.roi ?? strategy.paperRun?.roi);
+
+  if (Number.isFinite(backendInitial) && Number.isFinite(backendCurrent)) {
+    const profit = Number.isFinite(backendProfit) ? backendProfit : backendCurrent - backendInitial;
+    const roi = Number.isFinite(backendRoi) ? backendRoi : (backendInitial ? (profit / backendInitial) * 100 : 0);
+
+    return {
+      current: backendCurrent,
+      initial: backendInitial,
+      profit,
+      roi,
+    };
+  }
+
   const initial = strategy.chart[0] || 0;
   const current = strategy.chart[strategy.chart.length - 1] || initial;
   const profit = current - initial;
@@ -194,6 +211,20 @@ const getStrategyToneColor = (tone) => {
   return "var(--gray)";
 };
 
+const formatStrategyMemoryScore = (value) => {
+  const number = Number(value) || 0;
+  return `${number > 0 ? "+" : ""}${number.toFixed(1).replace(".", ",")}`;
+};
+
+const getStrategyMemoryTone = (item) => getStrategyTone(item?.memoryScore);
+
+const getStrategyMemorySummary = (item) => (
+  item?.gptReview?.summary
+  || item?.lastLesson?.ruleUpdate
+  || item?.lastLesson?.summary
+  || "Память накопится после закрытых сделок стратегии."
+);
+
 const getChartRoi = (chart = []) => {
   const firstValue = Number(chart[0]);
   const lastValue = Number(chart[chart.length - 1]);
@@ -233,18 +264,6 @@ const formatStrategyDateTime = (value) => {
   });
 };
 
-const formatStrategyPrice = (value, currency = "USDT") => {
-  const number = Number(value);
-
-  if (!Number.isFinite(number)) {
-    return `0 ${currency}`;
-  }
-
-  return `${number.toLocaleString("ru-RU", {
-    maximumFractionDigits: number >= 100 ? 2 : number >= 1 ? 4 : 6,
-  })} ${currency}`;
-};
-
 const formatStrategyQuantity = (value) => {
   const number = Number(value);
 
@@ -263,67 +282,98 @@ const getStrategyTradeBase = (trade) => {
   return symbol.endsWith("USDT") ? symbol.replace(/USDT$/, "") : symbol;
 };
 
-const isStrategyShortTrade = (trade) => String(trade.side || "").toLowerCase() === "short";
+const getStrategyTradeActionTime = (trade) => (
+  trade.status === "closed"
+    ? trade.closedAt || trade.updatedAt || trade.executedAt || trade.date
+    : trade.executedAt || trade.updatedAt || trade.date
+);
 
-const getStrategyTradeActionText = (trade) => {
-  if (trade.status === "closed") {
-    return "Позиция закрыта";
-  }
-
-  return "Позиция открыта";
-};
-
-const getStrategyTradeActionTone = (trade) => {
-  if (trade.status === "closed") {
-    return getStrategyTone(trade.resultPercent);
-  }
-
-  return isStrategyShortTrade(trade) ? "sell" : "buy";
-};
-
-const getStrategyTradeEntryMeta = (trade) => {
-  const quoteCurrency = trade.quoteCurrency || "USDT";
-  const entryAction = isStrategyShortTrade(trade) ? "Вход: продажа" : "Вход: покупка";
-
-  return `${entryAction} · ${formatStrategyPrice(trade.entryPrice, quoteCurrency)}`;
-};
-
-const getStrategyTradeSizeMeta = (trade) => {
+const getStrategyTradeAmountMeta = (trade) => {
   const baseAsset = getStrategyTradeBase(trade);
 
-  return `${formatStrategyQuantity(trade.quantity)} ${baseAsset} · ${formatStrategyCapital(
+  return `${formatStrategyQuantity(trade.quantity)} · ${formatStrategyCapital(
     trade.virtualAmount || 0,
     trade.settlementCurrency || "RUB"
-  )}`;
+  )} · ${baseAsset}`;
 };
 
-const getStrategyTradeCompactMeta = (trade) => {
-  const quoteCurrency = trade.quoteCurrency || "USDT";
-  const price = trade.status === "closed"
-    ? trade.exitPrice || trade.currentPrice
-    : trade.currentPrice || trade.entryPrice;
-
-  if (trade.status === "closed") {
-    const exitAction = isStrategyShortTrade(trade) ? "Выход: покупка" : "Выход: продажа";
-
-    return `${exitAction} · ${formatStrategyPrice(price, quoteCurrency)}`;
-  }
-
-  return `Сейчас · ${formatStrategyPrice(price, quoteCurrency)}`;
-};
+const getStrategyTradePnlMeta = (trade) => (
+  `${formatSignedStrategyPercent(trade.resultPercent)} · ${formatSignedStrategyMoney(trade.resultAmount || 0)}`
+);
 
 const getStrategyChartPoints = (strategy) => {
+  const currentCapital = Number(strategy.currentCapital ?? strategy.paperRun?.currentCapital);
+  const initialCapital = Number(strategy.startCapital ?? strategy.paperRun?.startCapital ?? strategy.chart?.[0] ?? 0);
+  const strategyTrades = [
+    ...(Array.isArray(strategy.historyAllTime) ? strategy.historyAllTime : []),
+    ...(Array.isArray(strategy.paperRun?.trades) ? strategy.paperRun.trades : []),
+  ];
+  const strategyStartDate = [
+    strategy.connection?.connectedAt,
+    strategy.startedAt,
+    strategy.paperRun?.startedAt,
+    ...strategyTrades.map((trade) => trade.executedAt || trade.closedAt || trade.updatedAt),
+  ]
+    .map((value) => (value ? new Date(value) : null))
+    .filter((date) => date && !Number.isNaN(date.getTime()))
+    .sort((leftDate, rightDate) => leftDate.getTime() - rightDate.getTime())[0];
+  const strategyStartAt = strategyStartDate?.toISOString();
+  const updatedAt = strategy.updatedAt || strategy.paperRun?.updatedAt || new Date().toISOString();
+  const prependStartPoint = (points) => {
+    const startDate = strategyStartAt ? new Date(strategyStartAt) : null;
+    const firstDate = points[0]?.time ? new Date(points[0].time) : null;
+
+    if (
+      !startDate
+      || Number.isNaN(startDate.getTime())
+      || !firstDate
+      || Number.isNaN(firstDate.getTime())
+      || firstDate.getTime() - startDate.getTime() <= 60 * 1000
+    ) {
+      return points;
+    }
+
+    return [
+      {
+        time: startDate.toISOString(),
+        value: Number.isFinite(initialCapital) && initialCapital > 0 ? initialCapital : Number(points[0]?.value) || 0,
+        label: "Старт стратегии",
+      },
+      ...points,
+    ];
+  };
+  const appendCurrentPoint = (points) => {
+    if (!Number.isFinite(currentCapital) || !points.length) {
+      return points;
+    }
+
+    const lastValue = Number(points[points.length - 1]?.value);
+
+    if (Number.isFinite(lastValue) && Math.abs(lastValue - currentCapital) < 0.01) {
+      return points;
+    }
+
+    return [
+      ...points,
+      {
+        time: updatedAt,
+        value: currentCapital,
+        label: "Текущий капитал",
+      },
+    ];
+  };
+
   if (Array.isArray(strategy.chartPoints) && strategy.chartPoints.length > 1) {
-    return strategy.chartPoints;
+    return prependStartPoint(appendCurrentPoint(strategy.chartPoints));
   }
 
-  const startDate = strategy.startedAt ? new Date(strategy.startedAt) : new Date();
+  const startDate = strategyStartAt ? new Date(strategyStartAt) : new Date();
 
-  return (strategy.chart || []).map((value, index) => ({
+  return prependStartPoint(appendCurrentPoint((strategy.chart || []).map((value, index) => ({
     value,
     time: new Date(startDate.getTime() + index * 11 * 60 * 1000).toISOString(),
     label: index === 0 ? "Старт" : `Шаг ${index}`,
-  }));
+  }))));
 };
 
 const formatNumberLike = (value) => {
@@ -342,8 +392,9 @@ const mergeStrategyRun = (baseStrategy, run) => {
   }
 
   const trades = Array.isArray(run.trades) ? run.trades : [];
-  const history = trades.length
-    ? trades.map((trade, index) => ({
+  const openTrades = trades.filter((trade) => trade.status !== "closed");
+  const history = openTrades.length
+    ? openTrades.map((trade, index) => ({
       date: `${formatStrategyDateTime(trade.executedAt || run.startedAt)} · ${Math.round(Number(trade.probability) || 0)}%`,
       asset: trade.asset || trade.name || `Сигнал ${index + 1}`,
       name: trade.name || trade.asset || `Сигнал ${index + 1}`,
@@ -371,7 +422,7 @@ const mergeStrategyRun = (baseStrategy, run) => {
       date: formatStrategyRunDate(run.runDate),
       asset: "NO_SIGNAL",
       side: "Фильтр",
-      result: "Вероятность ниже 60%",
+      result: "Открытых позиций сейчас нет",
     }];
 
   const roi = Number(run.roi ?? getChartRoi(run.chart));
@@ -385,13 +436,13 @@ const mergeStrategyRun = (baseStrategy, run) => {
     history,
     stats: [
       { label: "Модель", value: baseStrategy.stats[0]?.value || "Pulse AI" },
-      { label: "Капитал", value: formatStrategyMoney(run.startCapital || 100000) },
       { label: "Сделок сегодня", value: String(trades.length) },
       { label: "Точность сигналов", value: `${formatNumberLike(run.accuracy)}%` },
       { label: "Просадка", value: formatSignedStrategyPercent(run.maxDrawdown) },
-      { label: "Порог входа", value: `${run.threshold || 60}%` },
     ],
     historyAllTime: Array.isArray(run.historyAllTime) ? run.historyAllTime : trades,
+    memory: Array.isArray(run.memory) ? run.memory : [],
+    errorLog: Array.isArray(run.errorLog) ? run.errorLog : [],
     connection: run.connection || null,
     margin: run.margin || null,
     capitalCurrency: run.capitalCurrency || run.connection?.capitalCurrency || "RUB",
@@ -482,6 +533,7 @@ function StrategyLineChart({ values = [], color = "var(--primary-blue)", size = 
 
 function StrategyCapitalChart({ strategy, color }) {
   const [hoveredPoint, setHoveredPoint] = useState(null);
+  const chartRef = useRef(null);
   const chartPoints = getStrategyChartPoints(strategy)
     .map((point) => ({
       ...point,
@@ -522,23 +574,41 @@ function StrategyCapitalChart({ strategy, color }) {
   const areaPath = `${linePath} L ${width - padding.right} ${height - padding.bottom} L ${padding.left} ${height - padding.bottom} Z`;
   const gridValues = [visualMax, visualMax - visualRange * 0.33, visualMax - visualRange * 0.66, visualMin];
   const lastPoint = points[points.length - 1] || { x: padding.left, y: padding.top, value: 0 };
-  const tooltipGoesLeft = hoveredPoint ? hoveredPoint.x > width - 230 : false;
+  const tooltipGoesLeft = hoveredPoint ? hoveredPoint.cursorX > hoveredPoint.chartWidth - 220 : false;
 
   const handlePointerMove = (event) => {
-    const rect = event.currentTarget.getBoundingClientRect();
-    const x = ((event.clientX - rect.left) / rect.width) * width;
+    const svgRect = event.currentTarget.getBoundingClientRect();
+    const chartRect = chartRef.current?.getBoundingClientRect() || svgRect;
+    const scale = Math.min(svgRect.width / width, svgRect.height / height) || 1;
+    const renderedWidth = width * scale;
+    const renderedHeight = height * scale;
+    const offsetX = (svgRect.width - renderedWidth) / 2;
+    const offsetY = (svgRect.height - renderedHeight) / 2;
+    const rawX = ((event.clientX - svgRect.left - offsetX) / renderedWidth) * width;
+    const rawY = ((event.clientY - svgRect.top - offsetY) / renderedHeight) * height;
+    const x = Math.min(Math.max(rawX, 0), width);
+    const cursorX = Math.min(Math.max(event.clientX - chartRect.left, 10), Math.max(chartRect.width - 10, 10));
+    const cursorY = Math.min(Math.max(event.clientY - chartRect.top, 24), Math.max(chartRect.height - 24, 24));
     const nearestPoint = points.reduce((nearest, point) => (
       Math.abs(point.x - x) < Math.abs(nearest.x - x) ? point : nearest
     ), points[0]);
 
-    setHoveredPoint(nearestPoint);
+    setHoveredPoint({
+      ...nearestPoint,
+      cursorX,
+      cursorY,
+      chartWidth: chartRect.width,
+      chartHeight: chartRect.height,
+      pointerY: Math.min(Math.max(rawY, 0), height),
+    });
   };
 
   return (
-    <div className="strategy_capital_chart">
+    <div className="strategy_capital_chart" ref={chartRef}>
       <svg
         viewBox={`0 0 ${width} ${height}`}
         preserveAspectRatio="xMidYMid meet"
+        onPointerEnter={handlePointerMove}
         onPointerMove={handlePointerMove}
         onPointerLeave={() => setHoveredPoint(null)}
       >
@@ -595,8 +665,8 @@ function StrategyCapitalChart({ strategy, color }) {
         <div
           className={`strategy_capital_tooltip ${tooltipGoesLeft ? "strategy_capital_tooltip_left" : ""}`}
           style={{
-            left: `${(hoveredPoint.x / width) * 100}%`,
-            top: `${(Math.min(Math.max(hoveredPoint.y, 72), height - 66) / height) * 100}%`,
+            left: `${hoveredPoint.cursorX}px`,
+            top: `${hoveredPoint.cursorY}px`,
           }}
         >
           <strong>{formatStrategyMoney(hoveredPoint.value)}</strong>
@@ -859,11 +929,10 @@ function StrategyHistoryPanel({
         <div className="strategy_history_empty">{error}</div>
       ) : (
         <div className="strategy_history_list strategy_history_list_all">
-                {historyItems.length ? historyItems.map((item, index) => {
-                  const tone = getStrategyTone(item.resultPercent);
-                  const actionTone = getStrategyTradeActionTone(item);
-                  const baseAsset = getStrategyTradeBase(item);
-                  const isNavigable = item.asset && item.asset !== "NO_SIGNAL";
+          {historyItems.length ? historyItems.map((item, index) => {
+            const tone = getStrategyTone(item.resultPercent);
+            const baseAsset = getStrategyTradeBase(item);
+            const isNavigable = item.asset && item.asset !== "NO_SIGNAL";
 
             return (
               <button
@@ -887,23 +956,16 @@ function StrategyHistoryPanel({
                   <div>
                     <h4>{item.name || item.asset || "Нет сигнала"}</h4>
                     <p>
-                      {formatStrategyDateTime(item.closedAt || item.updatedAt || item.executedAt || item.date)}
-                      {Number(item.probability) > 0 ? ` · ${Math.round(Number(item.probability))}%` : ""}
+                      Pulse AI · {formatStrategyDateTime(getStrategyTradeActionTime(item))} · {baseAsset}
                     </p>
                   </div>
                 </div>
                 <div className="strategy_history_prices">
-                  <small className={`strategy_history_action strategy_history_action_${actionTone}`}>
-                    {getStrategyTradeActionText(item)}
+                  <span>{getStrategyTradeAmountMeta(item)}</span>
+                  <small className={`strategy_history_pnl strategy_history_result_${tone}`}>
+                    {getStrategyTradePnlMeta(item)}
                   </small>
-                  <span>{getStrategyTradeSizeMeta(item)}</span>
-                  <small>{getStrategyTradeEntryMeta(item)}</small>
-                  <small>{getStrategyTradeCompactMeta(item)}</small>
                 </div>
-                <strong className={`strategy_history_result strategy_history_result_${tone}`}>
-                  {formatSignedStrategyPercent(item.resultPercent)}
-                  <small>{formatSignedStrategyMoney(item.resultAmount || 0)}</small>
-                </strong>
               </button>
             );
           }) : (
@@ -1049,13 +1111,12 @@ function StrategyDrawer({
 
             <div className="strategy_drawer_section">
               <div className="strategy_section_title">
-                <h3>История торговли</h3>
-                <p>Последние сделки стратегии</p>
+                <h3>Открытые позиции</h3>
+                <p>Что стратегия держит прямо сейчас</p>
               </div>
-              <div className="strategy_history_list">
+              <div className="strategy_history_list strategy_history_list_preview">
                 {strategy.history.map((item) => {
                   const tone = getStrategyTone(item.resultPercent);
-                  const actionTone = getStrategyTradeActionTone(item);
                   const baseAsset = getStrategyTradeBase(item);
                   const isNavigable = item.asset && item.asset !== "NO_SIGNAL";
 
@@ -1070,8 +1131,8 @@ function StrategyDrawer({
                         <div className="strategy_history_asset">
                           <CoinIcon baseCoin="AI" label="AI" />
                           <div>
-                            <h4>Сигналов пока нет</h4>
-                            <p>{item.result || "Вероятность входа ниже 60%"}</p>
+                            <h4>Открытых позиций пока нет</h4>
+                            <p>{item.result || "Стратегия ждет подходящий вход"}</p>
                           </div>
                         </div>
                       </button>
@@ -1094,25 +1155,54 @@ function StrategyDrawer({
                         />
                         <div>
                           <h4>{item.name || item.asset}</h4>
-                          <p>{item.date}</p>
+                          <p>Pulse AI · {formatStrategyDateTime(getStrategyTradeActionTime(item))} · {baseAsset}</p>
                         </div>
                       </div>
                       <div className="strategy_history_prices">
-                        <small className={`strategy_history_action strategy_history_action_${actionTone}`}>
-                          {getStrategyTradeActionText(item)}
+                        <span>{getStrategyTradeAmountMeta(item)}</span>
+                        <small className={`strategy_history_pnl strategy_history_result_${tone}`}>
+                          {getStrategyTradePnlMeta(item)}
                         </small>
-                        <span>{getStrategyTradeSizeMeta(item)}</span>
-                        <small>{getStrategyTradeEntryMeta(item)}</small>
-                        <small>{getStrategyTradeCompactMeta(item)}</small>
                       </div>
-                      <strong className={`strategy_history_result strategy_history_result_${tone}`}>
-                        {formatSignedStrategyPercent(item.resultPercent)}
-                        <small>{formatSignedStrategyMoney(item.resultAmount || 0)}</small>
-                      </strong>
                     </button>
                   );
                 })}
               </div>
+            </div>
+
+            <div className="strategy_drawer_section">
+              <div className="strategy_section_title">
+                <h3>База ума</h3>
+                <p>Ошибки, уроки и корректировка вероятности следующих входов</p>
+              </div>
+              {strategy.memory?.length ? (
+                <div className="strategy_memory_grid">
+                  {strategy.memory.slice(0, 4).map((item) => {
+                    const tone = getStrategyMemoryTone(item);
+                    const winRate = item.tradesCount
+                      ? Math.round((Number(item.winsCount || 0) / Number(item.tradesCount || 1)) * 100)
+                      : 0;
+
+                    return (
+                      <div
+                        className={`strategy_memory_item strategy_memory_item_${tone}`}
+                        key={`${strategy.id}-memory-${item.assetSymbol}`}
+                      >
+                        <div>
+                          <strong>{item.assetSymbol}</strong>
+                          <span>{item.tradesCount} сделок · win {winRate}%</span>
+                        </div>
+                        <p>{getStrategyMemorySummary(item)}</p>
+                        <small>Вес памяти {formatStrategyMemoryScore(item.memoryScore)}</small>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="strategy_history_empty">
+                  База ума появится после первых закрытых сделок: стратегия начнет записывать ошибки, прибыльные паттерны и правила повторного входа.
+                </div>
+              )}
             </div>
 
             <Buttons type="primary-full" className="strategy_connect_button" onClick={onOpenConnect}>
@@ -1183,6 +1273,8 @@ export default function Market() {
   const [favorites, setFavorites] = useState(getInitialFavorites);
 	  const [searchIndex, setSearchIndex] = useState([]);
 	  const [isSearchLoading, setIsSearchLoading] = useState(false);
+	  const [hasSearchIndexLoaded, setHasSearchIndexLoaded] = useState(false);
+	  const [searchIndexError, setSearchIndexError] = useState("");
 	  const [isSearchFocused, setIsSearchFocused] = useState(false);
   const [strategyRuns, setStrategyRuns] = useState([]);
   const [isStrategiesLoading, setIsStrategiesLoading] = useState(activePage === "strategies");
@@ -2043,11 +2135,12 @@ export default function Market() {
   }, [normalizeStock, stocksPage]);
 
   const fetchSearchIndex = useCallback(async () => {
-    if (searchIndex.length > 0) {
+    if (hasSearchIndexLoaded) {
       return searchIndex;
     }
 
     setIsSearchLoading(true);
+    setSearchIndexError("");
 
 	    try {
 	      const [cryptoResponse, stocksResponse] = await Promise.all([
@@ -2068,14 +2161,16 @@ export default function Market() {
 	      const nextIndex = [...cryptoItems, ...stockItems];
 
       setSearchIndex(nextIndex);
+      setHasSearchIndexLoaded(true);
       return nextIndex;
     } catch {
       setSearchIndex([]);
+      setSearchIndexError("Не удалось загрузить поиск. Попробуйте еще раз.");
       return [];
     } finally {
       setIsSearchLoading(false);
     }
-  }, [searchIndex]);
+  }, [hasSearchIndexLoaded, searchIndex]);
 
   const getSearchRank = useCallback((asset, rawQuery = searchQuery) => {
     const query = rawQuery.trim().toLowerCase();
@@ -2160,6 +2255,9 @@ export default function Market() {
   const sortedStocks = stocks;
 
   const searchResults = getRankedSearchResults(searchIndex, searchQuery).slice(0, 8);
+  const isSearchPending = Boolean(searchQuery.trim()) && (
+    isSearchLoading || (!hasSearchIndexLoaded && !searchIndexError)
+  );
 
   const cryptoTotalPages = Math.max(
     1,
@@ -2378,12 +2476,19 @@ export default function Market() {
                   icon={SearchIcon}
                   value={searchQuery}
                   onChange={(event) => {
-                    setSearchQuery(event.target.value);
+                    const nextValue = event.target.value;
+                    setSearchQuery(nextValue);
+                    if (searchIndexError) {
+                      setSearchIndexError("");
+                    }
+                    if (nextValue.trim() && !hasSearchIndexLoaded && !isSearchLoading) {
+                      fetchSearchIndex();
+                    }
                   }}
                   onFocus={() => {
                     setIsSearchFocused(true);
 
-                    if (searchIndex.length === 0) {
+                    if (!hasSearchIndexLoaded) {
                       fetchSearchIndex();
                     }
                   }}
@@ -2402,9 +2507,13 @@ export default function Market() {
                 />
                 {isSearchFocused && searchQuery.trim() && (
                   <div className="market_search_results">
-                    {isSearchLoading ? (
+                    {isSearchPending ? (
+                      <div className="market_search_loader">
+                        <LoaderAnimation variant="spinner" label="Ищем активы" />
+                      </div>
+                    ) : searchIndexError ? (
                       <div className="market_search_empty">
-                        Ищем активы...
+                        {searchIndexError}
                       </div>
                     ) : searchResults.length > 0 ? (
                       searchResults.map((asset) => (

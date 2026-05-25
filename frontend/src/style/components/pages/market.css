@@ -63,6 +63,13 @@ grid-template-columns: repeat(1, 1fr);
     grid-column: 1 / -1;
     padding: 10px;
 }
+.market_search_loader {
+    min-height: 72px;
+}
+
+.market_search_loader .loaderPulse_wrap {
+    min-height: 72px;
+}
 .list_ofCois{
     width: 100%;
     overflow-y: hidden;
@@ -700,15 +707,15 @@ grid-template-columns: repeat(1, 1fr);
 }
 
 .strategy_history_item {
-    display: grid;
-    grid-template-columns: minmax(0, 1.2fr) minmax(170px, 0.82fr) minmax(72px, auto);
+    display: flex;
+    justify-content: space-between;
     align-items: center;
-    gap: 8px;
+    gap: 12px;
     width: 100%;
-    border: 1px solid rgba(255, 255, 255, 0.05);
-    border-radius: 12px;
-    background: rgba(255, 255, 255, 0.025);
-    padding: 8px 10px;
+    border: 1px solid var(--black-t);
+    border-radius: 16px;
+    background: var(--black);
+    padding: 12px 14px;
     color: white;
     cursor: pointer;
     text-align: left;
@@ -717,8 +724,7 @@ grid-template-columns: repeat(1, 1fr);
 
 .strategy_history_item:hover:not(:disabled) {
     border-color: var(--primary-blue);
-    background: rgba(30, 117, 255, 0.07);
-    transform: translateY(-1px);
+    background: rgba(30, 117, 255, 0.055);
 }
 
 .strategy_history_item:disabled {
@@ -737,6 +743,7 @@ grid-template-columns: repeat(1, 1fr);
 .strategy_history_asset .coin_icon_fallback {
     width: 34px;
     height: 34px;
+    flex: 0 0 34px;
 }
 
 .strategy_history_asset div,
@@ -757,9 +764,12 @@ grid-template-columns: repeat(1, 1fr);
 }
 
 .strategy_history_prices {
+    align-items: flex-end;
     display: flex;
     flex-direction: column;
-    gap: 3px;
+    gap: 6px;
+    flex: 0 0 auto;
+    text-align: right;
 }
 
 .strategy_history_prices span {
@@ -792,8 +802,8 @@ grid-template-columns: repeat(1, 1fr);
 .strategy_history_action {
     width: fit-content;
     border-radius: 999px;
-    padding: 3px 7px;
-    font-size: 9.5px !important;
+    padding: 4px 10px;
+    font-size: 11px !important;
     font-weight: 650;
 }
 
@@ -805,6 +815,11 @@ grid-template-columns: repeat(1, 1fr);
 .strategy_history_action_sell {
     background: rgba(255, 59, 48, 0.1);
     color: var(--red) !important;
+}
+
+.strategy_history_pnl {
+    font-size: 11px !important;
+    font-weight: 650;
 }
 
 .strategy_history_action_positive {
@@ -829,15 +844,15 @@ grid-template-columns: repeat(1, 1fr);
 }
 
 .strategy_history_result_positive {
-    color: var(--green);
+    color: var(--green) !important;
 }
 
 .strategy_history_result_negative {
-    color: var(--red);
+    color: var(--red) !important;
 }
 
 .strategy_history_result_neutral {
-    color: var(--gray);
+    color: rgba(255, 255, 255, 0.58) !important;
 }
 
 .strategy_history_button {
@@ -892,9 +907,71 @@ grid-template-columns: repeat(1, 1fr);
 }
 
 .strategy_history_list_all {
-    max-height: 58vh;
+    max-height: 68vh;
     overflow: auto;
-    padding-right: 2px;
+    padding-right: 4px;
+}
+
+.strategy_history_list_preview {
+    max-height: 430px;
+    overflow: auto;
+    padding-right: 4px;
+}
+
+.strategy_memory_grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.strategy_memory_item {
+    border: 1.5px solid var(--black-t);
+    border-radius: 16px;
+    background: var(--black);
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.strategy_memory_item div {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.strategy_memory_item strong {
+    color: var(--white);
+    font-size: 13px;
+}
+
+.strategy_memory_item span,
+.strategy_memory_item p,
+.strategy_memory_item small {
+    color: rgba(255, 255, 255, 0.54);
+    font-size: 11px;
+    line-height: 1.4;
+}
+
+.strategy_memory_item p {
+    margin: 0;
+}
+
+.strategy_memory_item_positive {
+    border-color: rgba(0, 255, 171, 0.28);
+}
+
+.strategy_memory_item_positive small {
+    color: var(--green);
+}
+
+.strategy_memory_item_negative {
+    border-color: rgba(255, 59, 48, 0.28);
+}
+
+.strategy_memory_item_negative small {
+    color: var(--red);
 }
 
 .strategy_connect_panel {
@@ -1538,14 +1615,12 @@ padding-right: 70px;
     grid-template-columns: 1fr;
 }
 .strategy_history_item {
-    grid-template-columns: 1fr;
-    align-items: flex-start;
+    flex-direction: column;
+    align-items: stretch;
 }
-.strategy_history_item strong {
-    grid-column: auto;
-}
-.strategy_history_result {
+.strategy_history_prices {
     align-items: flex-start;
+    text-align: left;
 }
 .strategy_connect_actions {
     grid-template-columns: 1fr;

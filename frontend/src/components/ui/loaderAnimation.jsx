@@ -9,13 +9,13 @@ export default function LoaderAnimation({
     if (variant === "spinner") {
         return (
             <div
-                className={`loaderSpinner_wrap ${className}`.trim()}
+                className={`loaderPulse_wrap ${className}`.trim()}
                 role="status"
                 aria-label={label}
                 aria-busy="true"
                 style={style}
             >
-                <span className="loaderSpinner" aria-hidden="true" />
+                <span>{label}</span>
             </div>
         )
     }
@@ -32,11 +32,6 @@ export default function LoaderAnimation({
                 borderRadius: rounded,
                 ...style,
             }}
-        >
-            <span className="loaderAnimation_line loaderAnimation_lineLarge" aria-hidden="true" />
-            <span className="loaderAnimation_line loaderAnimation_lineMedium" aria-hidden="true" />
-            <span className="loaderAnimation_line loaderAnimation_lineSmall" aria-hidden="true" />
-            <span className="loaderAnimation_orb" aria-hidden="true" />
-        </div>
+        />
     )
 }

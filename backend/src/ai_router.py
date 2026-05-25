@@ -58,10 +58,15 @@ PAPER_SCALP_STOP_LOSS_PERCENT = -1.8
 PAPER_SCALP_DCA_STEP_PERCENT = -0.9
 PAPER_SCALP_MAX_HOLD_MINUTES = 55
 PAPER_SCALP_MOMENTUM_FADE_PROBABILITY = 54
+PAPER_SCALP_PROFIT_LOCK_PERCENT = 0.45
 PAPER_REENTRY_COOLDOWN_MINUTES = 20
 PAPER_CHART_POINT_INTERVAL_SECONDS = 60
 PAPER_SCHEDULER_INTERVAL_SECONDS = 60
-STRATEGY_CANDIDATES_CACHE_TTL_SECONDS = 15
+PAPER_SCHEDULER_STARTUP_DELAY_SECONDS = 20
+PAPER_MAX_DAILY_TRADES = 240
+STRATEGY_MEMORY_SCORE_LIMIT = 15
+STRATEGY_GPT_REVIEW_COOLDOWN_HOURS = 12
+STRATEGY_CANDIDATES_CACHE_TTL_SECONDS = 45
 _strategy_candidates_cache: dict[str, dict[str, Any]] = {}
 PAPER_RISK_MAX_ALLOCATION = {
     "careful": 0.10,
@@ -393,6 +398,74 @@ async def _call_openai_asset_summary(
         return None
 
 
+async def _call_openai_strategy_memory_review(
+    api_key: str | None,
+    model: str,
+    memory_item: dict[str, Any],
+    event: dict[str, Any],
+) -> dict[str, Any] | None:
+    if not api_key:
+        return None
+
+    prompt = {
+        "task": (
+            "Верни только JSON. Проанализируй paper-сделку стратегии и сформулируй урок "
+            "для будущих входов. Это исследовательская симуляция, не персональный совет."
+        ),
+        "memory": memory_item,
+        "latest_event": event,
+        "required_schema": {
+            "summary": "1 short Russian sentence",
+            "mistake": "what went wrong or null",
+            "rule_update": "concrete rule for next entries",
+            "risk_note": "short risk note",
+            "confidence": "number 0-100",
+        },
+    }
+    payload = {
+        "model": model,
+        "input": [
+            {
+                "role": "system",
+                "content": (
+                    "Ты осторожный quantitative trading reviewer. "
+                    "Не обещай доходность, не выдумывай внешние факты, "
+                    "делай короткие проверяемые правила по данным сделки."
+                ),
+            },
+            {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
+        ],
+    }
+
+    try:
+        async with ClientSession(timeout=ClientTimeout(total=18, connect=5, sock_read=12)) as session:
+            async with session.post(
+                "https://api.openai.com/v1/responses",
+                headers={
+                    "Authorization": f"Bearer {api_key.strip()}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            ) as response:
+                data = await response.json(content_type=None)
+
+                if response.status >= 400:
+                    return None
+
+                output_text = data.get("output_text")
+                if not output_text:
+                    output_text = "\n".join(
+                        content.get("text", "")
+                        for item in data.get("output", [])
+                        for content in item.get("content", [])
+                        if isinstance(content, dict)
+                    )
+
+                return _extract_json_object(output_text or "")
+    except Exception:
+        return None
+
+
 async def _load_tbank_stock_for_user(user_id: Any, symbol: str, figi: str | None = None) -> dict[str, Any] | None:
     wallet = await _find_active_wallet(user_id, "tbank")
     if not wallet:
@@ -678,8 +751,14 @@ def _calculate_short_term_probability(score_payload: dict[str, Any], asset: dict
     turnover = to_float(asset.get("turnover24h") or asset.get("volume24h"))
     core_bonus = 6 if symbol in CORE_CRYPTO_SYMBOLS or symbol in CORE_STOCK_SYMBOLS else 0
     liquidity_bonus = (liquidity - 50) * 0.28
+    turnover_bonus = _clamp(math.log10(max(turnover, 1)) - 6, 0, 3.5) * 1.8
+    breakout_bonus = 0
+    if 1.2 <= change_1d <= 14 and change_7d >= -8:
+        breakout_bonus += min(change_1d * 0.9, 8)
+    if 14 < change_1d <= 28 and liquidity >= 58:
+        breakout_bonus += 4
     momentum = (
-        max(change_1d, 0) * 2.25
+        max(change_1d, 0) * 2.55
         + max(change_7d, 0) * 0.8
         + max(change_30d, 0) * 0.2
     )
@@ -694,6 +773,8 @@ def _calculate_short_term_probability(score_payload: dict[str, Any], asset: dict
         48
         + momentum
         + liquidity_bonus
+        + turnover_bonus
+        + breakout_bonus
         + (risk - 50) * 0.06
         + core_bonus
         - weak_trend_penalty
@@ -748,6 +829,7 @@ def _strategy_trade_rules(payload: dict[str, Any], trade: dict[str, Any]) -> dic
             "maxHoldMinutes": PAPER_SCALP_MAX_HOLD_MINUTES,
             "fadeProbability": PAPER_SCALP_MOMENTUM_FADE_PROBABILITY,
             "minFadeHoldMinutes": 7,
+            "profitLock": PAPER_SCALP_PROFIT_LOCK_PERCENT,
         }
 
     if trade.get("side") == "Short":
@@ -758,6 +840,7 @@ def _strategy_trade_rules(payload: dict[str, Any], trade: dict[str, Any]) -> dic
             "maxHoldMinutes": 120,
             "fadeProbability": 52,
             "minFadeHoldMinutes": 12,
+            "profitLock": 0.65,
         }
 
     return {
@@ -767,6 +850,7 @@ def _strategy_trade_rules(payload: dict[str, Any], trade: dict[str, Any]) -> dic
         "maxHoldMinutes": PAPER_MAX_HOLD_MINUTES,
         "fadeProbability": None,
         "minFadeHoldMinutes": 20,
+        "profitLock": None,
     }
 
 
@@ -801,18 +885,173 @@ def _is_recent_strategy_trade(trade: dict[str, Any], cooldown_minutes: int = PAP
     return (_strategy_now() - last_activity).total_seconds() < cooldown_minutes * 60
 
 
+def _format_strategy_memory_row(row: Any) -> dict[str, Any]:
+    return {
+        "assetSymbol": row["asset_symbol"],
+        "strategyId": row["strategy_id"],
+        "tradesCount": int(row["trades_count"] or 0),
+        "winsCount": int(row["wins_count"] or 0),
+        "lossesCount": int(row["losses_count"] or 0),
+        "netResultAmount": float(row["net_result_amount"] or 0),
+        "avgResultPercent": float(row["avg_result_percent"] or 0),
+        "memoryScore": float(row["memory_score"] or 0),
+        "lastEventType": row["last_event_type"],
+        "lastLesson": _safe_json_payload(row["last_lesson"], {}),
+        "gptReview": _safe_json_payload(row["gpt_review"], {}),
+        "lastReviewedAt": row["last_reviewed_at"].isoformat() if row["last_reviewed_at"] else None,
+        "updatedAt": row["updated_at"].isoformat() if row["updated_at"] else None,
+    }
+
+
+async def _load_strategy_memory(user_id: Any, strategy_id: str) -> dict[str, dict[str, Any]]:
+    pool = get_database_pool()
+
+    async with pool.acquire() as connection:
+        rows = await connection.fetch(
+            """
+            select strategy_id, asset_symbol, trades_count, wins_count, losses_count,
+                   net_result_amount, avg_result_percent, memory_score,
+                   last_event_type, last_lesson, gpt_review, last_reviewed_at, updated_at
+            from ai_strategy_memory
+            where user_id = $1 and strategy_id = $2
+            order by abs(memory_score) desc, updated_at desc
+            limit 80
+            """,
+            user_id,
+            strategy_id,
+        )
+
+    return {
+        row["asset_symbol"].upper(): _format_strategy_memory_row(row)
+        for row in rows
+    }
+
+
+async def _load_strategy_events(user_id: Any, strategy_id: str, limit: int = 12) -> list[dict[str, Any]]:
+    pool = get_database_pool()
+
+    async with pool.acquire() as connection:
+        rows = await connection.fetch(
+            """
+            select strategy_id, asset_symbol, event_type, severity, result_percent,
+                   result_amount, close_reason, context, lesson, created_at
+            from ai_strategy_events
+            where user_id = $1 and strategy_id = $2
+            order by created_at desc
+            limit $3
+            """,
+            user_id,
+            strategy_id,
+            limit,
+        )
+
+    return [
+        {
+            "strategyId": row["strategy_id"],
+            "assetSymbol": row["asset_symbol"],
+            "eventType": row["event_type"],
+            "severity": float(row["severity"] or 0),
+            "resultPercent": float(row["result_percent"] or 0),
+            "resultAmount": float(row["result_amount"] or 0),
+            "closeReason": row["close_reason"],
+            "context": _safe_json_payload(row["context"], {}),
+            "lesson": _safe_json_payload(row["lesson"], {}),
+            "createdAt": row["created_at"].isoformat() if row["created_at"] else None,
+        }
+        for row in rows
+    ]
+
+
+def _memory_score_adjustment(memory_item: dict[str, Any] | None) -> float:
+    if not memory_item:
+        return 0
+
+    score = to_float(memory_item.get("memoryScore"))
+    trades_count = int(memory_item.get("tradesCount") or 0)
+    losses_count = int(memory_item.get("lossesCount") or 0)
+    wins_count = int(memory_item.get("winsCount") or 0)
+    confidence_multiplier = min(trades_count / 5, 1)
+    loss_bias = min(max(losses_count - wins_count, 0) * 0.9, 3)
+
+    return _clamp(score * 0.55 * confidence_multiplier - loss_bias, -10, 10)
+
+
+def _memory_blocks_entry(memory_item: dict[str, Any] | None, raw_probability: float) -> bool:
+    if not memory_item:
+        return False
+
+    trades_count = int(memory_item.get("tradesCount") or 0)
+    losses_count = int(memory_item.get("lossesCount") or 0)
+    memory_score = to_float(memory_item.get("memoryScore"))
+
+    return trades_count >= 3 and losses_count >= 2 and memory_score <= -8 and raw_probability < 82
+
+
+def _build_strategy_lesson(trade: dict[str, Any], payload: dict[str, Any]) -> tuple[str, float, dict[str, Any]]:
+    result_percent = to_float(trade.get("resultPercent"))
+    close_reason = str(trade.get("closeReason") or "")
+    side = str(trade.get("side") or "Long")
+    probability = to_float(trade.get("probability"))
+    current_probability = to_float(trade.get("currentProbability") or probability)
+    event_type = "profit_capture" if result_percent > 0 else "flat_exit"
+    severity = abs(result_percent)
+    rule_update = "Повторять похожий вход только при подтвержденной ликвидности и сохранении импульса."
+    mistake = None
+
+    if result_percent < 0:
+        if close_reason == "stop_loss":
+            event_type = "loss_stop"
+            mistake = "Позиция дошла до стопа: вход или усреднение были слишком ранними."
+            rule_update = "Снижать вероятность повторного входа в этот актив, пока новый momentum не станет существенно сильнее."
+            severity += 2.5
+        elif close_reason == "momentum_fade":
+            event_type = "momentum_fade_loss"
+            mistake = "Импульс погас до фиксации прибыли."
+            rule_update = "Для похожих входов быстрее фиксировать малую прибыль и не держать при падении live probability."
+            severity += 1.4
+        elif close_reason == "time_exit":
+            event_type = "slow_trade_loss"
+            mistake = "Сделка не дала продолжения за отведенное время."
+            rule_update = "Понижать вес активов, где импульс не развивается после входа."
+            severity += 1.0
+        else:
+            event_type = "loss_exit"
+            mistake = "Закрытие в минус без сильного подтверждения импульса."
+            rule_update = "Требовать более высокий score и меньшую волатильность для повторного входа."
+            severity += 1.0
+    elif close_reason == "take_profit":
+        rule_update = "Похожий паттерн можно повторять, но не увеличивать риск без роста win-rate."
+    elif close_reason == "momentum_fade":
+        event_type = "profit_lock"
+        rule_update = "Фиксация при затухании импульса сработала, сохранять правило раннего выхода."
+
+    return event_type, round(severity, 4), {
+        "summary": (
+            f"{trade.get('asset')} {side}: {result_percent:.2f}% за сделку; "
+            f"выход {close_reason or 'manual/model'}."
+        ),
+        "mistake": mistake,
+        "ruleUpdate": rule_update,
+        "probabilityAtEntry": round(probability, 2),
+        "probabilityAtExit": round(current_probability, 2),
+        "strategyMode": payload.get("mode"),
+    }
+
+
 def _select_strategy_entries(
     strategy_id: str,
     candidates: list[dict[str, Any]],
     connection: dict[str, Any] | None = None,
     limit: int = 5,
     excluded_symbols: set[str] | None = None,
+    memory: dict[str, dict[str, Any]] | None = None,
 ) -> list[tuple[float, str, dict[str, Any], dict[str, Any]]]:
     config = _strategy_config(strategy_id)
     scalp_ranked: list[tuple[float, str, dict[str, Any], dict[str, Any]]] = []
     long_ranked: list[tuple[float, str, dict[str, Any], dict[str, Any]]] = []
     short_ranked: list[tuple[float, str, dict[str, Any], dict[str, Any]]] = []
     connection = connection or {}
+    memory = memory or {}
     universe = str(connection.get("universe") or "mixed").lower()
     excluded_symbols = excluded_symbols or set()
 
@@ -836,6 +1075,27 @@ def _select_strategy_entries(
         short_term_probability = _calculate_short_term_probability(score_payload, asset)
         short_probability = _calculate_short_probability(score_payload)
         mode = config["mode"]
+        memory_item = memory.get(symbol)
+        memory_adjustment = _memory_score_adjustment(memory_item)
+        memory_payload = {
+            "rawLongProbability": round(long_probability, 2),
+            "rawScalpProbability": round(short_term_probability, 2),
+            "rawShortProbability": round(short_probability, 2),
+            "memoryAdjustment": round(memory_adjustment, 2),
+            "memoryScore": round(to_float(memory_item.get("memoryScore")) if memory_item else 0, 2),
+            "tradesCount": int(memory_item.get("tradesCount") or 0) if memory_item else 0,
+        }
+
+        if _memory_blocks_entry(memory_item, max(long_probability, short_term_probability, short_probability)):
+            continue
+
+        long_probability = _clamp(long_probability + memory_adjustment, 0, 100)
+        short_term_probability = _clamp(short_term_probability + memory_adjustment, 0, 100)
+        short_probability = _clamp(short_probability + memory_adjustment * 0.45, 0, 100)
+        score_payload = {
+            **score_payload,
+            "memory": memory_payload,
+        }
 
         if mode == "scalp" and short_term_probability >= 60:
             scalp_ranked.append((short_term_probability, "Long", asset, score_payload))
@@ -904,6 +1164,12 @@ def _build_strategy_trade(
         "resultPercent": 0,
         "resultAmount": 0,
         "signal": score_payload["signal"],
+        "entryContext": {
+            "score": score_payload.get("score"),
+            "confidence": score_payload.get("confidence"),
+            "factors": score_payload.get("factors") or {},
+            "memory": score_payload.get("memory") or {},
+        },
         "status": "open",
         "closeReason": None,
         "scaleInCount": 0,
@@ -1065,12 +1331,13 @@ def _build_strategy_payload(
     run_date: date,
     start_capital: float = PAPER_START_CAPITAL,
     connection: dict[str, Any] | None = None,
+    memory: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     config = _strategy_config(strategy_id)
     connection = connection or {}
     risk_profile = str(connection.get("riskProfile") or connection.get("risk_profile") or "balanced").lower()
     max_allocation = PAPER_RISK_MAX_ALLOCATION.get(risk_profile, PAPER_RISK_MAX_ALLOCATION["balanced"])
-    selected = _select_strategy_entries(strategy_id, candidates, connection, limit=5)
+    selected = _select_strategy_entries(strategy_id, candidates, connection, limit=5, memory=memory)
 
     now = _strategy_now()
     scheduled_at = _strategy_start_datetime(run_date)
@@ -1127,8 +1394,8 @@ def _build_strategy_payload(
         "roi": round(roi, 2),
         "accuracy": round(accuracy, 2),
         "maxDrawdown": round(max_drawdown, 2),
-        "chart": chart[:12],
-        "chartPoints": chart_points[:12],
+        "chart": chart,
+        "chartPoints": chart_points,
         "trades": trades,
         "threshold": 60,
         "schemaVersion": PAPER_STRATEGY_SCHEMA_VERSION,
@@ -1144,11 +1411,21 @@ def _build_strategy_payload(
     }
 
 
-def _mark_strategy_to_market(payload: dict[str, Any], candidates: list[dict[str, Any]]) -> dict[str, Any]:
+def _mark_strategy_to_market(
+    payload: dict[str, Any],
+    candidates: list[dict[str, Any]],
+    memory: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     candidate_map = _strategy_candidates_by_symbol(candidates)
     start_capital = float(payload.get("startCapital") or PAPER_START_CAPITAL)
     updated_trades = []
     total_pnl = 0.0
+    max_open_exposure = start_capital * 0.95
+    planned_open_exposure = sum(
+        to_float(trade.get("virtualAmount"))
+        for trade in payload.get("trades") or []
+        if trade.get("status") != "closed"
+    )
 
     for trade in payload.get("trades") or []:
         if trade.get("status") == "closed":
@@ -1185,14 +1462,16 @@ def _mark_strategy_to_market(payload: dict[str, Any], candidates: list[dict[str,
             and current_price > 0
             and virtual_amount > 0
         ):
-            add_amount = virtual_amount * PAPER_DCA_ADD_RATIO
+            available_exposure = max(max_open_exposure - planned_open_exposure, 0)
+            add_amount = min(virtual_amount * PAPER_DCA_ADD_RATIO, available_exposure)
             add_quantity = add_amount / (current_price * price_currency_rate)
             next_quantity = quantity + add_quantity
 
-            if next_quantity > 0:
+            if add_amount > 10 and next_quantity > 0:
                 entry_price = ((entry_price * quantity) + (current_price * add_quantity)) / next_quantity
                 quantity = next_quantity
                 virtual_amount += add_amount
+                planned_open_exposure += add_amount
                 scale_in_count += 1
                 events.append({
                     "type": "scale_in",
@@ -1216,6 +1495,7 @@ def _mark_strategy_to_market(payload: dict[str, Any], candidates: list[dict[str,
         hold_minutes = ((_strategy_now() - opened_at).total_seconds() / 60) if opened_at else 0
         fade_probability = rules.get("fadeProbability")
         min_fade_hold_minutes = float(rules.get("minFadeHoldMinutes") or 0)
+        profit_lock = rules.get("profitLock")
 
         if result_percent >= float(rules["takeProfit"] or PAPER_TAKE_PROFIT_PERCENT):
             status_value = "closed"
@@ -1234,6 +1514,16 @@ def _mark_strategy_to_market(payload: dict[str, Any], candidates: list[dict[str,
         ):
             status_value = "closed"
             close_reason = "momentum_fade"
+            closed_at = _strategy_now().isoformat()
+        elif (
+            profit_lock is not None
+            and live_probability is not None
+            and result_percent >= float(profit_lock)
+            and live_probability < 64
+            and hold_minutes >= min_fade_hold_minutes
+        ):
+            status_value = "closed"
+            close_reason = "profit_lock"
             closed_at = _strategy_now().isoformat()
         elif hold_minutes >= float(rules["maxHoldMinutes"] or PAPER_MAX_HOLD_MINUTES) and abs(result_percent) >= 0.12:
             status_value = "closed"
@@ -1272,7 +1562,7 @@ def _mark_strategy_to_market(payload: dict[str, Any], candidates: list[dict[str,
     connection = payload.get("connection") or {}
     max_open_positions = 5
 
-    if len(open_symbols) < max_open_positions and len(updated_trades) < 120:
+    if len(open_symbols) < max_open_positions and len(updated_trades) < PAPER_MAX_DAILY_TRADES:
         risk_profile = str(connection.get("riskProfile") or connection.get("risk_profile") or "balanced").lower()
         max_allocation = PAPER_RISK_MAX_ALLOCATION.get(risk_profile, PAPER_RISK_MAX_ALLOCATION["balanced"])
         new_entries = _select_strategy_entries(
@@ -1281,10 +1571,26 @@ def _mark_strategy_to_market(payload: dict[str, Any], candidates: list[dict[str,
             connection,
             limit=max_open_positions - len(open_symbols),
             excluded_symbols=known_symbols,
+            memory=memory,
         )
 
+        open_exposure = sum(
+            to_float(trade.get("virtualAmount"))
+            for trade in updated_trades
+            if trade.get("status") != "closed"
+        )
+        free_exposure = max(max_open_exposure - open_exposure, 0)
+
         for index, (probability, side, asset, score_payload) in enumerate(new_entries):
-            allocation = start_capital * min(max_allocation, 0.045 + max(probability - 60, 0) / 1000)
+            remaining_slots = max(len(new_entries) - index, 1)
+            allocation = min(
+                start_capital * min(max_allocation, 0.045 + max(probability - 60, 0) / 1000),
+                free_exposure / remaining_slots if free_exposure > 0 else 0,
+            )
+            if allocation < 100:
+                continue
+
+            free_exposure = max(free_exposure - allocation, 0)
             updated_trades.append(
                 _build_strategy_trade(
                     probability,
@@ -1329,8 +1635,6 @@ def _mark_strategy_to_market(payload: dict[str, Any], candidates: list[dict[str,
             **next_point,
         }
 
-    chart = chart[-48:]
-    chart_points = chart_points[-48:]
     wins = sum(1 for trade in updated_trades if to_float(trade.get("resultAmount")) > 0)
     accuracy = wins / len(updated_trades) * 100 if updated_trades else 0
     peak = chart[0] if chart else start_capital
@@ -1392,6 +1696,205 @@ async def _persist_strategy_run(user_id: Any, strategy_id: str, run_date: date, 
         )
 
 
+def _strategy_memory_delta(event_type: str, result_percent: float, close_reason: str | None) -> float:
+    delta = _clamp(result_percent * 1.35, -6, 6)
+
+    if event_type in {"loss_stop", "momentum_fade_loss", "slow_trade_loss", "loss_exit"}:
+        delta -= 2.2
+
+    if close_reason == "stop_loss":
+        delta -= 1.8
+
+    if event_type == "profit_capture":
+        delta += 1.4
+
+    if event_type == "profit_lock":
+        delta += 1.0
+
+    return _clamp(delta, -8, 8)
+
+
+async def _maybe_refresh_strategy_memory_review(
+    user_id: Any,
+    strategy_id: str,
+    asset_symbol: str,
+    event_payload: dict[str, Any],
+) -> None:
+    api_key, model = await _get_openai_key_for_user(user_id)
+    if not api_key:
+        return
+
+    pool = get_database_pool()
+
+    async with pool.acquire() as connection:
+        row = await connection.fetchrow(
+            """
+            select strategy_id, asset_symbol, trades_count, wins_count, losses_count,
+                   net_result_amount, avg_result_percent, memory_score,
+                   last_event_type, last_lesson, gpt_review, last_reviewed_at, updated_at
+            from ai_strategy_memory
+            where user_id = $1 and strategy_id = $2 and asset_symbol = $3
+              and (
+                last_reviewed_at is null
+                or last_reviewed_at < now() - ($4::text)::interval
+              )
+              and (losses_count > 0 or trades_count % 5 = 0)
+            """,
+            user_id,
+            strategy_id,
+            asset_symbol,
+            f"{STRATEGY_GPT_REVIEW_COOLDOWN_HOURS} hours",
+        )
+
+    if not row:
+        return
+
+    memory_item = _format_strategy_memory_row(row)
+    review = await _call_openai_strategy_memory_review(api_key, model, memory_item, event_payload)
+    if not review:
+        return
+
+    async with pool.acquire() as connection:
+        await connection.execute(
+            """
+            update ai_strategy_memory
+            set gpt_review = $4::jsonb,
+                last_reviewed_at = now(),
+                updated_at = now()
+            where user_id = $1 and strategy_id = $2 and asset_symbol = $3
+            """,
+            user_id,
+            strategy_id,
+            asset_symbol,
+            json.dumps(review),
+        )
+
+
+async def _record_strategy_learning(user_id: Any, strategy_id: str, payload: dict[str, Any]) -> None:
+    closed_trades = [
+        trade for trade in payload.get("trades") or []
+        if isinstance(trade, dict) and trade.get("status") == "closed" and trade.get("closedAt")
+    ]
+
+    if not closed_trades:
+        return
+
+    pool = get_database_pool()
+    inserted_events: list[dict[str, Any]] = []
+
+    async with pool.acquire() as connection:
+        async with connection.transaction():
+            for trade in closed_trades:
+                asset_symbol = str(trade.get("routeSymbol") or trade.get("asset") or "").upper()
+                if not asset_symbol:
+                    continue
+
+                result_percent = to_float(trade.get("resultPercent"))
+                result_amount = to_float(trade.get("resultAmount"))
+                close_reason = trade.get("closeReason")
+                event_type, severity, lesson = _build_strategy_lesson(trade, payload)
+                event_key = ":".join([
+                    strategy_id,
+                    asset_symbol,
+                    str(trade.get("executedAt") or ""),
+                    str(trade.get("closedAt") or ""),
+                    str(close_reason or ""),
+                ])
+                context = {
+                    "side": trade.get("side"),
+                    "entryPrice": trade.get("entryPrice"),
+                    "exitPrice": trade.get("exitPrice"),
+                    "quantity": trade.get("quantity"),
+                    "virtualAmount": trade.get("virtualAmount"),
+                    "probability": trade.get("probability"),
+                    "currentProbability": trade.get("currentProbability"),
+                    "entryContext": trade.get("entryContext") or {},
+                    "events": trade.get("events") or [],
+                }
+                inserted = await connection.fetchrow(
+                    """
+                    insert into ai_strategy_events (
+                        user_id, strategy_id, event_key, asset_symbol, event_type,
+                        severity, result_percent, result_amount, close_reason,
+                        context, lesson
+                    )
+                    values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb)
+                    on conflict (user_id, event_key) do nothing
+                    returning id
+                    """,
+                    user_id,
+                    strategy_id,
+                    event_key,
+                    asset_symbol,
+                    event_type,
+                    severity,
+                    result_percent,
+                    result_amount,
+                    close_reason,
+                    json.dumps(context),
+                    json.dumps(lesson),
+                )
+
+                if not inserted:
+                    continue
+
+                memory_delta = _strategy_memory_delta(event_type, result_percent, close_reason)
+                win = 1 if result_percent > 0 else 0
+                loss = 1 if result_percent < 0 else 0
+                await connection.execute(
+                    """
+                    insert into ai_strategy_memory (
+                        user_id, strategy_id, asset_symbol, trades_count, wins_count,
+                        losses_count, net_result_amount, avg_result_percent,
+                        memory_score, last_event_type, last_lesson
+                    )
+                    values ($1, $2, $3, 1, $4, $5, $6, $7, $8, $9, $10::jsonb)
+                    on conflict (user_id, strategy_id, asset_symbol) do update set
+                        avg_result_percent = (
+                            (ai_strategy_memory.avg_result_percent * ai_strategy_memory.trades_count + excluded.avg_result_percent)
+                            / nullif(ai_strategy_memory.trades_count + 1, 0)
+                        ),
+                        trades_count = ai_strategy_memory.trades_count + 1,
+                        wins_count = ai_strategy_memory.wins_count + excluded.wins_count,
+                        losses_count = ai_strategy_memory.losses_count + excluded.losses_count,
+                        net_result_amount = ai_strategy_memory.net_result_amount + excluded.net_result_amount,
+                        memory_score = least($11::numeric, greatest(-$11::numeric, ai_strategy_memory.memory_score + excluded.memory_score)),
+                        last_event_type = excluded.last_event_type,
+                        last_lesson = excluded.last_lesson,
+                        updated_at = now()
+                    """,
+                    user_id,
+                    strategy_id,
+                    asset_symbol,
+                    win,
+                    loss,
+                    result_amount,
+                    result_percent,
+                    memory_delta,
+                    event_type,
+                    json.dumps(lesson),
+                    STRATEGY_MEMORY_SCORE_LIMIT,
+                )
+                inserted_events.append({
+                    "assetSymbol": asset_symbol,
+                    "eventType": event_type,
+                    "severity": severity,
+                    "resultPercent": result_percent,
+                    "resultAmount": result_amount,
+                    "closeReason": close_reason,
+                    "lesson": lesson,
+                    "context": context,
+                })
+
+    for event in inserted_events[:2]:
+        await _maybe_refresh_strategy_memory_review(
+            user_id,
+            strategy_id,
+            event["assetSymbol"],
+            event,
+        )
+
+
 def _safe_json_payload(value: Any, fallback: Any) -> Any:
     if isinstance(value, (dict, list)):
         return value
@@ -1421,8 +1924,12 @@ async def _load_strategy_lifetime(user_id: Any, strategy_id: str) -> dict[str, A
     chart_points: list[dict[str, Any]] = []
     trades: list[dict[str, Any]] = []
     seen_points: set[str] = set()
+    first_start_capital: float | None = None
 
     for row in rows:
+        if first_start_capital is None:
+            first_start_capital = float(row["start_capital"] or PAPER_START_CAPITAL)
+
         metadata = _safe_json_payload(row["metadata"], {})
         row_chart_points = metadata.get("chartPoints") if isinstance(metadata, dict) else None
         row_trades = row["trades"] if isinstance(row["trades"], list) else _safe_json_payload(row["trades"], [])
@@ -1440,6 +1947,44 @@ async def _load_strategy_lifetime(user_id: Any, strategy_id: str) -> dict[str, A
                     "value": float(row["current_capital"] or PAPER_START_CAPITAL),
                     "label": "Финиш дня",
                 },
+            ]
+
+        row_start_candidates = []
+        if isinstance(metadata, dict):
+            row_start_candidates.extend([
+                (metadata.get("connection") or {}).get("connectedAt"),
+                metadata.get("startedAt"),
+            ])
+        row_start_candidates.extend([
+            trade.get("executedAt") or trade.get("closedAt") or trade.get("updatedAt")
+            for trade in row_trades
+            if isinstance(trade, dict)
+        ])
+        row_start_times = [
+            parsed_time
+            for value in row_start_candidates
+            if (parsed_time := _parse_strategy_datetime(value))
+        ]
+        row_start_time = (
+            min(row_start_times)
+            if row_start_times
+            else datetime.combine(row["run_date"], datetime.min.time(), tzinfo=MOSCOW_TZ)
+        )
+        first_point_time = _parse_strategy_datetime(row_chart_points[0].get("time")) if row_chart_points else None
+        if (
+            row_start_time
+            and (
+                not first_point_time
+                or (first_point_time - row_start_time).total_seconds() > 60
+            )
+        ):
+            row_chart_points = [
+                {
+                    "time": row_start_time.isoformat(),
+                    "value": float(row["start_capital"] or PAPER_START_CAPITAL),
+                    "label": "Старт стратегии",
+                },
+                *row_chart_points,
             ]
 
         for point in row_chart_points:
@@ -1472,17 +2017,27 @@ async def _load_strategy_lifetime(user_id: Any, strategy_id: str) -> dict[str, A
         for point in chart_points
         if isinstance(point.get("value"), (int, float)) or str(point.get("value") or "").replace(".", "", 1).isdigit()
     ]
+    lifetime_start_capital = first_start_capital or (chart_values[0] if chart_values else PAPER_START_CAPITAL)
+    lifetime_profit = sum(to_float(trade.get("resultAmount")) for trade in trades)
+    lifetime_current_capital = lifetime_start_capital + lifetime_profit
+    lifetime_roi = (lifetime_profit / lifetime_start_capital) * 100 if lifetime_start_capital else 0
 
     return {
-        "chart": chart_values[-240:],
-        "chartPoints": chart_points[-240:],
+        "chart": chart_values,
+        "chartPoints": chart_points,
         "trades": trades[:160],
         "runsCount": len(rows),
+        "startCapital": round(lifetime_start_capital, 2),
+        "currentCapital": round(lifetime_current_capital, 2),
+        "profit": round(lifetime_profit, 2),
+        "roi": round(lifetime_roi, 2),
     }
 
 
 async def _attach_strategy_lifetime(user_id: Any, payload: dict[str, Any]) -> dict[str, Any]:
     lifetime = await _load_strategy_lifetime(user_id, str(payload.get("id") or ""))
+    memory = await _load_strategy_memory(user_id, str(payload.get("id") or ""))
+    events = await _load_strategy_events(user_id, str(payload.get("id") or ""))
 
     if len(lifetime["chartPoints"]) > 1:
         payload = {
@@ -1493,7 +2048,13 @@ async def _attach_strategy_lifetime(user_id: Any, payload: dict[str, Any]) -> di
 
     return {
         **payload,
+        "startCapital": lifetime["startCapital"],
+        "currentCapital": lifetime["currentCapital"],
+        "profit": lifetime["profit"],
+        "roi": lifetime["roi"],
         "historyAllTime": lifetime["trades"],
+        "memory": list(memory.values())[:8],
+        "errorLog": events,
         "runsCount": lifetime["runsCount"],
     }
 
@@ -1508,6 +2069,7 @@ async def _get_or_create_strategy_run(
     run_date = _strategy_run_date()
     pool = get_database_pool()
     connection_settings = await _load_strategy_connection(user_id, strategy_id)
+    strategy_memory = await _load_strategy_memory(user_id, strategy_id)
     configured_capital_amount = float(
         start_capital
         or (connection_settings.get("virtualCapital") if connection_settings else None)
@@ -1550,8 +2112,9 @@ async def _get_or_create_strategy_run(
                 "connection": connection_settings or metadata.get("connection"),
             }
             candidates = candidates if candidates is not None else await _load_strategy_candidates(user_id)
-            updated_payload = _mark_strategy_to_market(strategy_payload, candidates)
+            updated_payload = _mark_strategy_to_market(strategy_payload, candidates, strategy_memory)
             await _persist_strategy_run(user_id, strategy_id, run_date, updated_payload)
+            await _record_strategy_learning(user_id, strategy_id, updated_payload)
             await _record_paper_strategy_trades(user_id, strategy_id, updated_payload)
             return await _attach_strategy_lifetime(user_id, updated_payload)
 
@@ -1562,10 +2125,12 @@ async def _get_or_create_strategy_run(
         run_date,
         configured_capital,
         connection_settings,
+        strategy_memory,
     )
     payload["runDate"] = run_date.isoformat()
 
     await _persist_strategy_run(user_id, strategy_id, run_date, payload)
+    await _record_strategy_learning(user_id, strategy_id, payload)
     await _record_paper_strategy_trades(user_id, strategy_id, payload)
 
     return await _attach_strategy_lifetime(user_id, {**payload, "runDate": run_date.isoformat()})
@@ -1791,6 +2356,31 @@ async def get_ai_strategy_history(
     }
 
 
+@router.get("/ai/strategies/memory")
+async def get_ai_strategy_memory(
+    strategy_id: str | None = Query(default=None, max_length=80),
+    current_user=Depends(get_current_user),
+):
+    strategy_ids = [strategy_id] if strategy_id in PAPER_STRATEGY_IDS else list(PAPER_STRATEGY_IDS)
+    memory_payload = []
+    event_payload = []
+
+    for item_strategy_id in strategy_ids:
+        memory = await _load_strategy_memory(current_user["id"], item_strategy_id)
+        events = await _load_strategy_events(current_user["id"], item_strategy_id, limit=20)
+        memory_payload.extend(memory.values())
+        event_payload.extend(events)
+
+    memory_payload.sort(key=lambda item: abs(to_float(item.get("memoryScore"))), reverse=True)
+    event_payload.sort(key=lambda item: item.get("createdAt") or "", reverse=True)
+
+    return {
+        "items": memory_payload[:80],
+        "events": event_payload[:80],
+        "updatedAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 @router.delete("/ai/strategies/history")
 async def reset_ai_strategy_history(
     strategy_id: str | None = Query(default=None, max_length=80),
@@ -1803,6 +2393,22 @@ async def reset_ai_strategy_history(
         result = await connection.execute(
             """
             delete from ai_paper_strategy_runs
+            where user_id = $1 and strategy_id = any($2::varchar[])
+            """,
+            current_user["id"],
+            strategy_ids,
+        )
+        await connection.execute(
+            """
+            delete from ai_strategy_events
+            where user_id = $1 and strategy_id = any($2::varchar[])
+            """,
+            current_user["id"],
+            strategy_ids,
+        )
+        await connection.execute(
+            """
+            delete from ai_strategy_memory
             where user_id = $1 and strategy_id = any($2::varchar[])
             """,
             current_user["id"],
@@ -1927,18 +2533,40 @@ async def run_due_paper_strategies_for_all_users() -> None:
     pool = get_database_pool()
 
     async with pool.acquire() as connection:
-        rows = await connection.fetch("select id from users")
+        rows = await connection.fetch(
+            """
+            select user_id, array_agg(strategy_id) as strategy_ids
+            from ai_strategy_connections
+            where is_active = true
+            group by user_id
+            """
+        )
 
     for row in rows:
-        user_id = row["id"]
+        user_id = row["user_id"]
+        strategy_ids = [
+            strategy_id
+            for strategy_id in (row["strategy_ids"] or [])
+            if strategy_id in PAPER_STRATEGY_IDS
+        ]
+
+        if not strategy_ids:
+            continue
+
         candidates = await _load_strategy_candidates(user_id)
         await asyncio.gather(*[
             _get_or_create_strategy_run(user_id, strategy_id, candidates=candidates)
-            for strategy_id in PAPER_STRATEGY_IDS
+            for strategy_id in strategy_ids
         ], return_exceptions=True)
 
 
 async def paper_strategy_scheduler(stop_event: asyncio.Event) -> None:
+    try:
+        await asyncio.wait_for(stop_event.wait(), timeout=PAPER_SCHEDULER_STARTUP_DELAY_SECONDS)
+        return
+    except asyncio.TimeoutError:
+        pass
+
     while not stop_event.is_set():
         try:
             await run_due_paper_strategies_for_all_users()

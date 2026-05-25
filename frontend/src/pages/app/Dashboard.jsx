@@ -72,12 +72,6 @@ const EMPTY_PORTFOLIO_TRADES = {
   updatedAt: null,
 };
 
-const ACTIVITY_GRID = [
-  0, 1, 0, 2, 1, 3, 0, 1,
-  2, 1, 0, 2, 3, 4, 2, 1,
-  0, 1, 2, 1, 3, 2, 0, 1,
-  2, 4, 3, 1, 2, 0, 1,
-];
 const ACTIVITY_WEEK_DAYS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
 
 const getMonthActivityCells = (activityGrid) => {
@@ -805,9 +799,10 @@ export default function Dashboard() {
   const chartData = analyticsChartData.length
     ? analyticsChartData
     : (BASE_YEAR_SERIES[chartPeriod] || BASE_YEAR_SERIES.month);
-  const activityGrid = portfolioAnalytics.activityGrid?.length
-    ? portfolioAnalytics.activityGrid
-    : ACTIVITY_GRID;
+  const activityGrid = useMemo(
+    () => (portfolioAnalytics.activityGrid?.length ? portfolioAnalytics.activityGrid : []),
+    [portfolioAnalytics.activityGrid]
+  );
   const activityCalendarCells = useMemo(
     () => getMonthActivityCells(activityGrid),
     [activityGrid]
@@ -846,6 +841,7 @@ export default function Dashboard() {
   const portfolioChangeTone = getChangeTone(portfolioChangeRub);
   const portfolioChangeText = `${formatSignedMoney(convertedPortfolioChange, currency.symbol)} (${formatPercent(portfolioChangePercent)})`;
   const dashboardTopLoading = !dashboardReady || (isPortfolioLoading && !portfolioSummary.updatedAt);
+  const dashboardDataLoading = dashboardTopLoading;
   const availableChartYears = portfolioAnalytics.availableYears || [];
   const canGoPrevYear = availableChartYears.includes(CHART_YEARS[chartYearIndex - 1]);
   const canGoNextYear = availableChartYears.includes(CHART_YEARS[chartYearIndex + 1]);
@@ -1515,7 +1511,7 @@ export default function Dashboard() {
                   </div>
 
                   <div className="containerBuysellactive">
-                    {dashboardReady ? (
+                    {!dashboardDataLoading ? (
                       <div className="contentbsac">
                         {boughtAssetsList.map((asset) => {
                           const convertedAssetValue = convertRubAmount(asset.valueRub);
@@ -1545,7 +1541,7 @@ export default function Dashboard() {
                       <SectionLoader height={180} />
                     )}
 
-                    {dashboardReady && boughtAssetsList.length === 0 && (
+                    {!dashboardDataLoading && boughtAssetsList.length === 0 && (
                       <div className="empty_trades_state">
                         Нет данных
                       </div>
@@ -1617,7 +1613,7 @@ export default function Dashboard() {
               <div className="BlcoksMidleDahs">
                 <div className="AnaBl">
                   <div className="block black_box ActivitiSellbuy">
-                    {!dashboardReady ? (
+                    {dashboardDataLoading ? (
                       <SectionLoader height={240} />
                     ) : (
                       <div className="activity_card">
@@ -1653,68 +1649,74 @@ export default function Dashboard() {
                   </div>
 
                   <div className="block black_box sercleChartiijji">
-                    <div className="poopp">
-                      <h3>Распределение активов</h3>
-                      <p>Просмотр распределения портфеля</p>
-                    </div>
-                    <div className="RadialChartShape">
-                      <div className="pieChartWrapper">
-                        <div className="pieChartBackdrop" />
-                        <div className="pieChartHalo" />
-                        <ResponsiveContainer width="100%" height={200}>
-                          <PieChart>
-                            <Pie
-                              data={portfolioPieData}
-                              dataKey="value"
-                              nameKey="name"
-                              cx="50%"
-                              cy="50%"
-                              innerRadius={70}
-                              outerRadius={92}
-                              startAngle={90}
-                              endAngle={-270}
-                              paddingAngle={4}
-                              cornerRadius={40}
-                              stroke="rgba(255,255,255,0.12)"
-                              strokeWidth={2}
-                            >
-                              {portfolioPieData.map((entry, index) => (
-                                <Cell
-                                  key={`cell-${index}`}
-                                  fill="var(--primary-blue)"
-                                />
-                              ))}
-                            </Pie>
-                            <Tooltip content={<CustomPieTooltip />} />
-                            <text
-                              x="50%"
-                              y="47%"
-                              textAnchor="middle"
-                              fill="#fff"
-                              fontSize={13}
-                              fontWeight={700}
-                            >
-                              {convertedMoney}
-                            </text>
-                            <text
-                              x="50%"
-                              y="57.5%"
-                              textAnchor="middle"
-                              fill="var(--gray)"
-                              fontSize={11}
-                            >
-                              {currency.symbol} капитал
-                            </text>
-                          </PieChart>
-                        </ResponsiveContainer>
-                      </div>
-                    </div>
+                    {dashboardDataLoading ? (
+                      <SectionLoader height={240} />
+                    ) : (
+                      <>
+                        <div className="poopp">
+                          <h3>Распределение активов</h3>
+                          <p>Просмотр распределения портфеля</p>
+                        </div>
+                        <div className="RadialChartShape">
+                          <div className="pieChartWrapper">
+                            <div className="pieChartBackdrop" />
+                            <div className="pieChartHalo" />
+                            <ResponsiveContainer width="100%" height={200}>
+                              <PieChart>
+                                <Pie
+                                  data={portfolioPieData}
+                                  dataKey="value"
+                                  nameKey="name"
+                                  cx="50%"
+                                  cy="50%"
+                                  innerRadius={70}
+                                  outerRadius={92}
+                                  startAngle={90}
+                                  endAngle={-270}
+                                  paddingAngle={4}
+                                  cornerRadius={40}
+                                  stroke="rgba(255,255,255,0.12)"
+                                  strokeWidth={2}
+                                >
+                                  {portfolioPieData.map((entry, index) => (
+                                    <Cell
+                                      key={`cell-${index}`}
+                                      fill="var(--primary-blue)"
+                                    />
+                                  ))}
+                                </Pie>
+                                <Tooltip content={<CustomPieTooltip />} />
+                                <text
+                                  x="50%"
+                                  y="47%"
+                                  textAnchor="middle"
+                                  fill="#fff"
+                                  fontSize={13}
+                                  fontWeight={700}
+                                >
+                                  {convertedMoney}
+                                </text>
+                                <text
+                                  x="50%"
+                                  y="57.5%"
+                                  textAnchor="middle"
+                                  fill="var(--gray)"
+                                  fontSize={11}
+                                >
+                                  {currency.symbol} капитал
+                                </text>
+                              </PieChart>
+                            </ResponsiveContainer>
+                          </div>
+                        </div>
+                      </>
+                    )}
                   </div>
                 </div>
 
                 <div className="block black_box chartBlock">
                   <div className="chartBlock_surface">
-                    {!dashboardReady ? (
+                    {dashboardDataLoading ? (
                       <SectionLoader height={260} />
                     ) : (
                       (() => {

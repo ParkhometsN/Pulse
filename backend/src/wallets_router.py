@@ -42,6 +42,7 @@ _tbank_shares_cache: dict[str, dict[str, Any]] = {}
 _tbank_trading_status_cache: dict[str, dict[str, Any]] = {}
 _portfolio_summary_cache: dict[str, dict[str, Any]] = {}
 PORTFOLIO_SUMMARY_CACHE_TTL_SECONDS = 45
+PORTFOLIO_WALLET_SUMMARY_TIMEOUT_SECONDS = 8
 TBANK_TRADING_STATUS_CACHE_TTL_SECONDS = 60
 
 
@@ -1669,9 +1670,18 @@ async def _build_wallet_summary(row) -> dict[str, Any]:
 
 async def _safe_wallet_summary(row) -> dict[str, Any]:
     try:
-        return await _build_wallet_summary(row)
-    except (TBankAPIError, UpstreamHTTPError) as error:
+        return await asyncio.wait_for(
+            _build_wallet_summary(row),
+            timeout=PORTFOLIO_WALLET_SUMMARY_TIMEOUT_SECONDS,
+        )
+    except (asyncio.TimeoutError, TBankAPIError, UpstreamHTTPError) as error:
         permissions = _jsonb(row["permissions"])
+        error_message = (
+            "Провайдер не ответил за отведенное время."
+            if isinstance(error, asyncio.TimeoutError)
+            else str(error)
+        )
+
         return {
             "id": str(row["id"]),
             "provider": row["provider"],
@@ -1684,7 +1694,7 @@ async def _safe_wallet_summary(row) -> dict[str, Any]:
             "assetCount": 0,
             "assets": [],
             "status": "error",
-            "error": str(error),
+            "error": error_message,
             "updatedAt": datetime.now(timezone.utc).isoformat(),
         }
 
@@ -2307,15 +2317,11 @@ async def get_portfolio_analytics(
             """
             select activity_day, count(*) as activity_count
             from (
-                select created_at::date as activity_day
-                from portfolio_snapshots
-                where user_id = $1 and created_at::date >= $2
-
-                union all
-
                 select executed_at::date as activity_day
                 from ai_trade_history
-                where user_id = $1 and executed_at::date >= $2
+                where user_id = $1
+                  and executed_at::date >= $2
+                  and status in ('completed', 'submitted', 'filled')
             ) activity
             group by activity_day
             """,

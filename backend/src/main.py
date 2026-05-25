@@ -18,8 +18,8 @@ from src.init import bybit_client, coingecko_client, moex_client, tbank_client
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings.validate_runtime()
-    await asyncio.wait_for(connect_database(), timeout=15)
-    await asyncio.wait_for(ensure_auth_schema(), timeout=30)
+    await asyncio.wait_for(connect_database(), timeout=30)
+    await asyncio.wait_for(ensure_auth_schema(), timeout=90)
     stop_strategy_scheduler = asyncio.Event()
     strategy_scheduler_task = asyncio.create_task(paper_strategy_scheduler(stop_strategy_scheduler))
 
