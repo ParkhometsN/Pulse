@@ -1,5 +1,16 @@
 import { useState } from "react";
 
+const makeCurrencyIcon = (label, background, color = "#ffffff") => {
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="160" height="160" viewBox="0 0 160 160">
+      <rect width="160" height="160" rx="80" fill="${background}"/>
+      <text x="80" y="92" text-anchor="middle" font-size="42" font-family="Arial, sans-serif" font-weight="700" fill="${color}">${label}</text>
+    </svg>
+  `;
+
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+};
+
 const CRYPTO_LOGO_SLUGS = {
   BTC: "bitcoin-btc",
   ETH: "ethereum-eth",
@@ -34,26 +45,75 @@ const CRYPTO_LOGO_SLUGS = {
   SUI: "sui-sui",
   PEPE: "pepe-pepe",
   MNT: "mantle-mnt",
+  TIA: "celestia-tia",
+};
+
+const CRYPTO_COINMARKETCAP_IDS = {
+  BTC: 1,
+  ETH: 1027,
+  USDT: 825,
+  BNB: 1839,
+  SOL: 5426,
+  XRP: 52,
+  DOGE: 74,
+  ADA: 2010,
+  TRX: 1958,
+  TON: 11419,
+  AVAX: 5805,
+  LINK: 1975,
+  DOT: 6636,
+  LTC: 2,
+  BCH: 1831,
+  SHIB: 5994,
+  UNI: 7083,
+  ETC: 1321,
+  NEAR: 6535,
+  APT: 21794,
+  ARB: 11841,
+  OP: 11840,
+  FIL: 2280,
+  ATOM: 3794,
+  ICP: 8916,
+  INJ: 7226,
+  AAVE: 7278,
+  SUI: 20947,
+  PEPE: 24478,
+  TIA: 22861,
+  MNT: 27075,
 };
 
 const STATIC_ICON_SOURCES = {
-  RUB: ["https://invest-brands.cdn-tinkoff.ru/rublex160.png"],
-  RUR: ["https://invest-brands.cdn-tinkoff.ru/rublex160.png"],
-  USD: [
-    "https://invest-brands.cdn-tinkoff.ru/dollarx160.png",
-    "https://cdn.jsdelivr.net/gh/spothq/cryptocurrency-icons@master/svg/color/usd.svg",
-  ],
-  EUR: ["https://invest-brands.cdn-tinkoff.ru/eurox160.png"],
+  RUB: [makeCurrencyIcon("RUB", "#111827")],
+  RUR: [makeCurrencyIcon("RUB", "#111827")],
+  USD: [makeCurrencyIcon("USD", "#16a34a")],
+  EUR: [makeCurrencyIcon("EUR", "#2563eb")],
   USDT: ["https://cryptologos.cc/logos/tether-usdt-logo.svg"],
   USDC: ["https://cryptologos.cc/logos/usd-coin-usdc-logo.svg"],
 };
 
+const FALLBACK_REPOSITORY_ICON_PATTERN =
+  /(spothq\/cryptocurrency-icons|raw\.githubusercontent\.com\/spothq\/cryptocurrency-icons|assets\.coincap\.io|s3-symbol-logo\.tradingview\.com)/i;
+
 const getCryptoIconSources = (coinCode, iconUrl) => {
   const lowerCode = coinCode.toLowerCase();
   const cryptoLogoSlug = CRYPTO_LOGO_SLUGS[coinCode];
-  const sources = [iconUrl];
+  const coinmarketcapId = CRYPTO_COINMARKETCAP_IDS[coinCode];
+  const hasVerifiedSource = Boolean(coinmarketcapId || cryptoLogoSlug);
+  const deferProvidedIcon =
+    iconUrl && hasVerifiedSource && FALLBACK_REPOSITORY_ICON_PATTERN.test(iconUrl);
+  const sources = deferProvidedIcon ? [] : [iconUrl];
 
-  if (!iconUrl) {
+  if (coinmarketcapId) {
+    sources.push(
+      `https://s2.coinmarketcap.com/static/img/coins/64x64/${coinmarketcapId}.png`
+    );
+  }
+
+  if (cryptoLogoSlug) {
+    sources.push(`https://cryptologos.cc/logos/${cryptoLogoSlug}-logo.svg`);
+  }
+
+  if (!iconUrl && !coinmarketcapId && !cryptoLogoSlug) {
     sources.push(
       `https://cdn.jsdelivr.net/gh/spothq/cryptocurrency-icons@master/svg/color/${lowerCode}.svg`,
       `https://raw.githubusercontent.com/spothq/cryptocurrency-icons/master/svg/color/${lowerCode}.svg`,
@@ -62,8 +122,8 @@ const getCryptoIconSources = (coinCode, iconUrl) => {
     );
   }
 
-  if (cryptoLogoSlug) {
-    sources.push(`https://cryptologos.cc/logos/${cryptoLogoSlug}-logo.svg`);
+  if (deferProvidedIcon) {
+    sources.push(iconUrl);
   }
 
   return [...new Set(sources.filter(Boolean))];

@@ -67,7 +67,11 @@ PAPER_MAX_DAILY_TRADES = 240
 STRATEGY_MEMORY_SCORE_LIMIT = 15
 STRATEGY_GPT_REVIEW_COOLDOWN_HOURS = 12
 STRATEGY_CANDIDATES_CACHE_TTL_SECONDS = 45
+STRATEGY_RESPONSE_CACHE_TTL_SECONDS = 12
+STRATEGY_SNAPSHOT_TIMEOUT_SECONDS = 2.0
 _strategy_candidates_cache: dict[str, dict[str, Any]] = {}
+_strategy_response_cache: dict[str, dict[str, Any]] = {}
+_strategy_response_refresh_tasks: dict[str, asyncio.Task] = {}
 PAPER_RISK_MAX_ALLOCATION = {
     "careful": 0.10,
     "balanced": 0.14,
@@ -2034,10 +2038,21 @@ async def _load_strategy_lifetime(user_id: Any, strategy_id: str) -> dict[str, A
     }
 
 
-async def _attach_strategy_lifetime(user_id: Any, payload: dict[str, Any]) -> dict[str, Any]:
+async def _attach_strategy_lifetime(
+    user_id: Any,
+    payload: dict[str, Any],
+    include_learning: bool = False,
+) -> dict[str, Any]:
     lifetime = await _load_strategy_lifetime(user_id, str(payload.get("id") or ""))
-    memory = await _load_strategy_memory(user_id, str(payload.get("id") or ""))
-    events = await _load_strategy_events(user_id, str(payload.get("id") or ""))
+    learning_payload: dict[str, Any] = {}
+
+    if include_learning:
+        memory = await _load_strategy_memory(user_id, str(payload.get("id") or ""))
+        events = await _load_strategy_events(user_id, str(payload.get("id") or ""))
+        learning_payload = {
+            "memory": list(memory.values())[:8],
+            "errorLog": events,
+        }
 
     if len(lifetime["chartPoints"]) > 1:
         payload = {
@@ -2053,9 +2068,8 @@ async def _attach_strategy_lifetime(user_id: Any, payload: dict[str, Any]) -> di
         "profit": lifetime["profit"],
         "roi": lifetime["roi"],
         "historyAllTime": lifetime["trades"],
-        "memory": list(memory.values())[:8],
-        "errorLog": events,
         "runsCount": lifetime["runsCount"],
+        **learning_payload,
     }
 
 
@@ -2134,6 +2148,144 @@ async def _get_or_create_strategy_run(
     await _record_paper_strategy_trades(user_id, strategy_id, payload)
 
     return await _attach_strategy_lifetime(user_id, {**payload, "runDate": run_date.isoformat()})
+
+
+def _build_strategy_response(items: list[dict[str, Any]], refreshing: bool = False) -> dict[str, Any]:
+    return {
+        "items": items,
+        "runDate": _strategy_run_date().isoformat(),
+        "threshold": 60,
+        "paperCapital": PAPER_START_CAPITAL,
+        "refreshing": refreshing,
+        "updatedAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def _get_cached_strategy_response(user_id: Any) -> dict[str, Any] | None:
+    cache_key = str(user_id)
+    cached = _strategy_response_cache.get(cache_key)
+
+    if not cached:
+        return None
+
+    if time.monotonic() - cached["created_at"] > STRATEGY_RESPONSE_CACHE_TTL_SECONDS:
+        return None
+
+    return cached["payload"]
+
+
+def _set_cached_strategy_response(user_id: Any, payload: dict[str, Any]) -> None:
+    cache_key = str(user_id)
+    _strategy_response_cache[cache_key] = {
+        "created_at": time.monotonic(),
+        "payload": payload,
+    }
+
+    if len(_strategy_response_cache) > 300:
+        oldest_key = min(
+            _strategy_response_cache,
+            key=lambda key: _strategy_response_cache[key]["created_at"],
+        )
+        _strategy_response_cache.pop(oldest_key, None)
+
+
+def _invalidate_strategy_response_cache(user_id: Any) -> None:
+    _strategy_response_cache.pop(str(user_id), None)
+
+
+async def _load_strategy_snapshot_from_database(user_id: Any) -> list[dict[str, Any]]:
+    pool = get_database_pool()
+
+    async with pool.acquire() as connection:
+        rows = await connection.fetch(
+            """
+            select distinct on (strategy_id)
+                   strategy_id, run_date, start_capital, current_capital, roi,
+                   accuracy, max_drawdown, chart, trades, metadata, created_at
+            from ai_paper_strategy_runs
+            where user_id = $1 and strategy_id = any($2::varchar[])
+            order by strategy_id, run_date desc, created_at desc
+            """,
+            user_id,
+            list(PAPER_STRATEGY_IDS),
+        )
+
+    if not rows:
+        return []
+
+    latest_rows = {row["strategy_id"]: row for row in rows}
+    lifetimes = await asyncio.gather(*[
+        _load_strategy_lifetime(user_id, strategy_id)
+        for strategy_id in latest_rows
+    ], return_exceptions=True)
+
+    items: list[dict[str, Any]] = []
+
+    for strategy_id, lifetime_result in zip(latest_rows, lifetimes):
+        row = latest_rows[strategy_id]
+        metadata = _safe_json_payload(row["metadata"], {})
+        chart = row["chart"] if isinstance(row["chart"], list) else _safe_json_payload(row["chart"], [])
+        trades = row["trades"] if isinstance(row["trades"], list) else _safe_json_payload(row["trades"], [])
+
+        payload = {
+            **(metadata if isinstance(metadata, dict) else {}),
+            "id": row["strategy_id"],
+            "runDate": row["run_date"].isoformat(),
+            "chart": chart,
+            "trades": trades,
+            "startCapital": round(to_float(row["start_capital"], PAPER_START_CAPITAL), 2),
+            "currentCapital": round(to_float(row["current_capital"], PAPER_START_CAPITAL), 2),
+            "roi": round(to_float(row["roi"]), 2),
+        }
+
+        if isinstance(lifetime_result, dict):
+            if len(lifetime_result["chartPoints"]) > 1:
+                payload["chart"] = lifetime_result["chart"]
+                payload["chartPoints"] = lifetime_result["chartPoints"]
+
+            payload.update({
+                "startCapital": lifetime_result["startCapital"],
+                "currentCapital": lifetime_result["currentCapital"],
+                "profit": lifetime_result["profit"],
+                "roi": lifetime_result["roi"],
+                "historyAllTime": lifetime_result["trades"],
+                "runsCount": lifetime_result["runsCount"],
+            })
+
+        items.append(payload)
+
+    return items
+
+
+async def _refresh_strategy_response_cache(user_id: Any) -> dict[str, Any] | None:
+    try:
+        candidates = await _load_strategy_candidates(user_id)
+        results = await asyncio.gather(*[
+            _get_or_create_strategy_run(user_id, strategy_id, candidates=candidates)
+            for strategy_id in PAPER_STRATEGY_IDS
+        ], return_exceptions=True)
+        items = [item for item in results if isinstance(item, dict)]
+        payload = _build_strategy_response(items, refreshing=False)
+        _set_cached_strategy_response(user_id, payload)
+        return payload
+    except Exception:
+        return None
+
+
+def _schedule_strategy_response_refresh(user_id: Any) -> None:
+    cache_key = str(user_id)
+    current_task = _strategy_response_refresh_tasks.get(cache_key)
+
+    if current_task and not current_task.done():
+        return
+
+    task = asyncio.create_task(_refresh_strategy_response_cache(user_id))
+    _strategy_response_refresh_tasks[cache_key] = task
+
+    def cleanup(_: asyncio.Task) -> None:
+        _strategy_response_refresh_tasks.pop(cache_key, None)
+
+    task.add_done_callback(cleanup)
 
 
 @router.get("/settings/ai")
@@ -2311,19 +2463,27 @@ async def get_ai_asset_summary(
 
 @router.get("/ai/strategies")
 async def get_ai_strategies(current_user=Depends(get_current_user)):
-    candidates = await _load_strategy_candidates(current_user["id"])
-    items = await asyncio.gather(*[
-        _get_or_create_strategy_run(current_user["id"], strategy_id, candidates=candidates)
-        for strategy_id in PAPER_STRATEGY_IDS
-    ])
+    cached_response = _get_cached_strategy_response(current_user["id"])
 
-    return {
-        "items": items,
-        "runDate": _strategy_run_date().isoformat(),
-        "threshold": 60,
-        "paperCapital": PAPER_START_CAPITAL,
-        "updatedAt": datetime.now(timezone.utc).isoformat(),
-    }
+    if cached_response:
+        return cached_response
+
+    try:
+        snapshot_items = await asyncio.wait_for(
+            _load_strategy_snapshot_from_database(current_user["id"]),
+            timeout=STRATEGY_SNAPSHOT_TIMEOUT_SECONDS,
+        )
+    except Exception:
+        snapshot_items = []
+
+    _schedule_strategy_response_refresh(current_user["id"])
+
+    response = _build_strategy_response(snapshot_items, refreshing=True)
+
+    if snapshot_items:
+        _set_cached_strategy_response(current_user["id"], response)
+
+    return response
 
 
 @router.get("/ai/strategies/history")
@@ -2416,6 +2576,7 @@ async def reset_ai_strategy_history(
         )
 
     _strategy_candidates_cache.pop(str(current_user["id"]), None)
+    _invalidate_strategy_response_cache(current_user["id"])
 
     return {
         "reset": True,
@@ -2511,6 +2672,15 @@ async def connect_ai_strategy(
         force_reset=True,
         candidates=candidates,
     )
+    _invalidate_strategy_response_cache(current_user["id"])
+    try:
+        snapshot_items = await _load_strategy_snapshot_from_database(current_user["id"])
+        _set_cached_strategy_response(
+            current_user["id"],
+            _build_strategy_response(snapshot_items, refreshing=False),
+        )
+    except Exception:
+        pass
 
     return {
         "connected": True,

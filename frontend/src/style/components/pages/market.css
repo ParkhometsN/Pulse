@@ -918,62 +918,6 @@ grid-template-columns: repeat(1, 1fr);
     padding-right: 4px;
 }
 
-.strategy_memory_grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 8px;
-}
-
-.strategy_memory_item {
-    border: 1.5px solid var(--black-t);
-    border-radius: 16px;
-    background: var(--black);
-    padding: 12px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-}
-
-.strategy_memory_item div {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-}
-
-.strategy_memory_item strong {
-    color: var(--white);
-    font-size: 13px;
-}
-
-.strategy_memory_item span,
-.strategy_memory_item p,
-.strategy_memory_item small {
-    color: rgba(255, 255, 255, 0.54);
-    font-size: 11px;
-    line-height: 1.4;
-}
-
-.strategy_memory_item p {
-    margin: 0;
-}
-
-.strategy_memory_item_positive {
-    border-color: rgba(0, 255, 171, 0.28);
-}
-
-.strategy_memory_item_positive small {
-    color: var(--green);
-}
-
-.strategy_memory_item_negative {
-    border-color: rgba(255, 59, 48, 0.28);
-}
-
-.strategy_memory_item_negative small {
-    color: var(--red);
-}
-
 .strategy_connect_panel {
     display: flex;
     flex-direction: column;

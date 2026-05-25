@@ -14,7 +14,7 @@ import { createPortal } from "react-dom";
 
 const ITEMS_PER_PAGE = 15;
 const MARKET_REFRESH_INTERVAL = 10000;
-const STRATEGY_REFRESH_INTERVAL = 5000;
+const STRATEGY_REFRESH_INTERVAL = 15000;
 const STRATEGY_MIN_CAPITAL_RUB = 5000;
 const STRATEGY_USDT_RUB_RATE = 92;
 const FAVORITES_STORAGE_KEY = "pulse_market_favorites";
@@ -210,20 +210,6 @@ const getStrategyToneColor = (tone) => {
 
   return "var(--gray)";
 };
-
-const formatStrategyMemoryScore = (value) => {
-  const number = Number(value) || 0;
-  return `${number > 0 ? "+" : ""}${number.toFixed(1).replace(".", ",")}`;
-};
-
-const getStrategyMemoryTone = (item) => getStrategyTone(item?.memoryScore);
-
-const getStrategyMemorySummary = (item) => (
-  item?.gptReview?.summary
-  || item?.lastLesson?.ruleUpdate
-  || item?.lastLesson?.summary
-  || "Память накопится после закрытых сделок стратегии."
-);
 
 const getChartRoi = (chart = []) => {
   const firstValue = Number(chart[0]);
@@ -1170,41 +1156,6 @@ function StrategyDrawer({
               </div>
             </div>
 
-            <div className="strategy_drawer_section">
-              <div className="strategy_section_title">
-                <h3>База ума</h3>
-                <p>Ошибки, уроки и корректировка вероятности следующих входов</p>
-              </div>
-              {strategy.memory?.length ? (
-                <div className="strategy_memory_grid">
-                  {strategy.memory.slice(0, 4).map((item) => {
-                    const tone = getStrategyMemoryTone(item);
-                    const winRate = item.tradesCount
-                      ? Math.round((Number(item.winsCount || 0) / Number(item.tradesCount || 1)) * 100)
-                      : 0;
-
-                    return (
-                      <div
-                        className={`strategy_memory_item strategy_memory_item_${tone}`}
-                        key={`${strategy.id}-memory-${item.assetSymbol}`}
-                      >
-                        <div>
-                          <strong>{item.assetSymbol}</strong>
-                          <span>{item.tradesCount} сделок · win {winRate}%</span>
-                        </div>
-                        <p>{getStrategyMemorySummary(item)}</p>
-                        <small>Вес памяти {formatStrategyMemoryScore(item.memoryScore)}</small>
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div className="strategy_history_empty">
-                  База ума появится после первых закрытых сделок: стратегия начнет записывать ошибки, прибыльные паттерны и правила повторного входа.
-                </div>
-              )}
-            </div>
-
             <Buttons type="primary-full" className="strategy_connect_button" onClick={onOpenConnect}>
               Подключить стратегию
             </Buttons>
@@ -1302,6 +1253,7 @@ export default function Market() {
   const cryptoRequestIdRef = useRef(0);
   const stocksRequestIdRef = useRef(0);
   const strategiesRequestIdRef = useRef(0);
+  const strategiesRequestPendingRef = useRef(false);
   const strategyHistoryRequestIdRef = useRef(0);
   const strategyCloseTimerRef = useRef(null);
   const navigate = useNavigate();
@@ -1542,8 +1494,13 @@ export default function Market() {
 	  }, []);
 
 	  const fetchStrategies = useCallback((showLoading = false) => {
+      if (strategiesRequestPendingRef.current) {
+        return Promise.resolve();
+      }
+
 	    const requestId = strategiesRequestIdRef.current + 1;
 	    strategiesRequestIdRef.current = requestId;
+      strategiesRequestPendingRef.current = true;
 
 	    if (showLoading) {
 	      setIsStrategiesLoading(true);
@@ -1565,6 +1522,8 @@ export default function Market() {
 	        }
 	      })
 	      .finally(() => {
+          strategiesRequestPendingRef.current = false;
+
 	        if (showLoading && requestId === strategiesRequestIdRef.current) {
 	          setIsStrategiesLoading(false);
 	        }
