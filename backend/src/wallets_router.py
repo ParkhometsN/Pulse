@@ -1941,6 +1941,8 @@ async def get_portfolio_trades(current_user=Depends(get_current_user)):
                    ai_reason
             from ai_trade_history
             where user_id = $1
+              and coalesce(ai_reason, '') not like 'paper_strategy%'
+              and coalesce(ai_strategy, '') not like 'paper_%'
             order by executed_at desc
             limit 30
             """,

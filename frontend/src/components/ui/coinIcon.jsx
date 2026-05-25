@@ -53,10 +53,12 @@ const getCryptoIconSources = (coinCode, iconUrl) => {
   const cryptoLogoSlug = CRYPTO_LOGO_SLUGS[coinCode];
   const sources = [iconUrl];
 
-  if (!iconUrl && cryptoLogoSlug) {
+  if (!iconUrl) {
     sources.push(
       `https://cdn.jsdelivr.net/gh/spothq/cryptocurrency-icons@master/svg/color/${lowerCode}.svg`,
-      `https://assets.coincap.io/assets/icons/${lowerCode}@2x.png`
+      `https://raw.githubusercontent.com/spothq/cryptocurrency-icons/master/svg/color/${lowerCode}.svg`,
+      `https://assets.coincap.io/assets/icons/${lowerCode}@2x.png`,
+      `https://s3-symbol-logo.tradingview.com/crypto/XTVC${coinCode}.svg`
     );
   }
 
@@ -126,12 +128,13 @@ export default function CoinIcon({
   className = "",
 }) {
   const rawCode = String(baseCoin || label || "?").toUpperCase();
+  const normalizedCryptoCode = rawCode.endsWith("USDT") && rawCode.length > 4
+    ? rawCode.slice(0, -4)
+    : rawCode;
   const coinCode = type === "stock"
     ? rawCode.slice(0, 5)
-    : (rawCode.endsWith("USDT") && rawCode.length > 4
-      ? rawCode.slice(0, -4)
-      : rawCode
-    ).slice(0, 4);
+    : normalizedCryptoCode;
+  const fallbackCode = coinCode.length > 5 ? coinCode.slice(0, 5) : coinCode;
   const iconKey = `${type}:${coinCode}:${iconUrl || ""}`;
   const [sourceState, setSourceState] = useState({
     key: iconKey,
@@ -146,7 +149,7 @@ export default function CoinIcon({
         className={`coin_icon coin_icon_fallback ${className}`}
         style={getFallbackStyle(coinCode, type)}
       >
-        {coinCode}
+        {fallbackCode}
       </span>
     );
   }
