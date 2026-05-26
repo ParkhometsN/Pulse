@@ -33,18 +33,14 @@ const MARKET_STRATEGIES = [
     tag: "Scalp",
     direction: "Импульс",
     chartColor: "var(--green)",
-    chart: [100000, 101800, 100900, 103400, 105200, 104700, 108300, 109900, 111600, 113200, 115800, 117400],
+    chart: [100000, 100000, 100000, 100000],
     stats: [
       { label: "Модель", value: "Scalp AI" },
-      { label: "Сделок за 30 дней", value: "38" },
-      { label: "Точность сигналов", value: "67%" },
-      { label: "Просадка", value: "-4.8%" },
+      { label: "Сделок сегодня", value: "0" },
+      { label: "Точность сигналов", value: "0%" },
+      { label: "Просадка", value: "0%" },
     ],
-    history: [
-      { date: "12 мая, 15:10", asset: "BTCUSDT", side: "Long", result: "+1.8%" },
-      { date: "12 мая, 11:42", asset: "ETHUSDT", side: "Long", result: "+0.9%" },
-      { date: "11 мая, 18:24", asset: "SOLUSDT", side: "Long", result: "-0.4%" },
-    ],
+    history: [],
     aggression: 42,
     note: "Лучше подходит для быстрых дневных импульсов и ликвидных активов с подтвержденным оборотом.",
   },
@@ -56,18 +52,14 @@ const MARKET_STRATEGIES = [
     tag: "Long",
     direction: "Растет",
     chartColor: "var(--green)",
-    chart: [150000, 151200, 153800, 152900, 156400, 159700, 161900, 166300, 169400, 172600, 176200, 181800],
+    chart: [100000, 100000, 100000, 100000],
     stats: [
       { label: "Модель", value: "Growth AI" },
-      { label: "Сделок за 30 дней", value: "24" },
-      { label: "Точность сигналов", value: "72%" },
-      { label: "Просадка", value: "-3.1%" },
+      { label: "Сделок сегодня", value: "0" },
+      { label: "Точность сигналов", value: "0%" },
+      { label: "Просадка", value: "0%" },
     ],
-    history: [
-      { date: "12 мая, 14:36", asset: "SBER", side: "Long", result: "+1.2%" },
-      { date: "12 мая, 10:05", asset: "GAZP", side: "Long", result: "+0.6%" },
-      { date: "10 мая, 16:50", asset: "LKOH", side: "Long", result: "+1.5%" },
-    ],
+    history: [],
     aggression: 58,
     note: "Сценарий для спокойного набора позиции, когда рынок показывает устойчивый спрос.",
   },
@@ -79,18 +71,14 @@ const MARKET_STRATEGIES = [
     tag: "Hybrid",
     direction: "Смешанный",
     chartColor: "var(--primary-blue)",
-    chart: [120000, 122400, 121700, 125800, 127100, 130900, 132400, 136300, 135700, 139200, 142800, 146100],
+    chart: [100000, 100000, 100000, 100000],
     stats: [
       { label: "Модель", value: "Hybrid AI" },
-      { label: "Сделок за 30 дней", value: "51" },
-      { label: "Точность сигналов", value: "69%" },
-      { label: "Просадка", value: "-5.2%" },
+      { label: "Сделок сегодня", value: "0" },
+      { label: "Точность сигналов", value: "0%" },
+      { label: "Просадка", value: "0%" },
     ],
-    history: [
-      { date: "12 мая, 16:02", asset: "BTCUSDT", side: "Long", result: "+0.8%" },
-      { date: "12 мая, 13:18", asset: "NVTK", side: "Short", result: "+0.5%" },
-      { date: "11 мая, 19:40", asset: "ETHUSDT", side: "Long", result: "-0.2%" },
-    ],
+    history: [],
     aggression: 50,
     note: "Комбинированный режим переключает направление при смене рыночного импульса.",
   },
@@ -152,18 +140,30 @@ const formatSignedStrategyMoney = (value) => `${value >= 0 ? "+" : ""}${formatSt
 const getStrategyCapital = (strategy) => {
   const backendInitial = Number(strategy.startCapital ?? strategy.paperRun?.startCapital);
   const backendCurrent = Number(strategy.currentCapital ?? strategy.paperRun?.currentCapital);
-  const backendProfit = Number(strategy.profit ?? strategy.paperRun?.profit);
+  const backendRealizedProfit = Number(strategy.realizedProfit ?? strategy.paperRun?.realizedProfit ?? strategy.profit ?? strategy.paperRun?.profit);
+  const backendUnrealizedProfit = Number(strategy.unrealizedProfit ?? strategy.paperRun?.unrealizedProfit);
+  const backendEquityProfit = Number(strategy.equityProfit ?? strategy.paperRun?.equityProfit);
   const backendRoi = Number(strategy.roi ?? strategy.paperRun?.roi);
+  const backendRealizedRoi = Number(strategy.realizedRoi ?? strategy.paperRun?.realizedRoi);
 
   if (Number.isFinite(backendInitial) && Number.isFinite(backendCurrent)) {
-    const profit = Number.isFinite(backendProfit) ? backendProfit : backendCurrent - backendInitial;
-    const roi = Number.isFinite(backendRoi) ? backendRoi : (backendInitial ? (profit / backendInitial) * 100 : 0);
+    const equityProfit = Number.isFinite(backendEquityProfit) ? backendEquityProfit : backendCurrent - backendInitial;
+    const realizedProfit = Number.isFinite(backendRealizedProfit) ? backendRealizedProfit : equityProfit;
+    const unrealizedProfit = Number.isFinite(backendUnrealizedProfit) ? backendUnrealizedProfit : equityProfit - realizedProfit;
+    const roi = Number.isFinite(backendRoi) ? backendRoi : (backendInitial ? (equityProfit / backendInitial) * 100 : 0);
+    const realizedRoi = Number.isFinite(backendRealizedRoi)
+      ? backendRealizedRoi
+      : (backendInitial ? (realizedProfit / backendInitial) * 100 : 0);
 
     return {
       current: backendCurrent,
       initial: backendInitial,
-      profit,
+      profit: realizedProfit,
+      realizedProfit,
+      unrealizedProfit,
+      equityProfit,
       roi,
+      realizedRoi,
     };
   }
 
@@ -175,8 +175,12 @@ const getStrategyCapital = (strategy) => {
   return {
     current,
     initial,
-    profit,
+    profit: 0,
+    realizedProfit: 0,
+    unrealizedProfit: 0,
+    equityProfit: profit,
     roi,
+    realizedRoi: 0,
   };
 };
 
@@ -285,6 +289,36 @@ const getStrategyTradeAmountMeta = (trade) => {
 
 const getStrategyTradePnlMeta = (trade) => (
   `${formatSignedStrategyPercent(trade.resultPercent)} · ${formatSignedStrategyMoney(trade.resultAmount || 0)}`
+);
+
+const formatStrategyPrice = (value, currency = "USDT") => {
+  const number = Number(value);
+
+  if (!Number.isFinite(number)) {
+    return `0 ${currency}`;
+  }
+
+  return `${number.toLocaleString("ru-RU", {
+    maximumFractionDigits: number >= 100 ? 3 : number >= 1 ? 5 : 8,
+  })} ${currency}`;
+};
+
+const getStrategyTradeExecutionMeta = (trade) => {
+  const entry = formatStrategyPrice(trade.entryPrice, trade.quoteCurrency || "USDT");
+  const exitLabel = trade.status === "closed" ? "Выход" : "Сейчас";
+  const exit = formatStrategyPrice(
+    trade.status === "closed" ? trade.exitPrice : trade.currentPrice || trade.exitPrice,
+    trade.quoteCurrency || "USDT"
+  );
+  const fees = Number(trade.feesAmount);
+
+  return `${trade.side === "Short" ? "Вход: продажа" : "Вход: покупка"} · ${entry} · ${exitLabel}: ${exit}${
+    Number.isFinite(fees) && fees > 0 ? ` · комиссия ${formatStrategyMoney(fees)}` : ""
+  }`;
+};
+
+const getStrategyTradeEntryAction = (trade) => (
+  trade.side === "Short" ? "Продажа" : "Покупка"
 );
 
 const getStrategyChartPoints = (strategy) => {
@@ -419,11 +453,16 @@ const mergeStrategyRun = (baseStrategy, run) => {
     chartPoints: Array.isArray(run.chartPoints) && run.chartPoints.length > 1 ? run.chartPoints : null,
     chartColor: roi === 0 ? baseStrategy.chartColor : getStrategyToneColor(getStrategyTone(roi)),
     startedAt: run.startedAt,
+    realizedProfit: Number(run.realizedProfit ?? run.profit ?? 0),
+    unrealizedProfit: Number(run.unrealizedProfit ?? 0),
+    equityProfit: Number(run.equityProfit ?? ((Number(run.currentCapital) || 0) - (Number(run.startCapital) || 0))),
+    realizedRoi: Number(run.realizedRoi ?? 0),
     history,
     stats: [
       { label: "Модель", value: baseStrategy.stats[0]?.value || "Pulse AI" },
-      { label: "Сделок сегодня", value: String(trades.length) },
-      { label: "Точность сигналов", value: `${formatNumberLike(run.accuracy)}%` },
+      { label: "Сделок сегодня", value: String(run.totalTradesCount ?? trades.length) },
+      { label: "Закрытых сделок", value: String(run.closedTradesCount ?? trades.filter((trade) => trade.status === "closed").length) },
+      { label: "Точность закрытых", value: `${formatNumberLike(run.accuracy)}%` },
       { label: "Просадка", value: formatSignedStrategyPercent(run.maxDrawdown) },
     ],
     historyAllTime: Array.isArray(run.historyAllTime) ? run.historyAllTime : trades,
@@ -947,7 +986,15 @@ function StrategyHistoryPanel({
                   </div>
                 </div>
                 <div className="strategy_history_prices">
+                  <span
+                    className={`strategy_history_badge strategy_history_badge_${item.side === "Short" ? "sell" : "buy"}`}
+                  >
+                    {getStrategyTradeEntryAction(item)}
+                  </span>
                   <span>{getStrategyTradeAmountMeta(item)}</span>
+                  <em className="strategy_history_execution">
+                    {getStrategyTradeExecutionMeta(item)}
+                  </em>
                   <small className={`strategy_history_pnl strategy_history_result_${tone}`}>
                     {getStrategyTradePnlMeta(item)}
                   </small>
@@ -994,11 +1041,11 @@ function StrategyDrawer({
   }
 
   const capital = getStrategyCapital(strategy);
-  const capitalTone = capital.profit >= 0 ? "positive" : "negative";
   const strategyStats = [
     { label: "Стартовый капитал", value: formatStrategyMoney(capital.initial) },
-    { label: "Текущий капитал", value: formatStrategyMoney(capital.current), tone: capitalTone },
-    { label: "Заработано", value: formatSignedStrategyMoney(capital.profit), accent: true },
+    { label: "Текущий капитал", value: formatStrategyMoney(capital.current), tone: getStrategyTone(capital.equityProfit) },
+    { label: "Зафиксировано", value: formatSignedStrategyMoney(capital.realizedProfit), accent: true },
+    { label: "Открытая переоценка", value: formatSignedStrategyMoney(capital.unrealizedProfit), tone: getStrategyTone(capital.unrealizedProfit) },
     ...strategy.stats.filter((item) => item.label !== "Модель"),
   ];
   const startedAtLabel = formatStrategyDateTime(strategy.startedAt || strategy.paperRun?.startedAt);
@@ -1145,7 +1192,15 @@ function StrategyDrawer({
                         </div>
                       </div>
                       <div className="strategy_history_prices">
+                        <span
+                          className={`strategy_history_badge strategy_history_badge_${item.side === "Short" ? "sell" : "buy"}`}
+                        >
+                          {getStrategyTradeEntryAction(item)}
+                        </span>
                         <span>{getStrategyTradeAmountMeta(item)}</span>
+                        <em className="strategy_history_execution">
+                          {getStrategyTradeExecutionMeta(item)}
+                        </em>
                         <small className={`strategy_history_pnl strategy_history_result_${tone}`}>
                           {getStrategyTradePnlMeta(item)}
                         </small>

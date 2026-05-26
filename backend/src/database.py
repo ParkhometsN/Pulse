@@ -265,6 +265,23 @@ async def ensure_auth_schema() -> None:
             )
             """
         )
+        await connection.execute(
+            """
+            create table if not exists ai_strategy_audit_logs (
+                id uuid primary key default gen_random_uuid(),
+                user_id uuid not null references users(id) on delete cascade,
+                strategy_id varchar(80) not null,
+                run_date date,
+                audit_key varchar(255) not null,
+                severity varchar(20) not null default 'warning',
+                code varchar(80) not null,
+                message text not null,
+                payload jsonb not null default '{}'::jsonb,
+                created_at timestamptz not null default now(),
+                unique(user_id, audit_key)
+            )
+            """
+        )
         strategy_connection_columns = {
             row["column_name"]
             for row in await connection.fetch(
@@ -341,4 +358,7 @@ async def ensure_auth_schema() -> None:
         )
         await connection.execute(
             "create index if not exists idx_ai_strategy_memory_user_strategy on ai_strategy_memory(user_id, strategy_id, memory_score desc)"
+        )
+        await connection.execute(
+            "create index if not exists idx_ai_strategy_audit_logs_user_strategy on ai_strategy_audit_logs(user_id, strategy_id, created_at desc)"
         )
