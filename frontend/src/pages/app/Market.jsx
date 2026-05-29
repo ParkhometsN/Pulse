@@ -19,6 +19,8 @@ const STRATEGY_MIN_CAPITAL_RUB = 5000;
 const STRATEGY_USDT_RUB_RATE = 92;
 const FAVORITES_STORAGE_KEY = "pulse_market_favorites";
 const MARKET_CACHE_MAX_AGE = 1000 * 60 * 5;
+const STRATEGY_CACHE_KEY = "pulse:market:strategies:v2";
+const STRATEGY_CACHE_MAX_AGE = 1000 * 60 * 15;
 const marketCacheKey = (type, page, source = "default") => `pulse:market:${type}:${source}:page:${page}:v6`;
 const STABLE_CRYPTO_SYMBOLS = new Set(["USDT", "USDC", "DAI", "USD", "BUSD"]);
 const STOCK_SOURCE_TBANK = "tbank";
@@ -1282,8 +1284,12 @@ export default function Market() {
 	  const [hasSearchIndexLoaded, setHasSearchIndexLoaded] = useState(false);
 	  const [searchIndexError, setSearchIndexError] = useState("");
 	  const [isSearchFocused, setIsSearchFocused] = useState(false);
-  const [strategyRuns, setStrategyRuns] = useState([]);
-  const [isStrategiesLoading, setIsStrategiesLoading] = useState(activePage === "strategies");
+  const [strategyRuns, setStrategyRuns] = useState(
+    () => readCachedValue(STRATEGY_CACHE_KEY, STRATEGY_CACHE_MAX_AGE)?.items || []
+  );
+  const [, setIsStrategiesLoading] = useState(
+    activePage === "strategies" && strategyRuns.length === 0
+  );
   const [strategiesError, setStrategiesError] = useState("");
 		  const [selectedStrategy, setSelectedStrategy] = useState(null);
 		  const [isStrategyDrawerOpen, setIsStrategyDrawerOpen] = useState(false);
@@ -1532,6 +1538,11 @@ export default function Market() {
 	  ]);
 
 	  const applyStrategyRuns = useCallback((nextRuns) => {
+      if (!Array.isArray(nextRuns) || nextRuns.length === 0) {
+        return;
+      }
+
+      writeCachedValue(STRATEGY_CACHE_KEY, { items: nextRuns });
 	    setStrategyRuns(nextRuns);
 	    setSelectedStrategy((currentStrategy) => {
 	      if (!currentStrategy) {
@@ -1561,6 +1572,8 @@ export default function Market() {
 	      setIsStrategiesLoading(true);
 	    }
 
+      let keepLoadingAfterResponse = false;
+
 	    return api
 	      .get("/ai/strategies")
 	      .then((response) => {
@@ -1568,7 +1581,13 @@ export default function Market() {
 	          return;
 	        }
 
-	        applyStrategyRuns(response.data?.items || []);
+          const items = response.data?.items || [];
+          if (items.length) {
+            applyStrategyRuns(items);
+          } else if (response.data?.refreshing && strategyRuns.length === 0) {
+            keepLoadingAfterResponse = true;
+          }
+
 	        setStrategiesError("");
 	      })
 	      .catch(() => {
@@ -1580,10 +1599,10 @@ export default function Market() {
           strategiesRequestPendingRef.current = false;
 
 	        if (showLoading && requestId === strategiesRequestIdRef.current) {
-	          setIsStrategiesLoading(false);
+	          setIsStrategiesLoading(keepLoadingAfterResponse);
 	        }
 	      });
-	  }, [applyStrategyRuns]);
+	  }, [applyStrategyRuns, strategyRuns.length]);
 
     const fetchStrategyHistory = useCallback((strategyId) => {
       const requestId = strategyHistoryRequestIdRef.current + 1;
@@ -1670,7 +1689,7 @@ export default function Market() {
                         {strategiesError ? (
                           <p className="market_error">{strategiesError}</p>
                         ) : null}
-			                    {isStrategiesLoading && !strategyRuns.length ? (
+			                    {strategyRuns.length === 0 ? (
                           MARKET_STRATEGIES.map((strategy) => (
                             <StrategyCardSkeleton key={`strategy-skeleton-${strategy.id}`} />
                           ))

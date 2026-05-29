@@ -51,7 +51,7 @@ PAPER_TAKE_PROFIT_PERCENT = 2.0
 PAPER_STOP_LOSS_PERCENT = -6.0
 PAPER_DCA_STEP_PERCENT = -2.0
 PAPER_DCA_ADD_RATIO = 0.45
-PAPER_MAX_SCALE_INS = 2
+PAPER_MAX_SCALE_INS = 1
 PAPER_MAX_HOLD_MINUTES = 240
 PAPER_SCALP_TAKE_PROFIT_PERCENT = 1.0
 PAPER_SCALP_STOP_LOSS_PERCENT = -1.8
@@ -131,6 +131,10 @@ def _point_close(point: dict[str, Any]) -> float:
     return to_float(point.get("close") or point.get("price"))
 
 
+def _point_turnover(point: dict[str, Any]) -> float:
+    return to_float(point.get("turnover") or point.get("volume"))
+
+
 def _calculate_asset_score(asset: dict[str, Any]) -> dict[str, Any]:
     chart = [point for point in asset.get("chart") or asset.get("chart7d") or [] if isinstance(point, dict)]
     current_price = to_float(asset.get("price"))
@@ -140,6 +144,11 @@ def _calculate_asset_score(asset: dict[str, Any]) -> dict[str, Any]:
     change_1d = to_float(asset.get("priceChangePercent24h"))
     change_7d = to_float(asset.get("priceChangePercent7d"))
     change_30d = to_float(asset.get("priceChangePercent30d"))
+    change_1h = to_float(asset.get("priceChangePercent1h"))
+    change_4h = to_float(asset.get("priceChangePercent4h"))
+    spread_percent = abs(to_float(asset.get("bidAskSpreadPercent")))
+    range_position = to_float(asset.get("rangePosition"), 0.5)
+    volume_ratio = to_float(asset.get("volumeTrendRatio"), 1)
 
     closes = [_point_close(point) for point in chart if _point_close(point) > 0]
     returns = [
@@ -151,16 +160,34 @@ def _calculate_asset_score(asset: dict[str, Any]) -> dict[str, Any]:
     positive_days = sum(1 for value in returns if value > 0)
     trend_quality = positive_days / len(returns) * 100 if returns else 50
     turnover = to_float(asset.get("turnover24h") or asset.get("volume24h"))
+    intraday_confirmation = (
+        (change_1h > 0.05 and change_4h > 0.15)
+        or (asset.get("assetType") != "crypto" and change_1d > 0)
+    )
+    volume_confirmation = _clamp((volume_ratio - 1) * 18, -8, 12)
+    range_confirmation = _clamp((range_position - 0.45) * 18, -6, 8)
+    spread_penalty = min(spread_percent * 22, 14)
 
-    momentum_score = _clamp(50 + change_1d * 1.8 + change_7d * 1.1 + change_30d * 0.45, 0, 100)
+    momentum_score = _clamp(
+        46
+        + change_1h * 5.2
+        + change_4h * 3.4
+        + change_1d * 0.9
+        + change_7d * 0.45
+        + change_30d * 0.18
+        + volume_confirmation
+        + range_confirmation,
+        0,
+        100,
+    )
     liquidity_score = _clamp(35 + math.log10(max(turnover, 1)) * 9, 0, 100)
-    risk_score = _clamp(100 - volatility * 6, 0, 100)
+    risk_score = _clamp(100 - volatility * 4.2 - spread_penalty, 0, 100)
     quality_score = _clamp((trend_quality * 0.7) + (risk_score * 0.3), 0, 100)
     composite = (
-        momentum_score * 0.42
-        + liquidity_score * 0.20
+        momentum_score * 0.46
+        + liquidity_score * 0.18
         + risk_score * 0.18
-        + quality_score * 0.20
+        + quality_score * 0.18
     )
     symbol = str(asset.get("symbol") or "").upper()
     if symbol in CORE_CRYPTO_SYMBOLS or symbol in CORE_STOCK_SYMBOLS:
@@ -170,11 +197,24 @@ def _calculate_asset_score(asset: dict[str, Any]) -> dict[str, Any]:
     if turnover > 0 and turnover < 100_000 and asset.get("assetType") == "crypto":
         composite -= 12
 
+    if asset.get("assetType") == "crypto":
+        if not intraday_confirmation:
+            composite -= 18
+
+        if spread_percent > 0.35:
+            composite -= 10
+
+        if change_1d > 18 and change_1h < 0:
+            composite -= 14
+
     composite = _clamp(composite, 0, 100)
     data_flags: list[str] = []
 
     if len(closes) < 3:
         data_flags.append("short_chart_history")
+
+    if asset.get("assetType") == "crypto" and (change_1h == 0 and change_4h == 0):
+        data_flags.append("missing_intraday_confirmation")
 
     if turnover <= 0:
         data_flags.append("missing_turnover")
@@ -182,7 +222,17 @@ def _calculate_asset_score(asset: dict[str, Any]) -> dict[str, Any]:
     if volatility > 14:
         data_flags.append("high_volatility")
 
-    confidence = _clamp(88 - len(data_flags) * 14 - max(volatility - 10, 0) * 1.7, 20, 92)
+    if spread_percent > 0.35:
+        data_flags.append("wide_spread")
+
+    confidence = _clamp(
+        88
+        - len(data_flags) * 12
+        - max(volatility - 10, 0) * 1.4
+        + (6 if intraday_confirmation else -8),
+        20,
+        94,
+    )
     signal = _format_signal(composite, confidence)
     target_move = _clamp((composite - 50) / 100 * max(6, volatility * 1.8), -18, 18)
     target_price = current_price * (1 + target_move / 100) if current_price > 0 else 0
@@ -205,9 +255,15 @@ def _calculate_asset_score(asset: dict[str, Any]) -> dict[str, Any]:
             "risk": round(risk_score, 2),
             "quality": round(quality_score, 2),
             "volatility": round(volatility, 2),
+            "change1h": round(change_1h, 2),
+            "change4h": round(change_4h, 2),
             "change1d": round(change_1d, 2),
             "change7d": round(change_7d, 2),
             "change30d": round(change_30d, 2),
+            "spreadPercent": round(spread_percent, 4),
+            "rangePosition": round(range_position, 4),
+            "volumeTrendRatio": round(volume_ratio, 4),
+            "intradayConfirmation": intraday_confirmation,
         },
         "dataQualityFlags": data_flags,
     }
@@ -781,47 +837,136 @@ def _strategy_candidates_by_symbol(candidates: list[dict[str, Any]]) -> dict[str
     }
 
 
+def _normalize_bybit_kline_item(item: Any) -> dict[str, Any] | None:
+    if not isinstance(item, list) or len(item) < 6:
+        return None
+
+    timestamp_ms = to_float(item[0])
+    open_price = to_float(item[1])
+    high = to_float(item[2])
+    low = to_float(item[3])
+    close = to_float(item[4])
+    volume = to_float(item[5])
+    turnover = to_float(item[6]) if len(item) > 6 else 0
+
+    if close <= 0:
+        return None
+
+    return {
+        "time": datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc).isoformat() if timestamp_ms else None,
+        "open": open_price,
+        "high": high,
+        "low": low,
+        "close": close,
+        "volume": volume,
+        "turnover": turnover,
+    }
+
+
+def _build_crypto_intraday_features(price: float, raw_klines: list[Any]) -> dict[str, Any]:
+    candles = [
+        candle for candle in (
+            _normalize_bybit_kline_item(item)
+            for item in raw_klines
+        )
+        if candle
+    ]
+    candles.sort(key=lambda item: item.get("time") or "")
+
+    closes = [_point_close(point) for point in candles if _point_close(point) > 0]
+    if len(closes) < 2:
+        return {
+            "chart7d": candles,
+            "priceChangePercent1h": 0,
+            "priceChangePercent4h": 0,
+            "volumeTrendRatio": 1,
+            "rangePosition": 0.5,
+        }
+
+    current_price = price if price > 0 else closes[-1]
+    previous_1h = closes[-2]
+    previous_4h = closes[-5] if len(closes) >= 5 else closes[0]
+    recent_turnover = sum(_point_turnover(point) for point in candles[-4:])
+    previous_turnover = sum(_point_turnover(point) for point in candles[-8:-4])
+    highs = [to_float(point.get("high")) for point in candles[-24:] if to_float(point.get("high")) > 0]
+    lows = [to_float(point.get("low")) for point in candles[-24:] if to_float(point.get("low")) > 0]
+    high = max(highs) if highs else current_price
+    low = min(lows) if lows else current_price
+    range_position = (current_price - low) / (high - low) if high > low else 0.5
+
+    return {
+        "chart7d": candles,
+        "priceChangePercent1h": calculate_percent_change(current_price, previous_1h),
+        "priceChangePercent4h": calculate_percent_change(current_price, previous_4h),
+        "volumeTrendRatio": recent_turnover / previous_turnover if previous_turnover > 0 else 1,
+        "rangePosition": _clamp(range_position, 0, 1),
+    }
+
+
 def _calculate_short_term_probability(score_payload: dict[str, Any], asset: dict[str, Any]) -> float:
     factors = score_payload.get("factors") or {}
+    change_1h = to_float(factors.get("change1h"))
+    change_4h = to_float(factors.get("change4h"))
     change_1d = to_float(factors.get("change1d"))
     change_7d = to_float(factors.get("change7d"))
     change_30d = to_float(factors.get("change30d"))
     liquidity = to_float(factors.get("liquidity"))
     risk = to_float(factors.get("risk"))
     volatility = to_float(factors.get("volatility"))
+    spread_percent = to_float(factors.get("spreadPercent"))
+    volume_ratio = to_float(factors.get("volumeTrendRatio"), 1)
+    range_position = to_float(factors.get("rangePosition"), 0.5)
     symbol = str(asset.get("symbol") or "").upper()
     turnover = to_float(asset.get("turnover24h") or asset.get("volume24h"))
     core_bonus = 6 if symbol in CORE_CRYPTO_SYMBOLS or symbol in CORE_STOCK_SYMBOLS else 0
     liquidity_bonus = (liquidity - 50) * 0.28
     turnover_bonus = _clamp(math.log10(max(turnover, 1)) - 6, 0, 3.5) * 1.8
     breakout_bonus = 0
-    if 1.2 <= change_1d <= 14 and change_7d >= -8:
+    if 0.18 <= change_1h <= 4 and 0.45 <= change_4h <= 10 and 1.2 <= change_1d <= 14:
         breakout_bonus += min(change_1d * 0.9, 8)
-    if 14 < change_1d <= 28 and liquidity >= 58:
+    if 14 < change_1d <= 28 and liquidity >= 58 and change_1h > 0:
         breakout_bonus += 4
+    confirmation_bonus = 0
+    if change_1h > 0 and change_4h > 0:
+        confirmation_bonus += 8
+    if volume_ratio >= 1.12:
+        confirmation_bonus += min((volume_ratio - 1) * 10, 8)
+    if 0.52 <= range_position <= 0.92:
+        confirmation_bonus += 5
     momentum = (
-        max(change_1d, 0) * 2.55
-        + max(change_7d, 0) * 0.8
-        + max(change_30d, 0) * 0.2
+        max(change_1h, 0) * 6.2
+        + max(change_4h, 0) * 3.8
+        + max(change_1d, 0) * 1.0
+        + max(change_7d, 0) * 0.35
+        + max(change_30d, 0) * 0.12
     )
     weak_trend_penalty = (
-        max(-change_1d, 0) * 2.0
+        max(-change_1h, 0) * 7.5
+        + max(-change_4h, 0) * 4.2
+        + max(-change_1d, 0) * 2.0
         + max(-change_7d, 0) * 0.7
     )
-    overheating_penalty = max(change_1d - 18, 0) * 0.85 + max(volatility - 18, 0) * 1.2
+    overheating_penalty = (
+        max(change_1d - 18, 0) * 0.85
+        + max(change_1h - 5, 0) * 4
+        + max(volatility - 18, 0) * 1.2
+    )
     micro_liquidity_penalty = 14 if asset.get("assetType") == "crypto" and 0 < turnover < 1_000_000 else 0
+    spread_penalty = min(spread_percent * 24, 16)
 
     return _clamp(
-        48
+        44
         + momentum
         + liquidity_bonus
         + turnover_bonus
         + breakout_bonus
+        + confirmation_bonus
         + (risk - 50) * 0.06
         + core_bonus
         - weak_trend_penalty
         - overheating_penalty
-        - micro_liquidity_penalty,
+        - micro_liquidity_penalty
+        - spread_penalty,
         0,
         100,
     )
@@ -829,24 +974,47 @@ def _calculate_short_term_probability(score_payload: dict[str, Any], asset: dict
 
 def _calculate_short_probability(score_payload: dict[str, Any]) -> float:
     factors = score_payload.get("factors") or {}
+    change_1h = to_float(factors.get("change1h"))
+    change_4h = to_float(factors.get("change4h"))
     change_1d = to_float(factors.get("change1d"))
     change_7d = to_float(factors.get("change7d"))
     change_30d = to_float(factors.get("change30d"))
     liquidity = to_float(factors.get("liquidity"))
     risk = to_float(factors.get("risk"))
+    spread_percent = to_float(factors.get("spreadPercent"))
+    volume_ratio = to_float(factors.get("volumeTrendRatio"), 1)
     bearish_momentum = (
-        max(-change_1d, 0) * 2.4
+        max(-change_1h, 0) * 7.0
+        + max(-change_4h, 0) * 4.2
+        + max(-change_1d, 0) * 1.4
         + max(-change_7d, 0) * 1.15
         + max(-change_30d, 0) * 0.45
     )
     bullish_penalty = (
-        max(change_1d, 0) * 1.35
+        max(change_1h, 0) * 6.0
+        + max(change_4h, 0) * 3.2
+        + max(change_1d, 0) * 1.35
         + max(change_7d, 0) * 0.65
         + max(change_30d, 0) * 0.25
     )
+    confirmation_bonus = 0
+
+    if change_1h <= -0.12 and change_4h <= -0.35:
+        confirmation_bonus += 8
+
+    if volume_ratio >= 1.1:
+        confirmation_bonus += min((volume_ratio - 1) * 8, 6)
+
+    spread_penalty = min(spread_percent * 22, 14)
 
     return _clamp(
-        50 + bearish_momentum - bullish_penalty + (liquidity - 50) * 0.12 + (risk - 50) * 0.08,
+        44
+        + bearish_momentum
+        + confirmation_bonus
+        - bullish_penalty
+        + (liquidity - 50) * 0.12
+        + (risk - 50) * 0.08
+        - spread_penalty,
         0,
         100,
     )
@@ -1103,7 +1271,6 @@ def _select_strategy_entries(
     long_ranked: list[tuple[float, str, dict[str, Any], dict[str, Any]]] = []
     short_ranked: list[tuple[float, str, dict[str, Any], dict[str, Any]]] = []
     connection = connection or {}
-    memory = memory or {}
     universe = str(connection.get("universe") or "mixed").lower()
     excluded_symbols = excluded_symbols or set()
 
@@ -1122,47 +1289,73 @@ def _select_strategy_entries(
         turnover = to_float(asset.get("turnover24h") or asset.get("volume24h"))
         if asset.get("assetType") == "crypto" and 0 < turnover < 500_000:
             continue
+        factors = score_payload.get("factors") or {}
+        spread_percent = to_float(factors.get("spreadPercent"))
+        change_1h = to_float(factors.get("change1h"))
+        change_4h = to_float(factors.get("change4h"))
+        change_1d = to_float(factors.get("change1d"))
+        volume_ratio = to_float(factors.get("volumeTrendRatio"), 1)
+        is_crypto = asset.get("assetType") == "crypto"
+
+        if is_crypto and spread_percent > 0.45:
+            continue
 
         long_probability = score_payload["score"]
         short_term_probability = _calculate_short_term_probability(score_payload, asset)
         short_probability = _calculate_short_probability(score_payload)
         mode = config["mode"]
-        memory_item = memory.get(symbol)
-        memory_adjustment = _memory_score_adjustment(memory_item)
         memory_payload = {
             "rawLongProbability": round(long_probability, 2),
             "rawScalpProbability": round(short_term_probability, 2),
             "rawShortProbability": round(short_probability, 2),
-            "memoryAdjustment": round(memory_adjustment, 2),
-            "memoryScore": round(to_float(memory_item.get("memoryScore")) if memory_item else 0, 2),
-            "tradesCount": int(memory_item.get("tradesCount") or 0) if memory_item else 0,
+            "memoryAdjustment": 0,
+            "note": "disabled_for_cold_probability_engine",
         }
-
-        if _memory_blocks_entry(memory_item, max(long_probability, short_term_probability, short_probability)):
-            continue
-
-        long_probability = _clamp(long_probability + memory_adjustment, 0, 100)
-        short_term_probability = _clamp(short_term_probability + memory_adjustment, 0, 100)
-        short_probability = _clamp(short_probability + memory_adjustment * 0.45, 0, 100)
         score_payload = {
             **score_payload,
             "memory": memory_payload,
         }
 
-        if mode == "scalp" and short_term_probability >= 60:
+        scalp_allowed = (
+            not is_crypto
+            or (
+                change_1h >= 0.12
+                and change_4h >= 0.35
+                and change_1d >= 0.8
+                and volume_ratio >= 0.85
+            )
+        )
+        long_allowed = (
+            not is_crypto
+            or (
+                change_1h >= -0.2
+                and change_4h >= 0.35
+                and change_1d >= 0.8
+                and volume_ratio >= 0.55
+                and (
+                    change_1d <= 18
+                    or (change_1h >= 0.5 and volume_ratio >= 1.1)
+                )
+            )
+        )
+
+        if mode == "scalp" and scalp_allowed and short_term_probability >= 66:
             scalp_ranked.append((short_term_probability, "Long", asset, {**score_payload, "strategyLeg": "scalp"}))
 
-        if mode in {"long", "hybrid"} and long_probability >= 60:
+        if mode in {"long", "hybrid"} and long_allowed and long_probability >= 66:
             long_ranked.append((long_probability, "Long", asset, {**score_payload, "strategyLeg": "long"}))
 
-        if mode == "hybrid" and short_term_probability >= 60:
+        if mode == "hybrid" and scalp_allowed and short_term_probability >= 66:
             scalp_ranked.append((short_term_probability, "Long", asset, {**score_payload, "strategyLeg": "scalp"}))
 
         if (
             mode in {"short", "hybrid"}
-            and short_probability >= 60
+            and short_probability >= 66
             and long_probability <= 48
-            and to_float((score_payload.get("factors") or {}).get("change1d")) <= -0.8
+            and change_1h <= -0.12
+            and change_4h <= -0.35
+            and change_1d <= -0.8
+            and volume_ratio >= 0.85
         ):
             short_ranked.append((short_probability, "Short", asset, {**score_payload, "strategyLeg": "short"}))
 
@@ -1302,28 +1495,63 @@ async def _load_strategy_candidates(user_id: Any | None = None) -> list[dict[str
             item for item in tradable_tickers
             if str(item.get("symbol") or "").upper() in CORE_CRYPTO_SYMBOLS
         ]
-        crypto_tickers = {
+        crypto_tickers = list({
             str(item.get("symbol") or ""): item
             for item in [*core_tickers, *top_by_turnover, *top_gainers, *top_fallers]
             if item.get("symbol")
-        }.values()
+        }.values())
 
-        for item in crypto_tickers:
+        async def build_crypto_candidate(item: dict[str, Any]) -> dict[str, Any] | None:
             symbol = str(item.get("symbol") or "")
+            if not symbol:
+                return None
+
             base = symbol.removesuffix("USDT")
+            price = to_float(item.get("lastPrice"))
             change = to_float(item.get("price24hPcnt")) * 100
-            candidates.append({
+            bid = to_float(item.get("bid1Price"))
+            ask = to_float(item.get("ask1Price"))
+            spread_percent = ((ask - bid) / price * 100) if price > 0 and ask > 0 and bid > 0 else 0
+            intraday_features: dict[str, Any] = {
+                "chart7d": [],
+                "priceChangePercent1h": 0,
+                "priceChangePercent4h": 0,
+                "volumeTrendRatio": 1,
+                "rangePosition": 0.5,
+            }
+
+            try:
+                raw_klines = await bybit_client.get_kline(
+                    symbol=symbol,
+                    category="spot",
+                    interval="60",
+                    limit=24,
+                )
+                intraday_features = _build_crypto_intraday_features(price, raw_klines)
+            except Exception:
+                pass
+
+            return {
                 "assetType": "crypto",
                 "symbol": symbol,
                 "name": base,
-                "price": to_float(item.get("lastPrice")),
+                "price": price,
                 "priceChangePercent24h": change,
                 "priceChangePercent7d": change,
                 "priceChangePercent30d": change,
                 "turnover24h": to_float(item.get("turnover24h")),
+                "bidAskSpreadPercent": round(max(spread_percent, 0), 4),
                 "iconUrl": get_coinmarketcap_icon_url(base),
-                "chart7d": [],
-            })
+                **intraday_features,
+            }
+
+        crypto_candidates = await asyncio.gather(*[
+            build_crypto_candidate(item) for item in crypto_tickers[:32]
+        ], return_exceptions=True)
+        candidates.extend([
+            item for item in crypto_candidates
+            if isinstance(item, dict)
+        ])
     except Exception:
         pass
 
@@ -1412,7 +1640,7 @@ def _build_strategy_payload(
     connection = connection or {}
     risk_profile = str(connection.get("riskProfile") or connection.get("risk_profile") or "balanced").lower()
     max_allocation = PAPER_RISK_MAX_ALLOCATION.get(risk_profile, PAPER_RISK_MAX_ALLOCATION["balanced"])
-    selected = _select_strategy_entries(strategy_id, candidates, connection, limit=5, memory=memory)
+    selected = _select_strategy_entries(strategy_id, candidates, connection, limit=4, memory=memory)
 
     now = _strategy_now()
     scheduled_at = _strategy_start_datetime(run_date)
@@ -1501,7 +1729,7 @@ def _mark_strategy_to_market(
     candidate_map = _strategy_candidates_by_symbol(candidates)
     start_capital = float(payload.get("startCapital") or PAPER_START_CAPITAL)
     updated_trades = []
-    max_open_exposure = start_capital * 0.95
+    max_open_exposure = start_capital * 0.65
     planned_open_exposure = sum(
         to_float(trade.get("virtualAmount"))
         for trade in payload.get("trades") or []
@@ -1542,6 +1770,8 @@ def _mark_strategy_to_market(
             and scale_in_count < PAPER_MAX_SCALE_INS
             and current_price > 0
             and virtual_amount > 0
+            and live_probability is not None
+            and live_probability >= max(to_float(trade.get("probability")) - 4, 72)
         ):
             available_exposure = max(max_open_exposure - planned_open_exposure, 0)
             add_amount = min(virtual_amount * PAPER_DCA_ADD_RATIO, available_exposure)
@@ -1648,7 +1878,7 @@ def _mark_strategy_to_market(
         if trade.get("status") != "closed" or _is_recent_strategy_trade(trade)
     }
     connection = payload.get("connection") or {}
-    max_open_positions = 5
+    max_open_positions = 4
 
     if len(open_symbols) < max_open_positions and len(updated_trades) < PAPER_MAX_DAILY_TRADES:
         risk_profile = str(connection.get("riskProfile") or connection.get("risk_profile") or "balanced").lower()
@@ -2355,7 +2585,7 @@ async def _get_or_create_strategy_run(
     run_date = _strategy_run_date()
     pool = get_database_pool()
     connection_settings = await _load_strategy_connection(user_id, strategy_id)
-    strategy_memory = await _load_strategy_memory(user_id, strategy_id)
+    strategy_memory: dict[str, dict[str, Any]] = {}
     configured_capital_amount = float(
         start_capital
         or (connection_settings.get("virtualCapital") if connection_settings else None)
@@ -2401,7 +2631,6 @@ async def _get_or_create_strategy_run(
             updated_payload = _mark_strategy_to_market(strategy_payload, candidates, strategy_memory)
             await _persist_strategy_run(user_id, strategy_id, run_date, updated_payload)
             await _record_strategy_audit_logs(user_id, strategy_id, run_date, updated_payload)
-            await _record_strategy_learning(user_id, strategy_id, updated_payload)
             await _record_paper_strategy_trades(user_id, strategy_id, updated_payload)
             return await _attach_strategy_lifetime(user_id, updated_payload)
 
@@ -2418,7 +2647,6 @@ async def _get_or_create_strategy_run(
 
     await _persist_strategy_run(user_id, strategy_id, run_date, payload)
     await _record_strategy_audit_logs(user_id, strategy_id, run_date, payload)
-    await _record_strategy_learning(user_id, strategy_id, payload)
     await _record_paper_strategy_trades(user_id, strategy_id, payload)
 
     return await _attach_strategy_lifetime(user_id, {**payload, "runDate": run_date.isoformat()})
