@@ -937,6 +937,33 @@ grid-template-columns: repeat(1, 1fr);
     padding-right: 4px;
 }
 
+.strategy_trade_history_list {
+    padding: 0;
+    max-height: min(68vh, 640px);
+}
+
+.strategy_trade_history_item:disabled {
+    cursor: default;
+    opacity: 0.72;
+}
+
+.trade_history_item_main .coin_icon,
+.trade_history_item_main .coin_icon_fallback {
+    width: 34px;
+    height: 34px;
+    flex: 0 0 34px;
+}
+
+.strategy_trade_history_meta {
+    gap: 5px;
+}
+
+.strategy_trade_history_price {
+    color: rgba(255, 255, 255, 0.42);
+    font-size: 10.5px;
+    line-height: 1.35;
+}
+
 .strategy_history_list_preview {
     max-height: 430px;
     overflow: auto;

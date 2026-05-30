@@ -43,6 +43,23 @@ class Settings(BaseSettings):
     chatgpt_api_key: str | None = None
     tocken_chatgpt_api: str | None = None
     openai_model: str = "gpt-4.1-mini"
+    ai_trading_enabled: bool = True
+    ai_auto_execution_enabled: bool = False
+    min_probability_tp_before_sl: float = 0.58
+    min_risk_reward: float = 1.2
+    min_expected_value_percent: float = 0.05
+    max_spread_percent: float = 0.25
+    min_liquidity_score: float = 0.45
+    max_risk_per_trade_percent: float = 1.0
+    max_daily_drawdown_percent: float = 3.0
+    max_open_positions: int = 4
+    dca_enabled: bool = False
+    max_dca_count: int = 1
+    dca_require_positive_ev: bool = True
+    default_fee_percent: float = 0.20
+    default_slippage_percent: float = 0.05
+    counter_trend_probability_multiplier: float = 1.08
+    high_volatility_position_size_multiplier: float = 0.55
 
     @property
     def resolved_database_url(self) -> str | None:

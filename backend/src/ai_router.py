@@ -12,6 +12,18 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from src.auth_router import get_current_user
+from src.ai_trading_brain import (
+    AITradeDecision,
+    AITradingConfig,
+    FinalAction,
+    MarketRegime,
+    RiskContext,
+    StrategyType,
+    build_market_features,
+    evaluate_dca,
+    run_backtest,
+    select_strategy_decision,
+)
 from src.config import settings
 from src.database import get_database_pool
 from src.init import bybit_client, moex_client
@@ -97,6 +109,20 @@ class ConnectPaperStrategyRequest(BaseModel):
     leverage: float = Field(default=1, ge=1, le=10)
 
 
+class AIScanRequest(BaseModel):
+    symbols: list[str] = Field(default_factory=list, max_length=80)
+    asset_type: str = Field(default="crypto", pattern="^(crypto|stock|currency)$")
+    strategy_type: StrategyType = StrategyType.LONG_SHORT
+    limit: int = Field(default=20, ge=1, le=80)
+    include_no_trade: bool = True
+
+
+class ExecuteAIDecisionRequest(BaseModel):
+    decision: AITradeDecision
+    strategy_id: str | None = Field(default=None, max_length=80)
+    virtual_capital: float = Field(default=PAPER_START_CAPITAL, gt=0, le=100_000_000)
+
+
 def _mask_api_key(value: str | None) -> str | None:
     if not value:
         return None
@@ -112,6 +138,28 @@ def _clamp(value: float, minimum: float, maximum: float) -> float:
         return minimum
 
     return max(minimum, min(maximum, value))
+
+
+def _ai_trading_config() -> AITradingConfig:
+    return AITradingConfig(
+        ai_trading_enabled=settings.ai_trading_enabled,
+        ai_auto_execution_enabled=settings.ai_auto_execution_enabled,
+        min_probability_tp_before_sl=settings.min_probability_tp_before_sl,
+        min_risk_reward=settings.min_risk_reward,
+        min_expected_value_percent=settings.min_expected_value_percent,
+        max_spread_percent=settings.max_spread_percent,
+        min_liquidity_score=settings.min_liquidity_score,
+        max_risk_per_trade_percent=settings.max_risk_per_trade_percent,
+        max_daily_drawdown_percent=settings.max_daily_drawdown_percent,
+        max_open_positions=settings.max_open_positions,
+        dca_enabled=settings.dca_enabled,
+        max_dca_count=settings.max_dca_count,
+        dca_require_positive_ev=settings.dca_require_positive_ev,
+        default_fee_percent=settings.default_fee_percent,
+        default_slippage_percent=settings.default_slippage_percent,
+        counter_trend_probability_multiplier=settings.counter_trend_probability_multiplier,
+        high_volatility_position_size_multiplier=settings.high_volatility_position_size_multiplier,
+    )
 
 
 def _format_signal(score: float, confidence: float) -> str:
@@ -903,6 +951,172 @@ def _build_crypto_intraday_features(price: float, raw_klines: list[Any]) -> dict
     }
 
 
+def _strategy_type_for_strategy_id(strategy_id: str) -> StrategyType:
+    if strategy_id == "ai-long":
+        return StrategyType.LONG
+
+    if strategy_id == "ai-short":
+        return StrategyType.SHORT
+
+    return StrategyType.LONG_SHORT
+
+
+async def _load_asset_for_decision(
+    asset_type: str,
+    symbol: str,
+    user_id: Any | None = None,
+    figi: str | None = None,
+) -> dict[str, Any]:
+    normalized_type = asset_type.lower()
+    normalized_symbol = symbol.upper()
+    asset = await _load_asset_for_score(normalized_type, normalized_symbol, user_id, figi)
+
+    if normalized_type != "crypto":
+        return asset
+
+    route_symbol = normalized_symbol if normalized_symbol.endswith("USDT") else f"{normalized_symbol}USDT"
+
+    try:
+        ticker = await bybit_client.get_ticker(route_symbol, "spot")
+        if ticker:
+            price = to_float(ticker.get("lastPrice")) or to_float(asset.get("price"))
+            bid = to_float(ticker.get("bid1Price"))
+            ask = to_float(ticker.get("ask1Price"))
+            spread_percent = ((ask - bid) / price * 100) if price > 0 and ask > 0 and bid > 0 else 0
+            asset = {
+                **asset,
+                "symbol": route_symbol,
+                "routeSymbol": route_symbol,
+                "price": price,
+                "priceChangePercent24h": to_float(ticker.get("price24hPcnt")) * 100,
+                "turnover24h": to_float(ticker.get("turnover24h")) or asset.get("turnover24h"),
+                "volume24h": to_float(ticker.get("volume24h")) or asset.get("volume24h"),
+                "bidAskSpreadPercent": round(max(spread_percent, 0), 4),
+            }
+    except Exception:
+        pass
+
+    try:
+        raw_klines = await bybit_client.get_kline(
+            symbol=route_symbol,
+            category="spot",
+            interval="60",
+            limit=48,
+        )
+        intraday_features = _build_crypto_intraday_features(to_float(asset.get("price")), raw_klines)
+        asset = {**asset, **intraday_features}
+    except Exception:
+        asset = {
+            **asset,
+            "dataQualityFlags": [
+                *(asset.get("dataQualityFlags") or []),
+                "intraday_provider_unavailable",
+            ],
+        }
+
+    return asset
+
+
+async def _build_ai_trade_decision(
+    asset_type: str,
+    symbol: str,
+    user_id: Any | None = None,
+    figi: str | None = None,
+    strategy_type: StrategyType = StrategyType.LONG_SHORT,
+    risk_context: RiskContext | None = None,
+) -> AITradeDecision:
+    asset = await _load_asset_for_decision(asset_type, symbol, user_id, figi)
+    features = build_market_features(asset)
+    return select_strategy_decision(
+        features,
+        _ai_trading_config(),
+        strategy_type,
+        risk_context,
+    )
+
+
+async def _store_ai_trade_decision(
+    user_id: Any,
+    decision: AITradeDecision,
+    strategy_id: str | None = None,
+    asset_type: str | None = None,
+    result: str | None = None,
+) -> None:
+    pool = get_database_pool()
+    payload = decision.model_dump(mode="json")
+
+    async with pool.acquire() as connection:
+        await connection.execute(
+            """
+            insert into ai_trade_decisions (
+                id, user_id, strategy_id, symbol, asset, asset_type,
+                strategy_type, final_action, confidence, probability_tp_before_sl,
+                probability_long_success, probability_short_success, market_regime,
+                technical_score, news_score, sentiment_score, risk_score,
+                liquidity_score, volatility_score, entry_price, take_profit,
+                stop_loss, risk_reward, expected_value_percent,
+                estimated_fees_percent, estimated_slippage_percent,
+                position_size_percent, max_risk_percent_of_deposit,
+                validator_passed, risk_manager_passed, rejection_reason,
+                reasons_for, reasons_against, raw_features, decision_payload,
+                result, created_by, created_at
+            )
+            values (
+                $1::uuid, $2, $3, $4, $5, $6,
+                $7, $8, $9, $10,
+                $11, $12, $13,
+                $14, $15, $16, $17,
+                $18, $19, $20, $21,
+                $22, $23, $24,
+                $25, $26,
+                $27, $28,
+                $29, $30, $31,
+                $32::jsonb, $33::jsonb, $34::jsonb, $35::jsonb,
+                $36, $37, $38
+            )
+            on conflict (id) do nothing
+            """,
+            decision.id,
+            user_id,
+            strategy_id,
+            decision.symbol,
+            decision.asset,
+            asset_type or decision.raw_features.get("asset_type") or "crypto",
+            decision.strategy_type.value,
+            decision.final_action.value,
+            decision.confidence,
+            decision.probability_tp_before_sl,
+            decision.probability_long_success,
+            decision.probability_short_success,
+            decision.market_regime.value,
+            decision.technical_score,
+            decision.news_score,
+            decision.sentiment_score,
+            decision.risk_score,
+            decision.liquidity_score,
+            decision.volatility_score,
+            decision.entry_price,
+            decision.take_profit,
+            decision.stop_loss,
+            decision.risk_reward,
+            decision.expected_value_percent,
+            decision.estimated_fees_percent,
+            decision.estimated_slippage_percent,
+            decision.position_size_percent,
+            decision.max_risk_percent_of_deposit,
+            decision.validator_passed,
+            decision.risk_manager_passed,
+            decision.rejection_reason,
+            json.dumps(decision.reasons_for),
+            json.dumps(decision.reasons_against),
+            json.dumps(decision.raw_features),
+            json.dumps(payload),
+            result,
+            decision.created_by,
+            decision.timestamp,
+        )
+
+
 def _calculate_short_term_probability(score_payload: dict[str, Any], asset: dict[str, Any]) -> float:
     factors = score_payload.get("factors") or {}
     change_1h = to_float(factors.get("change1h"))
@@ -1022,7 +1236,7 @@ def _calculate_short_probability(score_payload: dict[str, Any]) -> float:
 
 def _strategy_config(strategy_id: str) -> dict[str, str]:
     return {
-        "ai-short": {"title": "ИИ торговля Short", "mode": "scalp", "color": "var(--green)"},
+        "ai-short": {"title": "ИИ торговля Short", "mode": "short", "color": "var(--red)"},
         "ai-long": {"title": "ИИ торговля Long", "mode": "long", "color": "var(--green)"},
         "ai-short-long": {"title": "ИИ торговля Short + Long", "mode": "hybrid", "color": "var(--primary-blue)"},
     }[strategy_id]
@@ -1265,9 +1479,9 @@ def _select_strategy_entries(
     limit: int = 5,
     excluded_symbols: set[str] | None = None,
     memory: dict[str, dict[str, Any]] | None = None,
+    decision_log: list[dict[str, Any]] | None = None,
 ) -> list[tuple[float, str, dict[str, Any], dict[str, Any]]]:
     config = _strategy_config(strategy_id)
-    scalp_ranked: list[tuple[float, str, dict[str, Any], dict[str, Any]]] = []
     long_ranked: list[tuple[float, str, dict[str, Any], dict[str, Any]]] = []
     short_ranked: list[tuple[float, str, dict[str, Any], dict[str, Any]]] = []
     connection = connection or {}
@@ -1282,89 +1496,65 @@ def _select_strategy_entries(
         if not _strategy_asset_matches_universe(asset, universe):
             continue
 
-        score_payload = _calculate_asset_score(asset)
-        if score_payload["confidence"] < 45:
-            continue
-
         turnover = to_float(asset.get("turnover24h") or asset.get("volume24h"))
         if asset.get("assetType") == "crypto" and 0 < turnover < 500_000:
             continue
-        factors = score_payload.get("factors") or {}
-        spread_percent = to_float(factors.get("spreadPercent"))
-        change_1h = to_float(factors.get("change1h"))
-        change_4h = to_float(factors.get("change4h"))
-        change_1d = to_float(factors.get("change1d"))
-        volume_ratio = to_float(factors.get("volumeTrendRatio"), 1)
-        is_crypto = asset.get("assetType") == "crypto"
 
-        if is_crypto and spread_percent > 0.45:
+        features = build_market_features(asset)
+        mode = config["mode"]
+        preferred_strategy = _strategy_type_for_strategy_id(strategy_id)
+        decision = select_strategy_decision(
+            features,
+            _ai_trading_config(),
+            preferred_strategy,
+            RiskContext(open_positions_count=len(excluded_symbols)),
+        )
+        if decision_log is not None:
+            decision_log.append({
+                "assetType": asset.get("assetType") or "crypto",
+                "decision": decision.model_dump(mode="json"),
+            })
+
+        if decision.final_action == FinalAction.NO_TRADE or not decision.risk_manager_passed:
             continue
 
-        long_probability = score_payload["score"]
-        short_term_probability = _calculate_short_term_probability(score_payload, asset)
-        short_probability = _calculate_short_probability(score_payload)
-        mode = config["mode"]
-        memory_payload = {
-            "rawLongProbability": round(long_probability, 2),
-            "rawScalpProbability": round(short_term_probability, 2),
-            "rawShortProbability": round(short_probability, 2),
-            "memoryAdjustment": 0,
-            "note": "disabled_for_cold_probability_engine",
-        }
+        side = "Short" if decision.final_action == FinalAction.OPEN_SHORT else "Long"
+        probability = round(decision.probability_tp_before_sl * 100, 2)
+        strategy_leg = "short" if side == "Short" else "long"
+        if mode == "hybrid":
+            strategy_leg = "hybrid_short" if side == "Short" else "hybrid_long"
+
         score_payload = {
-            **score_payload,
-            "memory": memory_payload,
+            "score": probability,
+            "signal": decision.final_action.value,
+            "confidence": round(decision.confidence * 100, 2),
+            "targetPrice": decision.take_profit,
+            "targetRangeLow": min(decision.take_profit, decision.stop_loss),
+            "targetRangeHigh": max(decision.take_profit, decision.stop_loss),
+            "factors": decision.raw_features,
+            "dataQualityFlags": decision.raw_features.get("data_quality_flags", []),
+            "strategyLeg": strategy_leg,
+            "aiDecision": decision.model_dump(mode="json"),
+            "memory": {
+                "rawLongProbability": round((decision.probability_long_success or 0) * 100, 2),
+                "rawShortProbability": round((decision.probability_short_success or 0) * 100, 2),
+                "memoryAdjustment": 0,
+                "note": "disabled_for_ai_trading_brain_v1",
+            },
         }
 
-        scalp_allowed = (
-            not is_crypto
-            or (
-                change_1h >= 0.12
-                and change_4h >= 0.35
-                and change_1d >= 0.8
-                and volume_ratio >= 0.85
-            )
-        )
-        long_allowed = (
-            not is_crypto
-            or (
-                change_1h >= -0.2
-                and change_4h >= 0.35
-                and change_1d >= 0.8
-                and volume_ratio >= 0.55
-                and (
-                    change_1d <= 18
-                    or (change_1h >= 0.5 and volume_ratio >= 1.1)
-                )
-            )
-        )
+        if mode == "short" and side == "Short":
+            short_ranked.append((probability, side, asset, score_payload))
+        elif mode == "long" and side == "Long":
+            long_ranked.append((probability, side, asset, score_payload))
+        elif mode == "hybrid":
+            if side == "Short":
+                short_ranked.append((probability, side, asset, score_payload))
+            else:
+                long_ranked.append((probability, side, asset, score_payload))
 
-        if mode == "scalp" and scalp_allowed and short_term_probability >= 66:
-            scalp_ranked.append((short_term_probability, "Long", asset, {**score_payload, "strategyLeg": "scalp"}))
-
-        if mode in {"long", "hybrid"} and long_allowed and long_probability >= 66:
-            long_ranked.append((long_probability, "Long", asset, {**score_payload, "strategyLeg": "long"}))
-
-        if mode == "hybrid" and scalp_allowed and short_term_probability >= 66:
-            scalp_ranked.append((short_term_probability, "Long", asset, {**score_payload, "strategyLeg": "scalp"}))
-
-        if (
-            mode in {"short", "hybrid"}
-            and short_probability >= 66
-            and long_probability <= 48
-            and change_1h <= -0.12
-            and change_4h <= -0.35
-            and change_1d <= -0.8
-            and volume_ratio >= 0.85
-        ):
-            short_ranked.append((short_probability, "Short", asset, {**score_payload, "strategyLeg": "short"}))
-
-    scalp_ranked.sort(key=lambda item: item[0], reverse=True)
     long_ranked.sort(key=lambda item: item[0], reverse=True)
     short_ranked.sort(key=lambda item: item[0], reverse=True)
-
-    if config["mode"] == "scalp":
-        return scalp_ranked[:limit]
 
     if config["mode"] == "hybrid":
         selected: list[tuple[float, str, dict[str, Any], dict[str, Any]]] = []
@@ -1382,12 +1572,10 @@ def _select_strategy_entries(
                 if len(selected) >= max_items:
                     return
 
-        add_unique(scalp_ranked[:3], limit)
         add_unique(long_ranked[:3], limit)
-        if len(selected) < max(2, min(limit, 4)):
-            add_unique(short_ranked[:2], limit)
+        add_unique(short_ranked[:3], limit)
 
-        rest = sorted([*scalp_ranked, *long_ranked, *short_ranked], key=lambda item: item[0], reverse=True)
+        rest = sorted([*long_ranked, *short_ranked], key=lambda item: item[0], reverse=True)
         for item in rest:
             if len(selected) >= limit:
                 break
@@ -1413,6 +1601,7 @@ def _build_strategy_trade(
     quote_currency = "RUB" if asset_type == "stock" else "USDT"
     price_currency_rate = _paper_price_rate(asset_type, quote_currency)
     quantity = allocation_rub / (entry_price * price_currency_rate) if entry_price > 0 else 0
+    ai_decision = score_payload.get("aiDecision") or {}
 
     return {
         "asset": asset.get("symbol"),
@@ -1431,16 +1620,24 @@ def _build_strategy_trade(
         "resultPercent": 0,
         "resultAmount": 0,
         "signal": score_payload["signal"],
+        "aiDecisionId": ai_decision.get("id"),
+        "takeProfit": ai_decision.get("take_profit") or ai_decision.get("takeProfit"),
+        "stopLoss": ai_decision.get("stop_loss") or ai_decision.get("stopLoss"),
+        "expectedValuePercent": ai_decision.get("expected_value_percent") or ai_decision.get("expectedValuePercent"),
+        "riskReward": ai_decision.get("risk_reward") or ai_decision.get("riskReward"),
         "entryContext": {
             "score": score_payload.get("score"),
             "confidence": score_payload.get("confidence"),
             "factors": score_payload.get("factors") or {},
             "memory": score_payload.get("memory") or {},
             "strategyLeg": score_payload.get("strategyLeg") or ("short" if side == "Short" else "long"),
+            "aiDecision": ai_decision,
         },
         "status": "open",
         "closeReason": None,
         "scaleInCount": 0,
+        "dcaAllowed": False,
+        "dcaReason": "DCA еще не проверялся",
         "events": [],
         "iconUrl": asset.get("iconUrl"),
         "executedAt": executed_at.isoformat(),
@@ -1640,7 +1837,15 @@ def _build_strategy_payload(
     connection = connection or {}
     risk_profile = str(connection.get("riskProfile") or connection.get("risk_profile") or "balanced").lower()
     max_allocation = PAPER_RISK_MAX_ALLOCATION.get(risk_profile, PAPER_RISK_MAX_ALLOCATION["balanced"])
-    selected = _select_strategy_entries(strategy_id, candidates, connection, limit=4, memory=memory)
+    decision_log: list[dict[str, Any]] = []
+    selected = _select_strategy_entries(
+        strategy_id,
+        candidates,
+        connection,
+        limit=4,
+        memory=memory,
+        decision_log=decision_log,
+    )
 
     now = _strategy_now()
     scheduled_at = _strategy_start_datetime(run_date)
@@ -1707,6 +1912,7 @@ def _build_strategy_payload(
         "chart": chart,
         "chartPoints": chart_points,
         "trades": trades,
+        "decisionLog": decision_log[:120],
         "threshold": 60,
         "schemaVersion": PAPER_STRATEGY_SCHEMA_VERSION,
         "connection": connection,
@@ -1764,6 +1970,39 @@ def _mark_strategy_to_market(
         result_percent = (pnl / virtual_amount) * 100 if virtual_amount else 0
         scale_in_count = int(trade.get("scaleInCount") or 0)
         events = list(trade.get("events") or [])
+        dca_evaluation = {
+            "dca_allowed": False,
+            "dca_reason": "DCA условия не проверялись: позиция не дошла до DCA-зоны.",
+            "dca_new_average_price": None,
+            "dca_total_risk_percent": None,
+        }
+
+        if (
+            result_percent <= float(rules["dcaStep"] or PAPER_DCA_STEP_PERCENT)
+            and candidate
+            and current_price > 0
+            and virtual_amount > 0
+        ):
+            try:
+                current_decision_payload = (trade.get("entryContext") or {}).get("aiDecision") or {}
+                current_decision = AITradeDecision.model_validate(current_decision_payload)
+                dca_features = build_market_features({**candidate, "price": current_price})
+                dca_result = evaluate_dca(
+                    current_decision,
+                    dca_features,
+                    entry_price,
+                    abs(result_percent),
+                    scale_in_count,
+                    _ai_trading_config(),
+                )
+                dca_evaluation = dca_result.model_dump(mode="json")
+            except Exception:
+                dca_evaluation = {
+                    "dca_allowed": False,
+                    "dca_reason": "не удалось проверить DCA через AI Trading Brain",
+                    "dca_new_average_price": None,
+                    "dca_total_risk_percent": None,
+                }
 
         if (
             result_percent <= float(rules["dcaStep"] or PAPER_DCA_STEP_PERCENT)
@@ -1772,6 +2011,7 @@ def _mark_strategy_to_market(
             and virtual_amount > 0
             and live_probability is not None
             and live_probability >= max(to_float(trade.get("probability")) - 4, 72)
+            and dca_evaluation["dca_allowed"]
         ):
             available_exposure = max(max_open_exposure - planned_open_exposure, 0)
             add_amount = min(virtual_amount * PAPER_DCA_ADD_RATIO, available_exposure)
@@ -1863,6 +2103,10 @@ def _mark_strategy_to_market(
             "closedAt": closed_at,
             "currentProbability": round(live_probability, 2) if live_probability is not None else trade.get("currentProbability"),
             "scaleInCount": scale_in_count,
+            "dcaAllowed": bool(dca_evaluation["dca_allowed"]),
+            "dcaReason": dca_evaluation["dca_reason"],
+            "dcaNewAveragePrice": dca_evaluation["dca_new_average_price"],
+            "dcaTotalRiskPercent": dca_evaluation["dca_total_risk_percent"],
             "events": events,
             "updatedAt": _strategy_now().isoformat(),
         })
@@ -1879,6 +2123,7 @@ def _mark_strategy_to_market(
     }
     connection = payload.get("connection") or {}
     max_open_positions = 4
+    decision_log = list(payload.get("decisionLog") or [])
 
     if len(open_symbols) < max_open_positions and len(updated_trades) < PAPER_MAX_DAILY_TRADES:
         risk_profile = str(connection.get("riskProfile") or connection.get("risk_profile") or "balanced").lower()
@@ -1890,6 +2135,7 @@ def _mark_strategy_to_market(
             limit=max_open_positions - len(open_symbols),
             excluded_symbols=known_symbols,
             memory=memory,
+            decision_log=decision_log,
         )
 
         open_exposure = sum(
@@ -1992,6 +2238,7 @@ def _mark_strategy_to_market(
         "chart": chart,
         "chartPoints": chart_points,
         "trades": updated_trades,
+        "decisionLog": decision_log[-240:],
         "updatedAt": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -2384,6 +2631,43 @@ async def _record_strategy_audit_logs(
         )
 
 
+async def _record_strategy_ai_decisions(user_id: Any, strategy_id: str, payload: dict[str, Any]) -> None:
+    for item in payload.get("decisionLog") or []:
+        if not isinstance(item, dict) or not isinstance(item.get("decision"), dict):
+            continue
+
+        try:
+            decision = AITradeDecision.model_validate(item["decision"])
+        except Exception:
+            continue
+
+        await _store_ai_trade_decision(
+            user_id,
+            decision,
+            strategy_id=strategy_id,
+            asset_type=item.get("assetType") or decision.raw_features.get("asset_type") or "crypto",
+            result="strategy_decision",
+        )
+
+    for trade in payload.get("trades") or []:
+        decision_payload = (trade.get("entryContext") or {}).get("aiDecision") if isinstance(trade, dict) else None
+        if not isinstance(decision_payload, dict):
+            continue
+
+        try:
+            decision = AITradeDecision.model_validate(decision_payload)
+        except Exception:
+            continue
+
+        await _store_ai_trade_decision(
+            user_id,
+            decision,
+            strategy_id=strategy_id,
+            asset_type=trade.get("assetType") or decision.raw_features.get("asset_type") or "crypto",
+            result="strategy_signal",
+        )
+
+
 async def _load_strategy_lifetime(user_id: Any, strategy_id: str) -> dict[str, Any]:
     pool = get_database_pool()
 
@@ -2533,17 +2817,74 @@ async def _load_strategy_lifetime(user_id: Any, strategy_id: str) -> dict[str, A
     }
 
 
+async def _load_strategy_decision_metrics(user_id: Any, strategy_id: str) -> dict[str, Any]:
+    pool = get_database_pool()
+
+    async with pool.acquire() as connection:
+        row = await connection.fetchrow(
+            """
+            select count(*) as decisions_count,
+                   count(*) filter (where risk_manager_passed) as allowed_count,
+                   count(*) filter (where final_action = 'NO_TRADE') as no_trade_count,
+                   avg(expected_value_percent) as avg_ev,
+                   avg(probability_tp_before_sl) as avg_probability
+            from ai_trade_decisions
+            where user_id = $1 and strategy_id = $2
+            """,
+            user_id,
+            strategy_id,
+        )
+
+        best_asset = await connection.fetchrow(
+            """
+            select symbol, sum(coalesce(pnl_amount, 0)) as pnl_amount
+            from ai_trade_decisions
+            where user_id = $1 and strategy_id = $2
+            group by symbol
+            order by pnl_amount desc
+            limit 1
+            """,
+            user_id,
+            strategy_id,
+        )
+
+        worst_asset = await connection.fetchrow(
+            """
+            select symbol, sum(coalesce(pnl_amount, 0)) as pnl_amount
+            from ai_trade_decisions
+            where user_id = $1 and strategy_id = $2
+            group by symbol
+            order by pnl_amount asc
+            limit 1
+            """,
+            user_id,
+            strategy_id,
+        )
+
+    return {
+        "decisionsCount": int(row["decisions_count"] or 0) if row else 0,
+        "tradeAllowedCount": int(row["allowed_count"] or 0) if row else 0,
+        "noTradeCount": int(row["no_trade_count"] or 0) if row else 0,
+        "avgExpectedValue": float(row["avg_ev"] or 0) if row else 0,
+        "avgProbability": float(row["avg_probability"] or 0) if row else 0,
+        "bestAsset": best_asset["symbol"] if best_asset else None,
+        "worstAsset": worst_asset["symbol"] if worst_asset else None,
+    }
+
+
 async def _attach_strategy_lifetime(
     user_id: Any,
     payload: dict[str, Any],
     include_learning: bool = False,
 ) -> dict[str, Any]:
-    lifetime = await _load_strategy_lifetime(user_id, str(payload.get("id") or ""))
+    strategy_id = str(payload.get("id") or "")
+    lifetime = await _load_strategy_lifetime(user_id, strategy_id)
+    decision_metrics = await _load_strategy_decision_metrics(user_id, strategy_id)
     learning_payload: dict[str, Any] = {}
 
     if include_learning:
-        memory = await _load_strategy_memory(user_id, str(payload.get("id") or ""))
-        events = await _load_strategy_events(user_id, str(payload.get("id") or ""))
+        memory = await _load_strategy_memory(user_id, strategy_id)
+        events = await _load_strategy_events(user_id, strategy_id)
         learning_payload = {
             "memory": list(memory.values())[:8],
             "errorLog": events,
@@ -2571,6 +2912,7 @@ async def _attach_strategy_lifetime(
         "openTradesCount": lifetime["openTradesCount"],
         "closedTradesCount": lifetime["closedTradesCount"],
         "totalTradesCount": lifetime["totalTradesCount"],
+        "decisionMetrics": decision_metrics,
         **learning_payload,
     }
 
@@ -2631,6 +2973,7 @@ async def _get_or_create_strategy_run(
             updated_payload = _mark_strategy_to_market(strategy_payload, candidates, strategy_memory)
             await _persist_strategy_run(user_id, strategy_id, run_date, updated_payload)
             await _record_strategy_audit_logs(user_id, strategy_id, run_date, updated_payload)
+            await _record_strategy_ai_decisions(user_id, strategy_id, updated_payload)
             await _record_paper_strategy_trades(user_id, strategy_id, updated_payload)
             return await _attach_strategy_lifetime(user_id, updated_payload)
 
@@ -2647,6 +2990,7 @@ async def _get_or_create_strategy_run(
 
     await _persist_strategy_run(user_id, strategy_id, run_date, payload)
     await _record_strategy_audit_logs(user_id, strategy_id, run_date, payload)
+    await _record_strategy_ai_decisions(user_id, strategy_id, payload)
     await _record_paper_strategy_trades(user_id, strategy_id, payload)
 
     return await _attach_strategy_lifetime(user_id, {**payload, "runDate": run_date.isoformat()})
@@ -2970,6 +3314,301 @@ async def get_ai_asset_summary(
     }
 
 
+@router.get("/ai/decision/{symbol}")
+async def get_ai_trade_decision(
+    symbol: str,
+    asset_type: str = Query(default="crypto", pattern="^(crypto|stock|currency)$"),
+    strategy_type: StrategyType = Query(default=StrategyType.LONG_SHORT),
+    figi: str | None = Query(default=None, max_length=64),
+    current_user=Depends(get_current_user),
+):
+    normalized_symbol = symbol.upper()
+
+    try:
+        decision = await _build_ai_trade_decision(
+            asset_type,
+            normalized_symbol,
+            current_user["id"],
+            figi,
+            strategy_type,
+        )
+    except HTTPException:
+        raise
+    except Exception as error:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Не удалось построить AI Trade Decision по рыночным данным.",
+        ) from error
+
+    await _store_ai_trade_decision(current_user["id"], decision, asset_type=asset_type, result="decision")
+    return decision.model_dump(mode="json")
+
+
+@router.post("/ai/scan")
+async def scan_ai_trade_decisions(
+    payload: AIScanRequest,
+    current_user=Depends(get_current_user),
+):
+    decisions: list[AITradeDecision] = []
+
+    if payload.symbols:
+        symbols = list(dict.fromkeys(symbol.upper() for symbol in payload.symbols if symbol.strip()))[:payload.limit]
+        for symbol in symbols:
+            try:
+                decision = await _build_ai_trade_decision(
+                    payload.asset_type,
+                    symbol,
+                    current_user["id"],
+                    strategy_type=payload.strategy_type,
+                )
+            except Exception:
+                continue
+
+            decisions.append(decision)
+    else:
+        candidates = await _load_strategy_candidates(current_user["id"])
+        for asset in candidates[:payload.limit]:
+            try:
+                features = build_market_features(asset)
+                decision = select_strategy_decision(
+                    features,
+                    _ai_trading_config(),
+                    payload.strategy_type,
+                )
+            except Exception:
+                continue
+
+            decisions.append(decision)
+
+    if not payload.include_no_trade:
+        decisions = [decision for decision in decisions if decision.final_action != FinalAction.NO_TRADE]
+
+    decisions.sort(
+        key=lambda item: (
+            item.risk_manager_passed,
+            item.expected_value_percent,
+            item.probability_tp_before_sl,
+        ),
+        reverse=True,
+    )
+
+    for decision in decisions:
+        await _store_ai_trade_decision(
+            current_user["id"],
+            decision,
+            asset_type=decision.raw_features.get("asset_type") or payload.asset_type,
+            result="scan",
+        )
+
+    allowed = [decision for decision in decisions if decision.risk_manager_passed]
+    no_trade = [decision for decision in decisions if decision.final_action == FinalAction.NO_TRADE]
+
+    return {
+        "items": [decision.model_dump(mode="json") for decision in decisions],
+        "summary": {
+            "evaluated": len(decisions),
+            "tradeAllowed": len(allowed),
+            "noTrade": len(no_trade),
+            "blocked": len(decisions) - len(allowed),
+        },
+        "config": _ai_trading_config().model_dump(mode="json"),
+        "createdAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@router.get("/ai/journal")
+async def get_ai_trade_journal(
+    symbol: str | None = Query(default=None, max_length=40),
+    strategy_type: StrategyType | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=500),
+    current_user=Depends(get_current_user),
+):
+    query = """
+        select id, strategy_id, symbol, asset, asset_type, strategy_type,
+               final_action, confidence, probability_tp_before_sl,
+               probability_long_success, probability_short_success,
+               market_regime, technical_score, news_score, sentiment_score,
+               risk_score, liquidity_score, volatility_score, entry_price,
+               take_profit, stop_loss, risk_reward, expected_value_percent,
+               estimated_fees_percent, estimated_slippage_percent,
+               position_size_percent, max_risk_percent_of_deposit,
+               validator_passed, risk_manager_passed, rejection_reason,
+               reasons_for, reasons_against, raw_features, decision_payload,
+               result, pnl_percent, pnl_amount, max_favorable_excursion,
+               max_adverse_excursion, time_to_exit_seconds, exit_reason,
+               created_by, created_at
+        from ai_trade_decisions
+        where user_id = $1
+          and ($2::varchar is null or symbol = $2)
+          and ($3::varchar is null or strategy_type = $3)
+        order by created_at desc
+        limit $4
+    """
+    pool = get_database_pool()
+    normalized_symbol = symbol.upper() if symbol else None
+    strategy_filter = strategy_type.value if strategy_type else None
+
+    async with pool.acquire() as connection:
+        rows = await connection.fetch(query, current_user["id"], normalized_symbol, strategy_filter, limit)
+
+    return {
+        "items": [
+            {
+                "id": str(row["id"]),
+                "strategyId": row["strategy_id"],
+                "symbol": row["symbol"],
+                "asset": row["asset"],
+                "assetType": row["asset_type"],
+                "strategyType": row["strategy_type"],
+                "finalAction": row["final_action"],
+                "confidence": float(row["confidence"] or 0),
+                "probabilityTpBeforeSl": float(row["probability_tp_before_sl"] or 0),
+                "probabilityLongSuccess": float(row["probability_long_success"]) if row["probability_long_success"] is not None else None,
+                "probabilityShortSuccess": float(row["probability_short_success"]) if row["probability_short_success"] is not None else None,
+                "marketRegime": row["market_regime"],
+                "technicalScore": float(row["technical_score"] or 0),
+                "newsScore": float(row["news_score"]) if row["news_score"] is not None else None,
+                "sentimentScore": float(row["sentiment_score"]) if row["sentiment_score"] is not None else None,
+                "riskScore": float(row["risk_score"] or 0),
+                "liquidityScore": float(row["liquidity_score"] or 0),
+                "volatilityScore": float(row["volatility_score"] or 0),
+                "entryPrice": float(row["entry_price"] or 0),
+                "takeProfit": float(row["take_profit"] or 0),
+                "stopLoss": float(row["stop_loss"] or 0),
+                "riskReward": float(row["risk_reward"] or 0),
+                "expectedValuePercent": float(row["expected_value_percent"] or 0),
+                "estimatedFeesPercent": float(row["estimated_fees_percent"] or 0),
+                "estimatedSlippagePercent": float(row["estimated_slippage_percent"] or 0),
+                "positionSizePercent": float(row["position_size_percent"] or 0),
+                "maxRiskPercentOfDeposit": float(row["max_risk_percent_of_deposit"] or 0),
+                "validatorPassed": bool(row["validator_passed"]),
+                "riskManagerPassed": bool(row["risk_manager_passed"]),
+                "rejectionReason": row["rejection_reason"],
+                "reasonsFor": _safe_json_payload(row["reasons_for"], []),
+                "reasonsAgainst": _safe_json_payload(row["reasons_against"], []),
+                "rawFeatures": _safe_json_payload(row["raw_features"], {}),
+                "decisionPayload": _safe_json_payload(row["decision_payload"], {}),
+                "result": row["result"],
+                "pnlPercent": float(row["pnl_percent"]) if row["pnl_percent"] is not None else None,
+                "pnlAmount": float(row["pnl_amount"]) if row["pnl_amount"] is not None else None,
+                "maxFavorableExcursion": float(row["max_favorable_excursion"]) if row["max_favorable_excursion"] is not None else None,
+                "maxAdverseExcursion": float(row["max_adverse_excursion"]) if row["max_adverse_excursion"] is not None else None,
+                "timeToExitSeconds": row["time_to_exit_seconds"],
+                "exitReason": row["exit_reason"],
+                "createdBy": row["created_by"],
+                "createdAt": row["created_at"].isoformat() if row["created_at"] else None,
+            }
+            for row in rows
+        ],
+    }
+
+
+@router.get("/ai/metrics")
+async def get_ai_trade_metrics(current_user=Depends(get_current_user)):
+    pool = get_database_pool()
+
+    async with pool.acquire() as connection:
+        rows = await connection.fetch(
+            """
+            select strategy_type, market_regime,
+                   count(*) as decisions_count,
+                   count(*) filter (where final_action = 'NO_TRADE') as no_trade_count,
+                   count(*) filter (where risk_manager_passed) as allowed_count,
+                   avg(expected_value_percent) as avg_ev,
+                   avg(probability_tp_before_sl) as avg_probability,
+                   avg(pnl_percent) filter (where pnl_percent is not null) as avg_pnl,
+                   sum(pnl_amount) filter (where pnl_amount is not null) as pnl_amount
+            from ai_trade_decisions
+            where user_id = $1
+            group by strategy_type, market_regime
+            order by decisions_count desc
+            """,
+            current_user["id"],
+        )
+
+    total_decisions = sum(int(row["decisions_count"] or 0) for row in rows)
+    total_allowed = sum(int(row["allowed_count"] or 0) for row in rows)
+    total_no_trade = sum(int(row["no_trade_count"] or 0) for row in rows)
+
+    return {
+        "summary": {
+            "decisions": total_decisions,
+            "tradeAllowed": total_allowed,
+            "noTrade": total_no_trade,
+            "blocked": max(total_decisions - total_allowed, 0),
+        },
+        "byRegimeAndStrategy": [
+            {
+                "strategyType": row["strategy_type"],
+                "marketRegime": row["market_regime"],
+                "decisions": int(row["decisions_count"] or 0),
+                "noTrade": int(row["no_trade_count"] or 0),
+                "tradeAllowed": int(row["allowed_count"] or 0),
+                "avgExpectedValue": float(row["avg_ev"] or 0),
+                "avgProbability": float(row["avg_probability"] or 0),
+                "avgPnl": float(row["avg_pnl"] or 0),
+                "pnlAmount": float(row["pnl_amount"] or 0),
+            }
+            for row in rows
+        ],
+    }
+
+
+@router.post("/paper/execute-ai-decision")
+async def execute_ai_decision_in_paper(
+    payload: ExecuteAIDecisionRequest,
+    current_user=Depends(get_current_user),
+):
+    decision = payload.decision
+    if (
+        not decision.validator_passed
+        or not decision.risk_manager_passed
+        or decision.final_action == FinalAction.NO_TRADE
+    ):
+        await _store_ai_trade_decision(
+            current_user["id"],
+            decision,
+            strategy_id=payload.strategy_id,
+            asset_type=decision.raw_features.get("asset_type") or "crypto",
+            result="paper_rejected",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=decision.rejection_reason or "Risk Manager не разрешил paper-исполнение.",
+        )
+
+    notional = payload.virtual_capital * decision.position_size_percent / 100
+    quantity = notional / decision.entry_price if decision.entry_price > 0 else 0
+    paper_order = {
+        "id": decision.id,
+        "symbol": decision.symbol,
+        "asset": decision.asset,
+        "action": decision.final_action.value,
+        "strategyType": decision.strategy_type.value,
+        "entryPrice": decision.entry_price,
+        "takeProfit": decision.take_profit,
+        "stopLoss": decision.stop_loss,
+        "quantity": round(quantity, 10),
+        "notional": round(notional, 2),
+        "expectedValuePercent": decision.expected_value_percent,
+        "probabilityTpBeforeSl": decision.probability_tp_before_sl,
+        "status": "paper_opened",
+        "createdAt": datetime.now(timezone.utc).isoformat(),
+    }
+    await _store_ai_trade_decision(
+        current_user["id"],
+        decision,
+        strategy_id=payload.strategy_id,
+        asset_type=decision.raw_features.get("asset_type") or "crypto",
+        result="paper_opened",
+    )
+
+    return {
+        "message": "AI decision исполнено в paper-режиме.",
+        "paperOrder": paper_order,
+    }
+
+
 @router.get("/ai/strategies")
 async def get_ai_strategies(current_user=Depends(get_current_user)):
     cached_response = _get_cached_strategy_response(current_user["id"])
@@ -3152,6 +3791,17 @@ async def reset_ai_strategy_history(
             """
             delete from ai_strategy_audit_logs
             where user_id = $1 and strategy_id = any($2::varchar[])
+            """,
+            current_user["id"],
+            strategy_ids,
+        )
+        await connection.execute(
+            """
+            delete from ai_trade_decisions
+            where user_id = $1 and (
+                strategy_id = any($2::varchar[])
+                or strategy_id is null
+            )
             """,
             current_user["id"],
             strategy_ids,

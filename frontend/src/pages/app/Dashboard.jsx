@@ -40,14 +40,14 @@ import { readCachedValue, writeCachedValue } from "../../lib/clientCache";
 const GUIDE_PDF_URL = "/docs/bybitisruction.pdf";
 const TBANK_GUIDE_PDF_URL = "/docs/TBANKAPIINSTUCTIONS.pdf";
 const DASHBOARD_TOP_GROWTH_CACHE_KEY = "pulse:dashboard:top-growth:v1";
-const DASHBOARD_PORTFOLIO_CACHE_KEY = "pulse:dashboard:portfolio-summary:v2";
+const DASHBOARD_PORTFOLIO_CACHE_KEY = "pulse:dashboard:portfolio-summary:v1";
 const DASHBOARD_ANALYTICS_CACHE_KEY = "pulse:dashboard:portfolio-analytics:v1";
-const DASHBOARD_TRADES_CACHE_KEY = "pulse:dashboard:portfolio-trades:v2";
+const DASHBOARD_TRADES_CACHE_KEY = "pulse:dashboard:portfolio-trades:v1";
 const DASHBOARD_TOP_GROWTH_CACHE_MAX_AGE = 1000 * 60 * 5;
 const DASHBOARD_PORTFOLIO_CACHE_MAX_AGE = 1000 * 30;
 const DASHBOARD_ANALYTICS_CACHE_MAX_AGE = 1000 * 60;
 const DASHBOARD_TRADES_CACHE_MAX_AGE = 1000 * 60;
-const DASHBOARD_PORTFOLIO_REFRESH_INTERVAL = 1000 * 60;
+const DASHBOARD_PORTFOLIO_REFRESH_INTERVAL = 1000 * 15;
 
 const EMPTY_PORTFOLIO_SUMMARY = {
   totalValueRub: 0,
@@ -72,7 +72,13 @@ const EMPTY_PORTFOLIO_TRADES = {
   updatedAt: null,
 };
 
-const ACTIVITY_WEEK_DAYS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
+const ACTIVITY_GRID = [
+  0, 1, 0, 2, 1, 3, 0, 1,
+  2, 1, 0, 2, 3, 4, 2, 1,
+  0, 1, 2, 1, 3, 2, 0, 1,
+  2, 4, 3, 1, 2, 0, 1,
+];
+const ACTIVITY_WEEK_DAYS = ["M", "T", "W", "T", "F", "S", "S"];
 
 const getMonthActivityCells = (activityGrid) => {
   const today = new Date();
@@ -255,6 +261,16 @@ const LEGACY_TBANK_MONEY_NAMES = {
   EUR_RUB__TOM: "Евро",
 };
 
+const PROVIDER_ICONS = {
+  tbank: Tbankicon,
+  bybit: BybitIcon,
+  "pulse-ai": ChartUP,
+};
+
+const getProviderLogo = (provider) => PROVIDER_ICONS[provider] || ChartUP;
+
+const getProviderAlt = (provider, label) => label || (provider === "tbank" ? "Т Банк" : "Bybit");
+
 const getSafeChangeTone = (value) => {
   const number = Number(value) || 0;
 
@@ -321,23 +337,6 @@ const formatTradeDate = (value) => {
     month: "long",
     year: "numeric",
   }).format(new Date(value));
-};
-
-const formatTradeTime = (value, fallback = "") => {
-  if (!value) {
-    return fallback || "Недавно";
-  }
-
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-    return fallback || "Недавно";
-  }
-
-  return new Intl.DateTimeFormat("ru-RU", {
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(date);
 };
 
 const formatTradeMoney = (value, tradeCurrency = "RUB") => {
@@ -419,60 +418,11 @@ const getChangeTone = (value) => {
 };
 
 const getAssetRouteType = (asset) => {
-  const rawType = String(asset?.type || asset?.assetType || asset?.instrumentType || "").toLowerCase();
-
-  if (rawType === "currency") {
-    return "currency";
-  }
-
-  if (asset?.provider === "bybit" || rawType === "crypto") {
+  if (asset.provider === "bybit" || asset.type === "crypto") {
     return "crypto";
   }
 
   return "stock";
-};
-
-const getPortfolioAssetKey = (asset) => [
-  asset.provider || "",
-  getAssetRouteType(asset),
-  normalizeDisplaySymbol(asset.shortName || asset.symbol || asset.coin || asset.figi).toUpperCase(),
-].join(":");
-
-const mergePortfolioAssets = (assets) => {
-  const mergedAssets = new Map();
-
-  assets.forEach((asset) => {
-    const key = getPortfolioAssetKey(asset);
-    const currentAsset = mergedAssets.get(key);
-
-    if (!currentAsset) {
-      mergedAssets.set(key, { ...asset });
-      return;
-    }
-
-    const quantity = Number(currentAsset.quantity || 0) + Number(asset.quantity || 0);
-    const availableQuantity =
-      Number(currentAsset.availableQuantity || 0) + Number(asset.availableQuantity || 0);
-    const valueRub = Number(currentAsset.valueRub || 0) + Number(asset.valueRub || 0);
-    const valueUsd = Number(currentAsset.valueUsd || 0) + Number(asset.valueUsd || 0);
-    const changeRub = Number(currentAsset.changeRub || 0) + Number(asset.changeRub || 0);
-    const baseValue = valueRub - changeRub;
-
-    mergedAssets.set(key, {
-      ...currentAsset,
-      iconUrl: currentAsset.iconUrl || asset.iconUrl,
-      currentPriceRub: currentAsset.currentPriceRub || asset.currentPriceRub,
-      currentPriceUsd: currentAsset.currentPriceUsd || asset.currentPriceUsd,
-      quantity,
-      availableQuantity,
-      valueRub,
-      valueUsd,
-      changeRub,
-      changePercent: baseValue > 0 ? (changeRub / baseValue) * 100 : 0,
-    });
-  });
-
-  return Array.from(mergedAssets.values());
 };
 
 function SectionLoader({ height = 160, className = "" }) {
@@ -531,8 +481,6 @@ export default function Dashboard() {
     () => readCachedValue(DASHBOARD_TRADES_CACHE_KEY, DASHBOARD_TRADES_CACHE_MAX_AGE)
       || EMPTY_PORTFOLIO_TRADES
   );
-  const [isTradesLoading, setIsTradesLoading] = useState((portfolioTrades.items || []).length === 0);
-  const [isTradeHistoryOpen, setIsTradeHistoryOpen] = useState(false);
   const [isPortfolioLoading, setIsPortfolioLoading] = useState(
     () => !readCachedValue(DASHBOARD_PORTFOLIO_CACHE_KEY, DASHBOARD_PORTFOLIO_CACHE_MAX_AGE)
   );
@@ -556,15 +504,13 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const chartYear = CHART_YEARS[chartYearIndex] || CHART_YEARS[0];
 
-  const fetchPortfolioSummary = useCallback(async ({ silent = false, forceRefresh = false } = {}) => {
+  const fetchPortfolioSummary = useCallback(async ({ silent = false } = {}) => {
     if (!silent) {
       setIsPortfolioLoading(true);
     }
 
     try {
-      const response = await api.get("/portfolio/summary", {
-        params: forceRefresh ? { force_refresh: true } : undefined,
-      });
+      const response = await api.get("/portfolio/summary");
       const nextSummary = {
         ...EMPTY_PORTFOLIO_SUMMARY,
         ...response.data,
@@ -600,11 +546,7 @@ export default function Dashboard() {
     }
   }, [chartYear]);
 
-  const fetchPortfolioTrades = useCallback(async ({ silent = false } = {}) => {
-    if (!silent) {
-      setIsTradesLoading(true);
-    }
-
+  const fetchPortfolioTrades = useCallback(async () => {
     try {
       const response = await api.get("/portfolio/trades");
       const nextTrades = {
@@ -617,8 +559,6 @@ export default function Dashboard() {
       writeCachedValue(DASHBOARD_TRADES_CACHE_KEY, nextTrades);
     } catch {
       setPortfolioTrades((currentTrades) => currentTrades);
-    } finally {
-      setIsTradesLoading(false);
     }
   }, []);
 
@@ -645,7 +585,7 @@ export default function Dashboard() {
     const refreshPortfolioData = async ({ silent = false } = {}) => {
       await fetchPortfolioSummary({ silent });
       await fetchPortfolioAnalytics();
-      await fetchPortfolioTrades({ silent });
+      await fetchPortfolioTrades();
     };
 
     const initialRefresh = window.setTimeout(() => {
@@ -667,7 +607,7 @@ export default function Dashboard() {
       if (document.visibilityState === "visible") {
         await fetchPortfolioSummary({ silent: true });
         await fetchPortfolioAnalytics();
-        await fetchPortfolioTrades({ silent: true });
+        await fetchPortfolioTrades();
       }
     };
 
@@ -683,12 +623,10 @@ export default function Dashboard() {
   useEffect(() => {
     let isMounted = true;
 
-	    Promise.allSettled([
-	      api.get("/cryptocurrencies", { params: { limit: 50 } }),
-	      api.get("/portfolio/tbank/stocks", {
-	        params: { limit: 50, include_trading_status: false },
-	      }).catch(() => api.get("/stocks", { params: { limit: 50 } })),
-	    ])
+    Promise.allSettled([
+      api.get("/cryptocurrencies", { params: { limit: 50 } }),
+      api.get("/stocks", { params: { limit: 50 } }),
+    ])
       .then(([cryptoResult, stockResult]) => {
         if (!isMounted) {
           return;
@@ -711,18 +649,16 @@ export default function Dashboard() {
           changeValue: Number(item.priceChangePercent24h) || 0,
           sparkline: item.chart7d?.map((point) => point.close) || [],
         }));
-	        const normalizedStocks = stockItems.map((item) => ({
-	          id: `stock-${item.symbol}`,
-	          type: "stock",
-	          figi: item.figi,
-	          name: item.shortName || item.name || item.symbol,
-	          symbol: item.symbol,
-	          shortName: item.symbol,
-	          icon: item.iconUrl,
-	          provider: item.provider,
-	          changeValue: Number(item.priceChangePercent24h) || 0,
-	          sparkline: item.chart7d?.map((point) => point.close) || [],
-	        }));
+        const normalizedStocks = stockItems.map((item) => ({
+          id: `stock-${item.symbol}`,
+          type: "stock",
+          name: item.shortName || item.name || item.symbol,
+          symbol: item.symbol,
+          shortName: item.symbol,
+          icon: item.iconUrl,
+          changeValue: Number(item.priceChangePercent24h) || 0,
+          sparkline: item.chart7d?.map((point) => point.close) || [],
+        }));
 
         const sortByGrowth = (assets) =>
           assets
@@ -762,14 +698,14 @@ export default function Dashboard() {
         .map((wallet) => wallet.provider)
     )
   );
-  const portfolioAssets = mergePortfolioAssets(connectedWallets.flatMap((wallet) =>
+  const portfolioAssets = connectedWallets.flatMap((wallet) =>
     (wallet.assets || []).map((asset) => ({
       ...asset,
       walletId: wallet.id,
       provider: asset.provider || wallet.provider,
       providerLabel: asset.providerLabel || wallet.providerLabel,
     }))
-  ));
+  );
   const activeTradeSourceFilter =
     tradeSourceFilter !== "all" && !connectedProviders.includes(tradeSourceFilter)
       ? "all"
@@ -799,10 +735,9 @@ export default function Dashboard() {
   const chartData = analyticsChartData.length
     ? analyticsChartData
     : (BASE_YEAR_SERIES[chartPeriod] || BASE_YEAR_SERIES.month);
-  const activityGrid = useMemo(
-    () => (portfolioAnalytics.activityGrid?.length ? portfolioAnalytics.activityGrid : []),
-    [portfolioAnalytics.activityGrid]
-  );
+  const activityGrid = portfolioAnalytics.activityGrid?.length
+    ? portfolioAnalytics.activityGrid
+    : ACTIVITY_GRID;
   const activityCalendarCells = useMemo(
     () => getMonthActivityCells(activityGrid),
     [activityGrid]
@@ -815,17 +750,12 @@ export default function Dashboard() {
     .filter((asset) => Number(asset.valueRub) > 0)
     .sort((firstAsset, secondAsset) => Number(secondAsset.valueRub) - Number(firstAsset.valueRub));
   const tradeHistoryGroups = groupTradesByDate(portfolioTrades.items || []);
-	  const portfolioPieData = (() => {
-	    const groups = portfolioAssets.reduce((acc, asset) => {
-	      const routeType = getAssetRouteType(asset);
-	      const label = routeType === "crypto"
-	        ? "Криптовалюта"
-	        : routeType === "currency"
-	          ? "Валюта"
-	          : "Акции";
-	      acc[label] = (acc[label] || 0) + (Number(asset.valueRub) || 0);
-	      return acc;
-	    }, {});
+  const portfolioPieData = (() => {
+    const groups = portfolioAssets.reduce((acc, asset) => {
+      const label = getAssetRouteType(asset) === "crypto" ? "Криптовалюта" : "Акции";
+      acc[label] = (acc[label] || 0) + (Number(asset.valueRub) || 0);
+      return acc;
+    }, {});
     const total = Object.values(groups).reduce((sum, value) => sum + value, 0);
 
     if (!total) {
@@ -841,7 +771,6 @@ export default function Dashboard() {
   const portfolioChangeTone = getChangeTone(portfolioChangeRub);
   const portfolioChangeText = `${formatSignedMoney(convertedPortfolioChange, currency.symbol)} (${formatPercent(portfolioChangePercent)})`;
   const dashboardTopLoading = !dashboardReady || (isPortfolioLoading && !portfolioSummary.updatedAt);
-  const dashboardDataLoading = dashboardTopLoading;
   const availableChartYears = portfolioAnalytics.availableYears || [];
   const canGoPrevYear = availableChartYears.includes(CHART_YEARS[chartYearIndex - 1]);
   const canGoNextYear = availableChartYears.includes(CHART_YEARS[chartYearIndex + 1]);
@@ -889,9 +818,9 @@ export default function Dashboard() {
         return nextSummary;
       });
       setWalletPendingDelete(null);
-      await fetchPortfolioSummary({ silent: true, forceRefresh: true });
+      await fetchPortfolioSummary({ silent: true });
       await fetchPortfolioAnalytics();
-      await fetchPortfolioTrades({ silent: true });
+      await fetchPortfolioTrades();
     } catch (error) {
       setPortfolioError(getApiErrorMessage(error, "Не удалось удалить кошелек."));
     } finally {
@@ -955,7 +884,7 @@ export default function Dashboard() {
       setApiKey("");
       setApiSecret("");
       setTbankToken("");
-      await fetchPortfolioSummary({ silent: true, forceRefresh: true });
+      await fetchPortfolioSummary({ silent: true });
       await fetchPortfolioAnalytics();
       await fetchPortfolioTrades();
       window.setTimeout(() => {
@@ -993,42 +922,18 @@ export default function Dashboard() {
     });
   };
 
-	  const openAssetPage = (trade) => {
-	    const symbol = trade.routeSymbol || trade.symbol;
+  const openAssetPage = (trade) => {
+    const symbol = trade.routeSymbol || trade.symbol;
+    const assetType = trade.assetType === "crypto" ? "crypto" : "stock";
 
-	    if (!symbol) {
-	      return;
-	    }
+    navigate(
+      `/app/market/coin-page?type=${assetType}&symbol=${encodeURIComponent(symbol)}`
+    );
+  };
 
-	    const assetType = getAssetRouteType(trade);
-	    const params = new URLSearchParams({
-	      type: assetType,
-	      symbol,
-	    });
-
-	    if (assetType === "stock" && trade.figi) {
-	      params.set("figi", trade.figi);
-	    }
-
-	    navigate(`/app/market/coin-page?${params.toString()}`);
-	  };
-
-	  const openTopGrowthAsset = (asset) => {
-	    const params = new URLSearchParams({
-	      type: asset.type,
-	      symbol: asset.symbol,
-	    });
-
-	    if (asset.type === "stock" && asset.figi) {
-	      params.set("figi", asset.figi);
-	    }
-
-	    if (asset.type === "stock" && asset.provider) {
-	      params.set("source", asset.provider);
-	    }
-
-	    navigate(`/app/market/coin-page?${params.toString()}`);
-	  };
+  const openTopGrowthAsset = (asset) => {
+    navigate(`/app/market/coin-page?type=${asset.type}&symbol=${encodeURIComponent(asset.symbol)}`);
+  };
 
   const openPortfolioAsset = (asset) => {
     const routeType = getAssetRouteType(asset);
@@ -1038,16 +943,7 @@ export default function Dashboard() {
       return;
     }
 
-    const params = new URLSearchParams({
-      type: routeType,
-      symbol,
-    });
-
-    if (routeType === "stock" && asset.figi) {
-      params.set("figi", asset.figi);
-    }
-
-    navigate(`/app/market/coin-page?${params.toString()}`);
+    navigate(`/app/market/coin-page?type=${routeType}&symbol=${encodeURIComponent(symbol)}`);
   };
 
   return (
@@ -1421,16 +1317,7 @@ export default function Dashboard() {
                       </div>
                     </div>
 
-                    <Drawer
-                      open={isTradeHistoryOpen}
-                      onOpenChange={(open) => {
-                        setIsTradeHistoryOpen(open);
-
-                        if (open) {
-                          fetchPortfolioTrades();
-                        }
-                      }}
-                    >
+                    <Drawer>
                       <DrawerTrigger asChild>
                         <Buttons type="nm_black_prymary">
                           <p style={{ fontSize: "12px" }}>История</p>
@@ -1438,7 +1325,10 @@ export default function Dashboard() {
                       </DrawerTrigger>
 
                       <DrawerContent className="trade_history_drawer bg-black-s text-white border border-black-t rounded-t-2xl">
-                        <center>
+
+                        <div className="max-w-[800px]">
+
+                          <center>
                           <div className="lineDrawer"></div>
                         </center>
 
@@ -1452,9 +1342,7 @@ export default function Dashboard() {
                         </DrawerHeader>
 
                         <div className="trade_history_list">
-                          {isTradesLoading && !tradeHistoryGroups.length ? (
-                            <SectionLoader height={180} className="trade_history_loader" />
-                          ) : tradeHistoryGroups.length ? tradeHistoryGroups.map((dayBlock) => (
+                          {tradeHistoryGroups.length ? tradeHistoryGroups.map((dayBlock) => (
                             <div key={dayBlock.id} className="trade_history_day">
                               <p className="trade_history_day_label">{dayBlock.date}</p>
                               <div className="trade_history_day_items">
@@ -1466,17 +1354,14 @@ export default function Dashboard() {
                                     onClick={() => openAssetPage(item)}
                                   >
                                     <div className="trade_history_item_main">
-	                                      <CoinIcon
-	                                        baseCoin={normalizeDisplaySymbol(item.symbol)}
-	                                        iconUrl={item.iconUrl}
-	                                        label={item.name}
-	                                        type={getAssetRouteType(item)}
-	                                        className="trade_history_asset_icon"
-	                                      />
+                                      <img
+                                        src={getProviderLogo(item.provider || item.source)}
+                                        alt={getProviderAlt(item.provider || item.source, item.providerLabel || item.sourceLabel)}
+                                      />
                                       <div>
                                         <h4>{getLegacyDisplayName(item.name, item.symbol)}</h4>
                                         <p>
-                                          {item.providerLabel || item.sourceLabel} · {formatTradeTime(item.executedAt, item.time)} · {normalizeDisplaySymbol(item.symbol)}
+                                          {item.providerLabel || item.sourceLabel} · {item.time} · {normalizeDisplaySymbol(item.symbol)}
                                         </p>
                                       </div>
                                     </div>
@@ -1506,12 +1391,14 @@ export default function Dashboard() {
                             <Buttons type="primary-full">Смотреть всю историю</Buttons>
                           </DrawerClose> */}
                         </DrawerFooter>
+                        </div>
+                        
                       </DrawerContent>
                     </Drawer>
                   </div>
 
                   <div className="containerBuysellactive">
-                    {!dashboardDataLoading ? (
+                    {dashboardReady ? (
                       <div className="contentbsac">
                         {boughtAssetsList.map((asset) => {
                           const convertedAssetValue = convertRubAmount(asset.valueRub);
@@ -1525,10 +1412,9 @@ export default function Dashboard() {
                                 asset.name || normalizeDisplaySymbol(asset.symbol || asset.shortName),
                                 asset.symbol || asset.shortName
                               )}
-	                              symbol={normalizeDisplaySymbol(asset.shortName || asset.symbol || asset.coin)}
-	                              icon={asset.iconUrl}
-	                              assetType={getAssetRouteType(asset)}
-	                              priceFrom={formatCompactNumber(asset.quantity)}
+                              symbol={normalizeDisplaySymbol(asset.shortName || asset.symbol || asset.coin)}
+                              icon={asset.iconUrl}
+                              priceFrom={formatCompactNumber(asset.quantity)}
                               priceTo={`${formatRub(convertedAssetValue)} ${currency.symbol}`}
                               change={`${formatSignedMoney(convertedAssetChange, currency.symbol)} (${formatPercent(asset.changePercent)})`}
                               changeTone={getSafeChangeTone(asset.changeRub)}
@@ -1541,7 +1427,7 @@ export default function Dashboard() {
                       <SectionLoader height={180} />
                     )}
 
-                    {!dashboardDataLoading && boughtAssetsList.length === 0 && (
+                    {dashboardReady && boughtAssetsList.length === 0 && (
                       <div className="empty_trades_state">
                         Нет данных
                       </div>
@@ -1613,7 +1499,7 @@ export default function Dashboard() {
               <div className="BlcoksMidleDahs">
                 <div className="AnaBl">
                   <div className="block black_box ActivitiSellbuy">
-                    {dashboardDataLoading ? (
+                    {!dashboardReady ? (
                       <SectionLoader height={240} />
                     ) : (
                       <div className="activity_card">
@@ -1634,7 +1520,7 @@ export default function Dashboard() {
                                 ].filter(Boolean).join(" ")}
                                 title={cell.day ? `${cell.day} число: ${cell.value || 0} сделок` : undefined}
                               >
-                                {""}
+                                {cell.isToday ? cell.day : ""}
                               </span>
                             ))}
                           </div>
@@ -1649,74 +1535,68 @@ export default function Dashboard() {
                   </div>
 
                   <div className="block black_box sercleChartiijji">
-                    {dashboardDataLoading ? (
-                      <SectionLoader height={240} />
-                    ) : (
-                      <>
-                        <div className="poopp">
-                          <h3>Распределение активов</h3>
-                          <p>Просмотр распределения портфеля</p>
-                        </div>
-                        <div className="RadialChartShape">
-                          <div className="pieChartWrapper">
-                            <div className="pieChartBackdrop" />
-                            <div className="pieChartHalo" />
-                            <ResponsiveContainer width="100%" height={200}>
-                              <PieChart>
-                                <Pie
-                                  data={portfolioPieData}
-                                  dataKey="value"
-                                  nameKey="name"
-                                  cx="50%"
-                                  cy="50%"
-                                  innerRadius={70}
-                                  outerRadius={92}
-                                  startAngle={90}
-                                  endAngle={-270}
-                                  paddingAngle={4}
-                                  cornerRadius={40}
-                                  stroke="rgba(255,255,255,0.12)"
-                                  strokeWidth={2}
-                                >
-                                  {portfolioPieData.map((entry, index) => (
-                                    <Cell
-                                      key={`cell-${index}`}
-                                      fill="var(--primary-blue)"
-                                    />
-                                  ))}
-                                </Pie>
-                                <Tooltip content={<CustomPieTooltip />} />
-                                <text
-                                  x="50%"
-                                  y="47%"
-                                  textAnchor="middle"
-                                  fill="#fff"
-                                  fontSize={13}
-                                  fontWeight={700}
-                                >
-                                  {convertedMoney}
-                                </text>
-                                <text
-                                  x="50%"
-                                  y="57.5%"
-                                  textAnchor="middle"
-                                  fill="var(--gray)"
-                                  fontSize={11}
-                                >
-                                  {currency.symbol} капитал
-                                </text>
-                              </PieChart>
-                            </ResponsiveContainer>
-                          </div>
-                        </div>
-                      </>
-                    )}
+                    <div className="poopp">
+                      <h3>Распределение активов</h3>
+                      <p>Просмотр распределения портфеля</p>
+                    </div>
+                    <div className="RadialChartShape">
+                      <div className="pieChartWrapper">
+                        <div className="pieChartBackdrop" />
+                        <div className="pieChartHalo" />
+                        <ResponsiveContainer width="100%" height={200}>
+                          <PieChart>
+                            <Pie
+                              data={portfolioPieData}
+                              dataKey="value"
+                              nameKey="name"
+                              cx="50%"
+                              cy="50%"
+                              innerRadius={70}
+                              outerRadius={92}
+                              startAngle={90}
+                              endAngle={-270}
+                              paddingAngle={4}
+                              cornerRadius={40}
+                              stroke="rgba(255,255,255,0.12)"
+                              strokeWidth={2}
+                            >
+                              {portfolioPieData.map((entry, index) => (
+                                <Cell
+                                  key={`cell-${index}`}
+                                  fill="var(--primary-blue)"
+                                />
+                              ))}
+                            </Pie>
+                            <Tooltip content={<CustomPieTooltip />} />
+                            <text
+                              x="50%"
+                              y="47%"
+                              textAnchor="middle"
+                              fill="#fff"
+                              fontSize={13}
+                              fontWeight={700}
+                            >
+                              {convertedMoney}
+                            </text>
+                            <text
+                              x="50%"
+                              y="57.5%"
+                              textAnchor="middle"
+                              fill="var(--gray)"
+                              fontSize={11}
+                            >
+                              {currency.symbol} капитал
+                            </text>
+                          </PieChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
                   </div>
                 </div>
 
                 <div className="block black_box chartBlock">
                   <div className="chartBlock_surface">
-                    {dashboardDataLoading ? (
+                    {!dashboardReady ? (
                       <SectionLoader height={260} />
                     ) : (
                       (() => {

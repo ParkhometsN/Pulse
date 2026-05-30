@@ -282,6 +282,56 @@ async def ensure_auth_schema() -> None:
             )
             """
         )
+        await connection.execute(
+            """
+            create table if not exists ai_trade_decisions (
+                id uuid primary key default gen_random_uuid(),
+                user_id uuid not null references users(id) on delete cascade,
+                strategy_id varchar(80),
+                symbol varchar(40) not null,
+                asset varchar(120),
+                asset_type varchar(30) not null default 'crypto',
+                strategy_type varchar(30) not null,
+                final_action varchar(40) not null,
+                confidence numeric(8, 6) not null default 0,
+                probability_tp_before_sl numeric(8, 6) not null default 0,
+                probability_long_success numeric(8, 6),
+                probability_short_success numeric(8, 6),
+                market_regime varchar(40) not null default 'UNKNOWN',
+                technical_score numeric(8, 6) not null default 0,
+                news_score numeric(8, 6),
+                sentiment_score numeric(8, 6),
+                risk_score numeric(8, 6) not null default 0,
+                liquidity_score numeric(8, 6) not null default 0,
+                volatility_score numeric(8, 6) not null default 0,
+                entry_price numeric(24, 10) not null default 0,
+                take_profit numeric(24, 10) not null default 0,
+                stop_loss numeric(24, 10) not null default 0,
+                risk_reward numeric(12, 6) not null default 0,
+                expected_value_percent numeric(12, 6) not null default 0,
+                estimated_fees_percent numeric(12, 6) not null default 0,
+                estimated_slippage_percent numeric(12, 6) not null default 0,
+                position_size_percent numeric(12, 6) not null default 0,
+                max_risk_percent_of_deposit numeric(12, 6) not null default 0,
+                validator_passed boolean not null default false,
+                risk_manager_passed boolean not null default false,
+                rejection_reason text,
+                reasons_for jsonb not null default '[]'::jsonb,
+                reasons_against jsonb not null default '[]'::jsonb,
+                raw_features jsonb not null default '{}'::jsonb,
+                decision_payload jsonb not null default '{}'::jsonb,
+                result varchar(40),
+                pnl_percent numeric(12, 6),
+                pnl_amount numeric(24, 10),
+                max_favorable_excursion numeric(12, 6),
+                max_adverse_excursion numeric(12, 6),
+                time_to_exit_seconds integer,
+                exit_reason varchar(40),
+                created_by varchar(80) not null default 'ai_brain_v1',
+                created_at timestamptz not null default now()
+            )
+            """
+        )
         strategy_connection_columns = {
             row["column_name"]
             for row in await connection.fetch(
@@ -361,4 +411,10 @@ async def ensure_auth_schema() -> None:
         )
         await connection.execute(
             "create index if not exists idx_ai_strategy_audit_logs_user_strategy on ai_strategy_audit_logs(user_id, strategy_id, created_at desc)"
+        )
+        await connection.execute(
+            "create index if not exists idx_ai_trade_decisions_user_created on ai_trade_decisions(user_id, created_at desc)"
+        )
+        await connection.execute(
+            "create index if not exists idx_ai_trade_decisions_user_symbol on ai_trade_decisions(user_id, symbol, created_at desc)"
         )

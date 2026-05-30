@@ -323,6 +323,110 @@ const getStrategyTradeEntryAction = (trade) => (
   trade.side === "Short" ? "Продажа" : "Покупка"
 );
 
+const getStrategyTradeExitAction = (trade) => (
+  trade.side === "Short" ? "Покупка" : "Продажа"
+);
+
+const formatStrategyHistoryDay = (value) => {
+  const date = value ? new Date(value) : null;
+
+  if (!date || Number.isNaN(date.getTime())) {
+    return "Сегодня";
+  }
+
+  return date.toLocaleDateString("ru-RU", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
+};
+
+const formatStrategyHistoryTime = (value) => {
+  const date = value ? new Date(value) : null;
+
+  if (!date || Number.isNaN(date.getTime())) {
+    return "Сейчас";
+  }
+
+  return date.toLocaleTimeString("ru-RU", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+};
+
+const getStrategyHistoryEventKey = (event) => (
+  [
+    event.tradeId || event.asset,
+    event.type,
+    event.time,
+    event.action,
+  ].filter(Boolean).join(":")
+);
+
+const createStrategyHistoryEvent = (trade, type) => {
+  const isExit = type === "exit";
+  const eventTime = isExit
+    ? trade.closedAt || trade.updatedAt || trade.executedAt || trade.date
+    : trade.executedAt || trade.date || trade.updatedAt;
+  const baseAsset = getStrategyTradeBase(trade);
+  const action = isExit ? getStrategyTradeExitAction(trade) : getStrategyTradeEntryAction(trade);
+  const date = eventTime ? new Date(eventTime) : new Date();
+  const price = isExit
+    ? trade.exitPrice || trade.currentPrice || trade.entryPrice
+    : trade.entryPrice;
+
+  return {
+    ...trade,
+    type,
+    action,
+    baseAsset,
+    isExit,
+    time: eventTime,
+    timestamp: date && !Number.isNaN(date.getTime()) ? date.getTime() : Date.now(),
+    dayKey: date && !Number.isNaN(date.getTime()) ? date.toISOString().slice(0, 10) : "today",
+    dayLabel: formatStrategyHistoryDay(eventTime),
+    timeLabel: formatStrategyHistoryTime(eventTime),
+    price,
+    tradeId: trade.id || trade.aiDecisionId || `${trade.asset || "asset"}-${trade.executedAt || trade.date || ""}`,
+  };
+};
+
+const getStrategyHistoryGroups = (items = []) => {
+  const events = [];
+
+  items.forEach((item) => {
+    if (!item || item.asset === "NO_SIGNAL") {
+      return;
+    }
+
+    events.push(createStrategyHistoryEvent(item, "entry"));
+
+    if (item.status === "closed" && (item.closedAt || item.updatedAt)) {
+      events.push(createStrategyHistoryEvent(item, "exit"));
+    }
+  });
+
+  const sortedEvents = events.sort((firstEvent, secondEvent) => secondEvent.timestamp - firstEvent.timestamp);
+  const groups = [];
+  const groupsByDay = new Map();
+
+  sortedEvents.forEach((event) => {
+    if (!groupsByDay.has(event.dayKey)) {
+      const group = {
+        id: event.dayKey,
+        date: event.dayLabel,
+        items: [],
+      };
+      groupsByDay.set(event.dayKey, group);
+      groups.push(group);
+    }
+
+    groupsByDay.get(event.dayKey).items.push(event);
+  });
+
+  return groups;
+};
+
 const getStrategyChartPoints = (strategy) => {
   const currentCapital = Number(strategy.currentCapital ?? strategy.paperRun?.currentCapital);
   const initialCapital = Number(strategy.startCapital ?? strategy.paperRun?.startCapital ?? strategy.chart?.[0] ?? 0);
@@ -448,6 +552,7 @@ const mergeStrategyRun = (baseStrategy, run) => {
     }];
 
   const roi = Number(run.roi ?? getChartRoi(run.chart));
+  const decisionMetrics = run.decisionMetrics || {};
 
   return {
     ...baseStrategy,
@@ -462,6 +567,9 @@ const mergeStrategyRun = (baseStrategy, run) => {
     history,
     stats: [
       { label: "Модель", value: baseStrategy.stats[0]?.value || "Pulse AI" },
+      { label: "Решений AI", value: String(decisionMetrics.decisionsCount ?? 0) },
+      { label: "NO_TRADE", value: String(decisionMetrics.noTradeCount ?? 0) },
+      { label: "Средний EV", value: `${formatNumberLike(decisionMetrics.avgExpectedValue ?? 0)}%` },
       { label: "Сделок сегодня", value: String(run.totalTradesCount ?? trades.length) },
       { label: "Закрытых сделок", value: String(run.closedTradesCount ?? trades.filter((trade) => trade.status === "closed").length) },
       { label: "Точность закрытых", value: `${formatNumberLike(run.accuracy)}%` },
@@ -470,6 +578,7 @@ const mergeStrategyRun = (baseStrategy, run) => {
     historyAllTime: Array.isArray(run.historyAllTime) ? run.historyAllTime : trades,
     memory: Array.isArray(run.memory) ? run.memory : [],
     errorLog: Array.isArray(run.errorLog) ? run.errorLog : [],
+    decisionMetrics,
     connection: run.connection || null,
     margin: run.margin || null,
     capitalCurrency: run.capitalCurrency || run.connection?.capitalCurrency || "RUB",
@@ -931,6 +1040,7 @@ function StrategyHistoryPanel({
   const historyItems = Array.isArray(items) && items.length
     ? items
     : strategy.historyAllTime || strategy.history || [];
+  const historyGroups = getStrategyHistoryGroups(historyItems);
 
   return (
     <div className="strategy_history_panel">
@@ -955,55 +1065,68 @@ function StrategyHistoryPanel({
       ) : error ? (
         <div className="strategy_history_empty">{error}</div>
       ) : (
-        <div className="strategy_history_list strategy_history_list_all">
-          {historyItems.length ? historyItems.map((item, index) => {
-            const tone = getStrategyTone(item.resultPercent);
-            const baseAsset = getStrategyTradeBase(item);
-            const isNavigable = item.asset && item.asset !== "NO_SIGNAL";
+        <div className="trade_history_list strategy_trade_history_list">
+          {historyGroups.length ? historyGroups.map((dayBlock) => (
+            <div key={`${strategy.id}-${dayBlock.id}`} className="trade_history_day">
+              <p className="trade_history_day_label">{dayBlock.date}</p>
+              <div className="trade_history_day_items">
+                {dayBlock.items.map((item) => {
+                  const tone = getStrategyTone(item.resultAmount);
+                  const isNavigable = item.asset && item.asset !== "NO_SIGNAL";
+                  const actionTone = item.action === "Продажа" ? "sell" : "buy";
 
-            return (
-              <button
-                className="strategy_history_item"
-                key={`${strategy.id}-history-${item.runDate || ""}-${item.executedAt || item.date || index}-${item.asset || index}`}
-                type="button"
-                disabled={!isNavigable}
-                onClick={() => {
-                  if (isNavigable) {
-                    onOpenAsset(item);
-                  }
-                }}
-              >
-                <div className="strategy_history_asset">
-                  <CoinIcon
-                    baseCoin={baseAsset || "AI"}
-                    iconUrl={item.iconUrl}
-                    label={item.name || item.asset || "AI"}
-                    type={item.assetType === "stock" ? "stock" : "crypto"}
-                  />
-                  <div>
-                    <h4>{item.name || item.asset || "Нет сигнала"}</h4>
-                    <p>
-                      Pulse AI · {formatStrategyDateTime(getStrategyTradeActionTime(item))} · {baseAsset}
-                    </p>
-                  </div>
-                </div>
-                <div className="strategy_history_prices">
-                  <span
-                    className={`strategy_history_badge strategy_history_badge_${item.side === "Short" ? "sell" : "buy"}`}
-                  >
-                    {getStrategyTradeEntryAction(item)}
-                  </span>
-                  <span>{getStrategyTradeAmountMeta(item)}</span>
-                  <em className="strategy_history_execution">
-                    {getStrategyTradeExecutionMeta(item)}
-                  </em>
-                  <small className={`strategy_history_pnl strategy_history_result_${tone}`}>
-                    {getStrategyTradePnlMeta(item)}
-                  </small>
-                </div>
-              </button>
-            );
-          }) : (
+                  return (
+                    <button
+                      className="trade_history_item strategy_trade_history_item"
+                      key={`${strategy.id}-history-${getStrategyHistoryEventKey(item)}`}
+                      type="button"
+                      disabled={!isNavigable}
+                      onClick={() => {
+                        if (isNavigable) {
+                          onOpenAsset(item);
+                        }
+                      }}
+                    >
+                      <div className="trade_history_item_main">
+                        <CoinIcon
+                          baseCoin={item.baseAsset || "AI"}
+                          iconUrl={item.iconUrl}
+                          label={item.name || item.asset || "AI"}
+                          type={item.assetType === "stock" ? "stock" : "crypto"}
+                        />
+                        <div>
+                          <h4>{item.name || item.asset || "Нет сигнала"}</h4>
+                          <p>
+                            Pulse AI · {item.timeLabel} · {item.baseAsset}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="trade_history_item_meta strategy_trade_history_meta">
+                        <span className={`trade_history_badge trade_history_badge_${actionTone}`}>
+                          {item.action}
+                        </span>
+                        <strong>
+                          {getStrategyTradeAmountMeta(item)}
+                        </strong>
+                        <small className="strategy_trade_history_price">
+                          {item.isExit ? "Цена выхода" : "Цена входа"} · {formatStrategyPrice(item.price, item.quoteCurrency || "USDT")}
+                        </small>
+                        {item.isExit ? (
+                          <small className={`strategy_history_pnl strategy_history_result_${tone}`}>
+                            {getStrategyTradePnlMeta(item)}
+                          </small>
+                        ) : (
+                          <small className="strategy_history_pnl strategy_history_result_neutral">
+                            Вход в позицию
+                          </small>
+                        )}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )) : (
             <div className="strategy_history_empty">
               История появится после подключения стратегии и первых сигналов.
             </div>

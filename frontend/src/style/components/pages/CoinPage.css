@@ -384,6 +384,87 @@
 .forecast_delta_neutral{
     color: var(--gray) !important;
 }
+.ai_trade_decision_card{
+    margin-top: 14px;
+    padding: 16px;
+    border: 1px solid var(--black-t);
+    border-radius: 18px;
+    background: rgba(255, 255, 255, 0.03);
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+.ai_trade_decision_header{
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+.ai_trade_decision_header strong{
+    color: var(--white);
+    font-size: 15px;
+}
+.ai_trade_decision_status{
+    padding: 7px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 700;
+}
+.ai_trade_decision_status_positive{
+    color: var(--green);
+    background: rgba(16, 185, 129, 0.12);
+}
+.ai_trade_decision_status_negative{
+    color: var(--red);
+    background: rgba(239, 68, 68, 0.12);
+}
+.ai_trade_decision_status_neutral{
+    color: var(--gray);
+    background: rgba(255, 255, 255, 0.08);
+}
+.ai_trade_decision_grid{
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+}
+.ai_trade_decision_grid div{
+    padding: 10px;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.04);
+}
+.ai_trade_decision_grid span,
+.ai_trade_decision_reasons span{
+    display: block;
+    color: var(--gray);
+    font-size: 12px;
+    margin-bottom: 5px;
+}
+.ai_trade_decision_grid strong{
+    color: var(--white);
+    font-size: 14px;
+}
+.ai_trade_decision_rejection{
+    color: var(--gray);
+    font-size: 13px;
+    line-height: 1.45;
+    margin: 0;
+}
+.ai_trade_decision_reasons{
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+}
+.ai_trade_decision_reasons div{
+    padding: 10px;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.ai_trade_decision_reasons p{
+    margin: 0 0 6px;
+    color: var(--white);
+    font-size: 12px;
+    line-height: 1.35;
+}
 .chartUserContainer{
     gap: 10px;
     display: flex;
