@@ -1,4 +1,21 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-pulse}
+      POSTGRES_USER: ${POSTGRES_USER:-pulse_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pulse_local_password_change_me}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - pulse_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-pulse_user} -d ${POSTGRES_DB:-pulse}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
   backend:
     build:
       context: ./backend
@@ -7,8 +24,13 @@ services:
       - ./backend/.env
     environment:
       - ENVIRONMENT=production
+      - PULSE_DATABASE_URL=postgresql://${POSTGRES_USER:-pulse_user}:${POSTGRES_PASSWORD:-pulse_local_password_change_me}@postgres:5432/${POSTGRES_DB:-pulse}
+      - DATABASE_SSL=disable
     ports:
       - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
     networks:
       - pulse_network
     healthcheck:
@@ -41,3 +63,6 @@ services:
 networks:
   pulse_network:
     driver: bridge
+
+volumes:
+  postgres_data:
