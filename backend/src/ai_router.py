@@ -83,6 +83,11 @@ STRATEGY_GPT_REVIEW_COOLDOWN_HOURS = 12
 STRATEGY_CANDIDATES_CACHE_TTL_SECONDS = 45
 STRATEGY_RESPONSE_CACHE_TTL_SECONDS = 12
 STRATEGY_SNAPSHOT_TIMEOUT_SECONDS = 2.0
+STRATEGY_CRYPTO_KLINE_TIMEOUT_SECONDS = 2.5
+STRATEGY_STOCK_CANDLES_TIMEOUT_SECONDS = 2.5
+STRATEGY_TBANK_LOOKUP_TIMEOUT_SECONDS = 2.0
+STRATEGY_CRYPTO_KLINE_CANDIDATES_LIMIT = 20
+STRATEGY_STOCK_CANDIDATES_LIMIT = 18
 _strategy_candidates_cache: dict[str, dict[str, Any]] = {}
 _strategy_response_cache: dict[str, dict[str, Any]] = {}
 _strategy_response_refresh_tasks: dict[str, asyncio.Task] = {}
@@ -1718,11 +1723,14 @@ async def _load_strategy_candidates(user_id: Any | None = None) -> list[dict[str
             }
 
             try:
-                raw_klines = await bybit_client.get_kline(
-                    symbol=symbol,
-                    category="spot",
-                    interval="60",
-                    limit=24,
+                raw_klines = await asyncio.wait_for(
+                    bybit_client.get_kline(
+                        symbol=symbol,
+                        category="spot",
+                        interval="60",
+                        limit=24,
+                    ),
+                    timeout=STRATEGY_CRYPTO_KLINE_TIMEOUT_SECONDS,
                 )
                 intraday_features = _build_crypto_intraday_features(price, raw_klines)
             except Exception:
@@ -1743,7 +1751,7 @@ async def _load_strategy_candidates(user_id: Any | None = None) -> list[dict[str
             }
 
         crypto_candidates = await asyncio.gather(*[
-            build_crypto_candidate(item) for item in crypto_tickers[:32]
+            build_crypto_candidate(item) for item in crypto_tickers[:STRATEGY_CRYPTO_KLINE_CANDIDATES_LIMIT]
         ], return_exceptions=True)
         candidates.extend([
             item for item in crypto_candidates
@@ -1789,11 +1797,21 @@ async def _load_strategy_candidates(user_id: Any | None = None) -> list[dict[str
 
         async def format_candidate(item: dict[str, Any]) -> dict[str, Any] | None:
             try:
-                candles = await get_stock_candles(item["SECID"], "TQBR", days=35)
+                try:
+                    candles = await asyncio.wait_for(
+                        get_stock_candles(item["SECID"], "TQBR", days=35),
+                        timeout=STRATEGY_STOCK_CANDLES_TIMEOUT_SECONDS,
+                    )
+                except Exception:
+                    candles = []
+
                 stock = format_stock(securities_map[item["SECID"]], item, candles)
                 if tbank_token:
                     try:
-                        instrument = await _find_tbank_share_by_symbol(tbank_token, item["SECID"])
+                        instrument = await asyncio.wait_for(
+                            _find_tbank_share_by_symbol(tbank_token, item["SECID"]),
+                            timeout=STRATEGY_TBANK_LOOKUP_TIMEOUT_SECONDS,
+                        )
                         if instrument:
                             stock["figi"] = instrument.get("figi")
                             stock["lotSize"] = int(instrument.get("lot") or stock.get("lotSize") or 1)
@@ -1805,7 +1823,10 @@ async def _load_strategy_candidates(user_id: Any | None = None) -> list[dict[str
             except Exception:
                 return None
 
-        stock_candidates = await asyncio.gather(*[format_candidate(item) for item in liquid_marketdata])
+        stock_candidates = await asyncio.gather(*[
+            format_candidate(item)
+            for item in list(liquid_marketdata)[:STRATEGY_STOCK_CANDIDATES_LIMIT]
+        ], return_exceptions=True)
         candidates.extend([item for item in stock_candidates if item])
     except Exception:
         pass
