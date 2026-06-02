@@ -115,6 +115,9 @@ class TradeRequest(BaseModel):
     quantity: Decimal | None = Field(default=None, gt=0)
     lots: int | None = Field(default=None, gt=0)
     price: Decimal | None = Field(default=None, gt=0)
+    take_profit: Decimal | None = Field(default=None, gt=0)
+    stop_loss: Decimal | None = Field(default=None, gt=0)
+    protective_order_enabled: bool = False
     asset_name: str | None = Field(default=None, max_length=120)
     figi: str | None = Field(default=None, max_length=64)
 
@@ -760,6 +763,155 @@ async def _get_bybit_spot_rules(symbol: str) -> dict[str, Any]:
     return {}
 
 
+def _build_protective_plan(payload: TradeRequest, entry_price: Decimal) -> dict[str, Any] | None:
+    if not payload.protective_order_enabled:
+        return None
+
+    take_profit = payload.take_profit or Decimal("0")
+    stop_loss = payload.stop_loss or Decimal("0")
+
+    if take_profit <= 0 and stop_loss <= 0:
+        return None
+
+    if entry_price <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Нельзя рассчитать защитный план без актуальной цены входа.",
+        )
+
+    if payload.side == "buy":
+        if take_profit > 0 and take_profit <= entry_price:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Take Profit для покупки должен быть выше текущей цены.",
+            )
+
+        if stop_loss > 0 and stop_loss >= entry_price:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Stop Loss для покупки должен быть ниже текущей цены.",
+            )
+
+    if payload.side == "sell":
+        if take_profit > 0 and take_profit >= entry_price:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Take Profit для продажи должен быть ниже текущей цены.",
+            )
+
+        if stop_loss > 0 and stop_loss <= entry_price:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Stop Loss для продажи должен быть выше текущей цены.",
+            )
+
+    return {
+        "enabled": True,
+        "takeProfit": float(take_profit) if take_profit > 0 else None,
+        "stopLoss": float(stop_loss) if stop_loss > 0 else None,
+        "entryPrice": float(entry_price),
+    }
+
+
+async def _create_bybit_protective_orders(
+    wallet: Any,
+    symbol: str,
+    quantity: Decimal,
+    trade_price: Decimal,
+    payload: TradeRequest,
+) -> list[dict[str, Any]]:
+    plan = _build_protective_plan(payload, trade_price)
+
+    if not plan or payload.side != "buy" or quantity <= 0:
+        return []
+
+    provider_qty = _format_decimal_for_provider(quantity, 8)
+    orders: list[dict[str, Any]] = []
+
+    async def create_conditional(label: str, trigger_price: Decimal, trigger_direction: int) -> dict[str, Any]:
+        try:
+            order = await bybit_client.create_order(
+                wallet["api_key"],
+                wallet["api_secret_encrypted"],
+                symbol=symbol,
+                side="Sell",
+                qty=provider_qty,
+                order_type="Market",
+                extra_params={
+                    "triggerPrice": _format_decimal_for_provider(trigger_price, 8),
+                    "triggerDirection": trigger_direction,
+                    "triggerBy": "LastPrice",
+                    "orderFilter": "tpslOrder",
+                },
+            )
+
+            return {
+                "type": label,
+                "status": "created",
+                "triggerPrice": float(trigger_price),
+                "orderId": order.get("orderId"),
+            }
+        except UpstreamHTTPError as error:
+            logger.warning(
+                "Bybit protective %s order was not created for %s: %s",
+                label,
+                symbol,
+                error,
+            )
+
+            return {
+                "type": label,
+                "status": "failed",
+                "triggerPrice": float(trigger_price),
+                "message": error.ret_msg or str(error),
+                "code": error.ret_code,
+            }
+
+    if payload.take_profit and payload.take_profit > 0:
+        orders.append(await create_conditional("take_profit", payload.take_profit, 1))
+
+    if payload.stop_loss and payload.stop_loss > 0:
+        orders.append(await create_conditional("stop_loss", payload.stop_loss, 2))
+
+    return orders
+
+
+def _merge_wallet_assets_by_identity(assets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged_assets: dict[tuple[str, str], dict[str, Any]] = {}
+
+    for asset in assets:
+        if not isinstance(asset, dict):
+            continue
+
+        asset_type = str(asset.get("type") or asset.get("assetType") or "").lower()
+        symbol = str(asset.get("symbol") or asset.get("shortName") or asset.get("figi") or "").upper()
+        figi = str(asset.get("figi") or "").upper()
+        identity = ("currency", symbol) if asset_type == "currency" and symbol in MONEY_ICON_URLS else (figi or symbol, asset_type)
+
+        if not identity[0]:
+            continue
+
+        existing = merged_assets.get(identity)
+        if not existing:
+            merged_assets[identity] = dict(asset)
+            continue
+
+        for numeric_key in ("quantity", "availableQuantity", "valueRub", "valueUsd", "changeRub", "changeUsd"):
+            existing[numeric_key] = _decimal_to_precise_float(
+                _decimal_from_string(existing.get(numeric_key)) + _decimal_from_string(asset.get(numeric_key)),
+                8 if numeric_key in {"quantity", "availableQuantity"} else 2,
+            )
+
+        existing["currentPriceRub"] = existing.get("currentPriceRub") or asset.get("currentPriceRub")
+        existing["currentPriceUsd"] = existing.get("currentPriceUsd") or asset.get("currentPriceUsd")
+        existing["iconUrl"] = existing.get("iconUrl") or asset.get("iconUrl")
+        existing["name"] = existing.get("name") or asset.get("name")
+        existing["shortName"] = existing.get("shortName") or asset.get("shortName")
+        existing["figi"] = existing.get("figi") or asset.get("figi")
+
+    return list(merged_assets.values())
+
+
 def _get_money_amount(items: list[dict[str, Any]], currency: str) -> Decimal:
     normalized_currency = currency.upper()
 
@@ -1080,6 +1232,8 @@ async def _execute_bybit_trade(payload: TradeRequest, current_user) -> dict[str,
             detail="Количество для заявки должно быть больше нуля.",
         )
 
+    protective_plan = _build_protective_plan(payload, trade_price)
+
     try:
         order = await bybit_client.create_order(
             wallet["api_key"],
@@ -1103,6 +1257,13 @@ async def _execute_bybit_trade(payload: TradeRequest, current_user) -> dict[str,
             detail=detail,
         ) from error
 
+    protective_orders = await _create_bybit_protective_orders(
+        wallet,
+        symbol,
+        quantity,
+        trade_price,
+        payload,
+    )
     history_recorded = await _safe_record_trade(
         current_user["id"],
         wallet["id"],
@@ -1128,6 +1289,8 @@ async def _execute_bybit_trade(payload: TradeRequest, current_user) -> dict[str,
         "currency": "USDT",
         "status": "completed",
         "historyRecorded": history_recorded,
+        "protectivePlan": protective_plan,
+        "protectiveOrders": protective_orders,
         "message": "Заявка отправлена на Bybit.",
     }
 
@@ -1213,6 +1376,7 @@ async def _execute_tbank_trade(payload: TradeRequest, current_user) -> dict[str,
         instrument["figi"],
         payload.price or Decimal("0"),
     )
+    protective_plan = _build_protective_plan(payload, trade_price)
     lot = int(instrument.get("lot") or 1)
     lots = payload.lots
 
@@ -1311,6 +1475,14 @@ async def _execute_tbank_trade(payload: TradeRequest, current_user) -> dict[str,
         "currency": "RUB",
         "status": "completed",
         "historyRecorded": history_recorded,
+        "protectivePlan": protective_plan,
+        "protectiveOrders": [
+            {
+                "type": "protective_plan",
+                "status": "planned",
+                "message": "Защитный план сохранен в сделке. Стоп-заявки Т-Банка подключаются отдельным API стоп-ордеров.",
+            }
+        ] if protective_plan else [],
         "message": "Заявка отправлена в Т-Банк.",
     }
 
@@ -1379,14 +1551,14 @@ async def _build_tbank_wallet_summary(row) -> dict[str, Any]:
     )
     cash_assets = await _load_tbank_cash_assets(row["api_key"], account_id)
     cash_symbols = {asset["symbol"] for asset in cash_assets}
-    assets = [
+    assets = _merge_wallet_assets_by_identity([
         *cash_assets,
         *[
             asset
             for asset in position_assets
             if asset["symbol"] not in cash_symbols
         ],
-    ]
+    ])
     assets.sort(
         key=lambda asset: Decimal(str(asset.get("valueRub") or "0")),
         reverse=True,

@@ -425,6 +425,43 @@ const getAssetRouteType = (asset) => {
   return "stock";
 };
 
+const mergePortfolioCurrencyAssets = (assets) => {
+  const merged = new Map();
+
+  assets.forEach((asset, index) => {
+    const symbol = normalizeDisplaySymbol(asset.symbol || asset.shortName || asset.coin || "").toUpperCase();
+    const type = String(asset.type || "").toLowerCase();
+    const provider = String(asset.provider || "").toLowerCase();
+    const shouldMerge = type === "currency" && symbol;
+    const key = shouldMerge
+      ? `${provider}:currency:${symbol}`
+      : `${provider}:${asset.walletId || ""}:${asset.figi || asset.id || asset.symbol || index}`;
+
+    if (!shouldMerge || !merged.has(key)) {
+      merged.set(key, { ...asset, symbol });
+      return;
+    }
+
+    const current = merged.get(key);
+    const nextQuantity = (Number(current.quantity) || 0) + (Number(asset.quantity) || 0);
+    const nextAvailableQuantity = (Number(current.availableQuantity) || 0) + (Number(asset.availableQuantity) || 0);
+    const nextValueRub = (Number(current.valueRub) || 0) + (Number(asset.valueRub) || 0);
+    const nextChangeRub = (Number(current.changeRub) || 0) + (Number(asset.changeRub) || 0);
+
+    merged.set(key, {
+      ...current,
+      quantity: nextQuantity,
+      availableQuantity: nextAvailableQuantity,
+      valueRub: nextValueRub,
+      changeRub: nextChangeRub,
+      changePercent: nextValueRub ? (nextChangeRub / Math.max(nextValueRub - nextChangeRub, 1)) * 100 : 0,
+      iconUrl: current.iconUrl || asset.iconUrl,
+    });
+  });
+
+  return Array.from(merged.values());
+};
+
 function SectionLoader({ height = 160, className = "" }) {
   return (
     <div className={`section_loader_shell ${className}`.trim()}>
@@ -698,13 +735,15 @@ export default function Dashboard() {
         .map((wallet) => wallet.provider)
     )
   );
-  const portfolioAssets = connectedWallets.flatMap((wallet) =>
-    (wallet.assets || []).map((asset) => ({
-      ...asset,
-      walletId: wallet.id,
-      provider: asset.provider || wallet.provider,
-      providerLabel: asset.providerLabel || wallet.providerLabel,
-    }))
+  const portfolioAssets = mergePortfolioCurrencyAssets(
+    connectedWallets.flatMap((wallet) =>
+      (wallet.assets || []).map((asset) => ({
+        ...asset,
+        walletId: wallet.id,
+        provider: asset.provider || wallet.provider,
+        providerLabel: asset.providerLabel || wallet.providerLabel,
+      }))
+    )
   );
   const activeTradeSourceFilter =
     tradeSourceFilter !== "all" && !connectedProviders.includes(tradeSourceFilter)

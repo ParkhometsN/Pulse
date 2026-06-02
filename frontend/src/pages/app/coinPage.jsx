@@ -1317,6 +1317,9 @@ export default function CoinPage() {
   const [isTradeDrawerOpen, setIsTradeDrawerOpen] = useState(false);
   const [tradeSide, setTradeSide] = useState("buy");
   const [tradeAmount, setTradeAmount] = useState("");
+  const [protectiveOrderEnabled, setProtectiveOrderEnabled] = useState(false);
+  const [takeProfitInput, setTakeProfitInput] = useState("");
+  const [stopLossInput, setStopLossInput] = useState("");
   const [assetNews, setAssetNews] = useState([]);
   const [isAssetNewsLoading, setIsAssetNewsLoading] = useState(false);
   const [assetNewsError, setAssetNewsError] = useState("");
@@ -1659,6 +1662,11 @@ export default function CoinPage() {
   const hasTradeWallet = Boolean(tradeWallet);
   const tradeAmountNumber = Number(String(tradeAmount).replace(",", "."));
   const normalizedTradeAmount = Number.isFinite(tradeAmountNumber) ? Math.max(tradeAmountNumber, 0) : 0;
+  const takeProfitNumber = Number(String(takeProfitInput).replace(",", "."));
+  const stopLossNumber = Number(String(stopLossInput).replace(",", "."));
+  const normalizedTakeProfit = Number.isFinite(takeProfitNumber) ? Math.max(takeProfitNumber, 0) : 0;
+  const normalizedStopLoss = Number.isFinite(stopLossNumber) ? Math.max(stopLossNumber, 0) : 0;
+  const isProtectivePlanActive = protectiveOrderEnabled && tradeSide === "buy" && !isCurrency;
   const stockLotSize = Math.max(Number(asset?.lotSize || asset?.lot || 1) || 1, 1);
   const stockLotValue = currentPrice * stockLotSize;
   const normalizedTradeLots = Math.floor(normalizedTradeAmount);
@@ -1734,8 +1742,30 @@ export default function CoinPage() {
       return "Количество больше позиции";
     }
 
+    if (isProtectivePlanActive) {
+      if (!normalizedTakeProfit && !normalizedStopLoss) {
+        return "Укажите Take Profit или Stop Loss";
+      }
+
+      if (normalizedTakeProfit > 0 && normalizedTakeProfit <= currentPrice) {
+        return "Take Profit должен быть выше текущей цены";
+      }
+
+      if (normalizedStopLoss > 0 && normalizedStopLoss >= currentPrice) {
+        return "Stop Loss должен быть ниже текущей цены";
+      }
+    }
+
     return "";
   })();
+  const protectiveProfitPercent = currentPrice > 0 && normalizedTakeProfit > 0
+    ? ((normalizedTakeProfit - currentPrice) / currentPrice) * 100
+    : 0;
+  const protectiveLossPercent = currentPrice > 0 && normalizedStopLoss > 0
+    ? ((normalizedStopLoss - currentPrice) / currentPrice) * 100
+    : 0;
+  const protectiveExpectedProfit = estimatedTradeQuantity * Math.max(normalizedTakeProfit - currentPrice, 0);
+  const protectiveExpectedRisk = estimatedTradeQuantity * Math.max(currentPrice - normalizedStopLoss, 0);
   const tradeAvailabilityHint = (() => {
     if (!hasTradeWallet || isPortfolioLoading || tradeAmountError) {
       return "";
@@ -1933,6 +1963,12 @@ export default function CoinPage() {
       });
   }, [asset, figiParam, hasTradeWallet, isStock, symbol]);
 
+  const resetProtectivePlan = useCallback(() => {
+    setProtectiveOrderEnabled(false);
+    setTakeProfitInput("");
+    setStopLossInput("");
+  }, []);
+
   const setTradeAmountPercent = useCallback((percent) => {
     const nextAmount = maxTradeAmount * percent;
 
@@ -1979,6 +2015,18 @@ export default function CoinPage() {
       asset_name: String(assetName || shortName || normalizedSymbol).slice(0, 120),
     };
 
+    if (isProtectivePlanActive) {
+      tradePayload.protective_order_enabled = true;
+
+      if (normalizedTakeProfit > 0) {
+        tradePayload.take_profit = normalizedTakeProfit;
+      }
+
+      if (normalizedStopLoss > 0) {
+        tradePayload.stop_loss = normalizedStopLoss;
+      }
+    }
+
 	    if (isStock) {
 	      const figi = String(asset.figi || figiParam || "").trim();
 
@@ -1996,21 +2044,29 @@ export default function CoinPage() {
           : Number.isFinite(quantity)
           ? `${formatNumber(quantity, 8)} ${baseCurrency}`
           : baseCurrency;
+        const protectiveOrders = response.data?.protectiveOrders || [];
+        const createdProtectiveOrders = protectiveOrders.filter((item) => item.status === "created");
+        const protectiveText = isProtectivePlanActive
+          ? createdProtectiveOrders.length > 0
+            ? ` Защитные заявки: ${createdProtectiveOrders.length}.`
+            : " Защитный план сохранен, условные заявки не подтверждены брокером."
+          : "";
 
         setTradeState({
           isSubmitting: false,
-          message: `${response.data?.message || "Заявка отправлена."} Количество: ${quantityText}`,
+          message: `${response.data?.message || "Заявка отправлена."} Количество: ${quantityText}${protectiveText}`,
           error: "",
         });
         setTradeSuccessAlert({
           title: tradeSide === "buy" ? "Покупка отправлена" : "Продажа отправлена",
-          text: `${response.data?.message || "Заявка отправлена."} ${quantityText}`,
+          text: `${response.data?.message || "Заявка отправлена."} ${quantityText}${protectiveText}`,
         });
         setIsTradeDrawerOpen(false);
         setActiveButton("Депозиты");
         setTradeAmount("");
+        resetProtectivePlan();
         fetchAsset(endpoint);
-	        fetchPortfolioSummary({ forceRefresh: true });
+		        fetchPortfolioSummary({ forceRefresh: true });
         loadAssetTradeMarkers();
       })
       .catch((error) => {
@@ -2031,9 +2087,13 @@ export default function CoinPage() {
 	    fetchPortfolioSummary,
 	    figiParam,
     isStock,
+    isProtectivePlanActive,
     loadAssetTradeMarkers,
     normalizedTradeAmount,
+    normalizedStopLoss,
+    normalizedTakeProfit,
     normalizedTradeLots,
+    resetProtectivePlan,
     shortName,
     symbol,
     tradeAmountError,
@@ -2334,6 +2394,27 @@ export default function CoinPage() {
     HOLD: "Держать",
     NO_TRADE: "Не входить",
   }[aiDecisionAction] || "Не входить";
+  const applyAiProtectivePlan = useCallback(() => {
+    if (currentPrice <= 0) {
+      return;
+    }
+
+    const aiTakeProfit = Number(aiDecision?.take_profit ?? aiDecision?.takeProfit);
+    const aiStopLoss = Number(aiDecision?.stop_loss ?? aiDecision?.stopLoss);
+    const fallbackTakeProfit = currentPrice * 1.02;
+    const fallbackStopLoss = currentPrice * 0.988;
+    const nextTakeProfit = Number.isFinite(aiTakeProfit) && aiTakeProfit > currentPrice
+      ? aiTakeProfit
+      : fallbackTakeProfit;
+    const nextStopLoss = Number.isFinite(aiStopLoss) && aiStopLoss < currentPrice
+      ? aiStopLoss
+      : fallbackStopLoss;
+
+    setProtectiveOrderEnabled(true);
+    setTakeProfitInput(formatTradeInputValue(nextTakeProfit, getPriceDecimals(nextTakeProfit)));
+    setStopLossInput(formatTradeInputValue(nextStopLoss, getPriceDecimals(nextStopLoss)));
+    setTradeState({ isSubmitting: false, message: "", error: "" });
+  }, [aiDecision, currentPrice]);
   const forecastTargetPrice = Number(aiScore?.targetPrice) > 0
     ? Number(aiScore.targetPrice)
     : currentPrice;
@@ -2532,12 +2613,13 @@ export default function CoinPage() {
                 </div>
                 <Buttons
                   type="primary-danger"
-                  onClick={() => {
-                    setTradeSide("sell");
-                    setTradeAmount("");
-                    setTradeState({ isSubmitting: false, message: "", error: "" });
-                    setIsTradeDrawerOpen(true);
-                  }}
+	                  onClick={() => {
+	                    setTradeSide("sell");
+	                    setTradeAmount("");
+	                    resetProtectivePlan();
+	                    setTradeState({ isSubmitting: false, message: "", error: "" });
+	                    setIsTradeDrawerOpen(true);
+	                  }}
                 >
                   Продать
                 </Buttons>
@@ -2627,9 +2709,10 @@ export default function CoinPage() {
     positionAsset,
     price,
     quoteCurrency,
-    rangeStatsText,
-    seenNewsIds,
-    shortName,
+	    rangeStatsText,
+    resetProtectivePlan,
+	    seenNewsIds,
+	    shortName,
   ]);
 
   useEffect(() => {
@@ -2914,7 +2997,16 @@ export default function CoinPage() {
 
                       
 	                      {!isCurrency ? (
-	                      <Drawer open={isTradeDrawerOpen} onOpenChange={setIsTradeDrawerOpen}>
+		                      <Drawer
+                            open={isTradeDrawerOpen}
+                            onOpenChange={(open) => {
+                              setIsTradeDrawerOpen(open);
+
+                              if (!open) {
+                                resetProtectivePlan();
+                              }
+                            }}
+                          >
                         <div className="ContwainerBagsAdd">
                           <DrawerTrigger asChild>
                           <Buttons type='primary-buy' >
@@ -2974,10 +3066,11 @@ export default function CoinPage() {
                                 <button
                                   type="button"
                                   className={tradeSide === "sell" ? "active" : ""}
-                                  onClick={() => {
-                                    setTradeSide("sell");
-                                    setTradeState({ isSubmitting: false, message: "", error: "" });
-                                  }}
+	                                  onClick={() => {
+	                                    setTradeSide("sell");
+                                      resetProtectivePlan();
+	                                    setTradeState({ isSubmitting: false, message: "", error: "" });
+	                                  }}
                                   aria-pressed={tradeSide === "sell"}
                                 >
                                   Продать
@@ -3025,6 +3118,87 @@ export default function CoinPage() {
                                   </button>
                                 ))}
                               </div>
+
+                              {tradeSide === "buy" ? (
+                                <div className={`trade_protective_plan ${protectiveOrderEnabled ? "trade_protective_plan_active" : ""}`}>
+                                  <div className="trade_protective_plan_header">
+                                    <div>
+                                      <span>Защитный план</span>
+                                      <p>Take Profit и Stop Loss после входа</p>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      className={protectiveOrderEnabled ? "trade_toggle trade_toggle_active" : "trade_toggle"}
+                                      onClick={() => {
+                                        if (protectiveOrderEnabled) {
+                                          setProtectiveOrderEnabled(false);
+                                          setTakeProfitInput("");
+                                          setStopLossInput("");
+                                        } else {
+                                          applyAiProtectivePlan();
+                                        }
+
+                                        setTradeState({ isSubmitting: false, message: "", error: "" });
+                                      }}
+                                      aria-pressed={protectiveOrderEnabled}
+                                    >
+                                      {protectiveOrderEnabled ? "Включен" : "Выключен"}
+                                    </button>
+                                  </div>
+
+                                  {protectiveOrderEnabled ? (
+                                    <>
+                                      <div className="trade_protective_inputs">
+                                        <label className="trade_input_label">
+                                          <span>Take Profit</span>
+                                          <input
+                                            type="text"
+                                            inputMode="decimal"
+                                            value={takeProfitInput}
+                                            onChange={(event) => {
+                                              setTakeProfitInput(event.target.value);
+                                              setTradeState({ isSubmitting: false, message: "", error: "" });
+                                            }}
+                                            placeholder={formatTradeInputValue(currentPrice * 1.02, getPriceDecimals(currentPrice * 1.02))}
+                                          />
+                                        </label>
+                                        <label className="trade_input_label">
+                                          <span>Stop Loss</span>
+                                          <input
+                                            type="text"
+                                            inputMode="decimal"
+                                            value={stopLossInput}
+                                            onChange={(event) => {
+                                              setStopLossInput(event.target.value);
+                                              setTradeState({ isSubmitting: false, message: "", error: "" });
+                                            }}
+                                            placeholder={formatTradeInputValue(currentPrice * 0.988, getPriceDecimals(currentPrice * 0.988))}
+                                          />
+                                        </label>
+                                      </div>
+
+                                      <div className="trade_protective_stats">
+                                        <div>
+                                          <span>Потенциальная прибыль</span>
+                                          <strong>{formatSignedMoney(protectiveExpectedProfit, currencySymbol)} ({formatPercent(protectiveProfitPercent)})</strong>
+                                        </div>
+                                        <div>
+                                          <span>Риск до стопа</span>
+                                          <strong>{formatSignedMoney(-protectiveExpectedRisk, currencySymbol)} ({formatPercent(protectiveLossPercent)})</strong>
+                                        </div>
+                                      </div>
+
+                                      <p className="trade_hint">
+                                        Для Bybit после покупки Pulse попробует выставить условные заявки продажи. Для акций план фиксируется в сделке, стоп-заявки Т-Банка подключаются отдельным API.
+                                      </p>
+                                    </>
+                                  ) : (
+                                    <button type="button" className="trade_ai_plan_button" onClick={applyAiProtectivePlan}>
+                                      Заполнить по AI-плану
+                                    </button>
+                                  )}
+                                </div>
+                              ) : null}
 
                               <div className="trade_result_card">
                                 {!isStock ? (

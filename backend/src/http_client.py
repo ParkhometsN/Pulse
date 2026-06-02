@@ -283,6 +283,7 @@ class BybitHTTPClient:
         category: str = "spot",
         order_type: str = "Market",
         market_unit: str | None = None,
+        extra_params: dict | None = None,
     ):
         payload = {
             "category": category,
@@ -294,6 +295,9 @@ class BybitHTTPClient:
 
         if market_unit:
             payload["marketUnit"] = market_unit
+
+        if extra_params:
+            payload.update(extra_params)
 
         return await self._signed_post(
             "/v5/order/create",
