@@ -392,12 +392,17 @@ grid-template-columns: repeat(1, 1fr);
     width: 100%;
     max-width: none;
     height: 100%;
+    min-height: 100dvh;
     border: 2px solid var(--black-t);
     border-radius: 0;
     background: var(--black);
     box-shadow: 0 0 90px rgba(0, 0, 0, 0.52);
     overflow-y: auto;
     padding: 12px 14px 18px;
+    padding-left: max(14px, env(safe-area-inset-left));
+    padding-right: max(14px, env(safe-area-inset-right));
+    padding-bottom: max(18px, env(safe-area-inset-bottom));
+    overscroll-behavior: contain;
     transform: translateY(26px) scale(0.985);
     opacity: 0;
     transition: transform 0.26s cubic-bezier(.22, .61, .36, 1), opacity 0.22s ease;
@@ -487,6 +492,7 @@ grid-template-columns: repeat(1, 1fr);
     position: absolute;
     z-index: 2;
     min-width: 170px;
+    max-width: min(260px, calc(100vw - 32px));
     transform: translate(14px, -50%);
     border: 1.5px solid var(--black-t);
     border-radius: 14px;
@@ -1576,6 +1582,10 @@ padding-right: 70px;
 }
 .strategy_drawer {
     width: 100%;
+    padding: 10px;
+    padding-left: max(10px, env(safe-area-inset-left));
+    padding-right: max(10px, env(safe-area-inset-right));
+    padding-bottom: max(14px, env(safe-area-inset-bottom));
 }
 .strategy_drawer_hero {
     height: 210px;
@@ -1604,8 +1614,24 @@ padding-right: 70px;
 }
 @media screen and (max-width: 574px) {
 .marketcard_container {
-    flex-basis: 290px;
-    width: 290px;
+    flex-basis: min(290px, calc(100vw - 40px));
+    width: min(290px, calc(100vw - 40px));
+}
+.cardmarketblocklist_strategies .marketcard_container {
+    flex-basis: auto;
+    width: 100%;
+}
+.strategy_drawer_hero {
+    height: clamp(158px, 44vw, 190px);
+    min-height: clamp(158px, 44vw, 190px);
+}
+.strategy_capital_chart {
+    min-height: 150px;
+    padding: 8px;
+}
+.strategy_capital_tooltip {
+    min-width: 144px;
+    padding: 8px;
 }
 .strategy_stats_grid {
     grid-template-columns: 1fr;
@@ -1617,6 +1643,14 @@ padding-right: 70px;
 .strategy_history_prices {
     align-items: flex-start;
     text-align: left;
+    width: 100%;
+}
+.strategy_history_result {
+    align-items: flex-start;
+    white-space: normal;
+}
+.strategy_history_execution {
+    max-width: 100%;
 }
 .strategy_connect_actions {
     grid-template-columns: 1fr;

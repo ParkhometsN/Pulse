@@ -189,6 +189,40 @@ html{
 .border_blue{
   border: 1px solid var(--primary-blue) !important;
 }
+
+@media (hover: none) and (pointer: coarse) {
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .button:hover:not(:disabled),
+  .market_search_result:hover,
+  .strategy_history_item:hover:not(:disabled),
+  .strategy_reset_history_button:hover:not(:disabled),
+  .news_text_toggle:hover,
+  .websiteLink:hover,
+  .linkItem:hover,
+  .containerbutton:hover,
+  .containerbuttonbusell:hover,
+  .trade_quick_amounts button:hover:not(:disabled),
+  .strategy_trade_quick_amounts button:hover,
+  .strategy_connect_chips button:hover,
+  .strategy_drawer_close:hover {
+    transform: none !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
 .content_settingsss,
 .content_settings{
   padding: 20px;
@@ -341,7 +375,6 @@ html{
 }
 .rounded-full {
     border-radius: 9999px;
-    color: red;
 }
 .shure_conteuner{
   z-index: 999999;

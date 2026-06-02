@@ -4,7 +4,7 @@ import LoaderAnimation from "../components/ui/loaderAnimation";
 import CoinIcon from "../components/ui/coinIcon";
 import api from "../lib/api";
 import { readCachedValue, writeCachedValue } from "../lib/clientCache";
-import { clearAuthSession, getAccessToken, saveStoredUser } from "../lib/auth";
+import { clearAuthSession } from "../lib/auth";
 import { useCallback, useEffect, useState } from "react";
 import AreYouShure from "../components/ui/DilogShure";
 
@@ -18,7 +18,6 @@ export default function AppLayout() {
     );
     const [isCurrenciesLoading, setIsCurrenciesLoading] = useState(currencies.length === 0);
     const [alertDilog, setalertdilog] = useState(false)
-    const [isAuthChecking, setIsAuthChecking] = useState(true);
     const navigation = useNavigate();
 
 
@@ -75,38 +74,6 @@ export default function AppLayout() {
     }, [normalizeCurrency]);
 
     useEffect(() => {
-      if (!getAccessToken()) {
-        clearAuthSession();
-        navigation('/login', { replace: true });
-        return;
-      }
-
-      let isMounted = true;
-
-      api.get('/auth/me')
-        .then((response) => {
-          if (!isMounted) {
-            return;
-          }
-
-          saveStoredUser(response.data.user);
-          setIsAuthChecking(false);
-        })
-        .catch(() => {
-          if (!isMounted) {
-            return;
-          }
-
-          clearAuthSession();
-          navigation('/login', { replace: true });
-        });
-
-      return () => {
-        isMounted = false;
-      };
-    }, [navigation]);
-
-    useEffect(() => {
       let controller = new AbortController();
 
       const refreshCurrencies = () => {
@@ -128,14 +95,6 @@ export default function AppLayout() {
         window.clearInterval(refreshInterval);
       };
     }, [fetchCurrency]);
-
-  if (isAuthChecking) {
-    return (
-      <div className="route_auth_check">
-        <LoaderAnimation className="route_auth_loader" variant="spinner" label="Проверяем сессию" />
-      </div>
-    );
-  }
 
   return (
     <div className="MainAppScreen">

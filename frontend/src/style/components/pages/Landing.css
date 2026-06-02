@@ -2,6 +2,7 @@
   position: relative;
   width: 100%;
   height: 100vh;
+  height: 100dvh;
   --color: var(--black-t);
   background-color: var(--black);
   background-image: linear-gradient(0deg, transparent 24.6667%, var(--color) 25%, var(--color) 25.3333%, transparent 25.6666%,
@@ -52,6 +53,7 @@
   align-items: center;
   width: 100%;
   height: 100vh;
+  height: 100dvh;
 }
 
 .hero_content img {

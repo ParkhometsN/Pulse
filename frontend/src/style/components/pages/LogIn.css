@@ -5,6 +5,7 @@ position: relative;
   width: 100%;
     padding: 20px;
   height: 100vh;
+  height: 100dvh;
   --color: var(--black-t);
   background-color: var(--black);
   background-image: linear-gradient(0deg, transparent 24.6667%, var(--color) 25%, var(--color) 25.3333%, transparent 25.6666%,
@@ -80,6 +81,7 @@ font-size: 23px;
   align-items: center;
   width: 60%;
   height: 100vh;
+  height: 100dvh;
 }
 
 .hero_content_login img{

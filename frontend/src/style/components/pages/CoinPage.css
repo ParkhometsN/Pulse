@@ -239,7 +239,8 @@
   visibility: hidden;
   position: absolute;
   z-index: 5;
-  min-width: 390px;
+  width: min(390px, calc(100vw - 32px));
+  min-width: 0;
   padding: 10px 12px;
   border-radius: 12px;
   border: 2px solid var(--black-t);
@@ -795,12 +796,13 @@
 .trade_drawer_panel {
     width: min(100%, 800px);
     margin: 0 auto;
-    max-height: 720px;       /* или max-height: 400px */
+    max-height: min(720px, calc(100dvh - 24px));
     display: flex;
     flex-direction: column;
     align-items: stretch;
-    overflow-y: auto;       /* или scroll — появится, если контент выше */
-    overflow-x: auto;
+    overflow-y: auto;
+    overflow-x: hidden;
+    overscroll-behavior: contain;
 }
 
 .trade_drawer_header{
@@ -1059,6 +1061,7 @@
     margin-top: 6px;
     color: white;
     font-size: 13px;
+    overflow-wrap: anywhere;
 }
 
 .trade_error,
@@ -1742,7 +1745,20 @@
 
 }
 
+@media (hover: none) and (pointer: coarse) {
+    .HoverTootlip:hover .asset_chart_tooltipSVG {
+        visibility: hidden;
+    }
+}
+
 @media screen and (max-width: 574px){
+.asset_chart_tooltipSVG{
+    right: auto;
+    left: 50%;
+    top: calc(100% + 10px);
+    transform: translateX(-50%);
+}
+
 .moodCoim{
     display: flex ;
     gap: 10px;
@@ -2001,8 +2017,29 @@ flex-direction: row;
 }
 
 .trade_balance_grid,
-.trade_result_card{
+.trade_result_card,
+.trade_protective_inputs,
+.trade_protective_stats{
     grid-template-columns: 1fr;
+}
+
+.trade_drawer{
+    padding-inline: 8px;
+}
+
+.trade_drawer_panel{
+    width: 100%;
+    max-height: calc(100dvh - 16px);
+}
+
+.trade_protective_plan_header{
+    align-items: flex-start;
+    flex-direction: column;
+}
+
+.trade_toggle,
+.trade_ai_plan_button{
+    width: 100%;
 }
 
 .coin_deposit_position_card{

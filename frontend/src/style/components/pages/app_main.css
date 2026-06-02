@@ -23,6 +23,7 @@
      display: flex;           /* Добавить */
     flex-direction: column;  /* Добавить */
     height: 100vh;           /* Добавить или оставить */
+    height: 100dvh;
     overflow: hidden; 
 }
 .persent_money{
@@ -31,6 +32,7 @@
 .MainAppScreen{
     display: flex;
     height: 100vh;
+    height: 100dvh;
     width: 100%;
 }
 
@@ -53,7 +55,7 @@
     flex-direction: column ;
 }
 .usV{
-    min-width: 870px;
+    min-width: min(870px, 100%);
 }
 @keyframes appPageIn {
     from {
