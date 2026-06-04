@@ -69,6 +69,23 @@ class AITradingBrainTest(unittest.TestCase):
 
         self.assertGreater(long_bull, long_bear)
 
+    def test_external_technical_rating_affects_probability(self):
+        positive_features = build_market_features({
+            **sample_asset("up"),
+            "tradingViewTechnicalScore": 0.75,
+            "tradingViewSignal": "strong_buy",
+        })
+        negative_features = build_market_features({
+            **sample_asset("up"),
+            "tradingViewTechnicalScore": -0.75,
+            "tradingViewSignal": "strong_sell",
+        })
+
+        positive_probability = calculate_probability_tp_before_sl(positive_features, StrategyType.LONG)
+        negative_probability = calculate_probability_tp_before_sl(negative_features, StrategyType.LONG)
+
+        self.assertGreater(positive_probability, negative_probability)
+
     def test_risk_manager_blocks_bad_spread(self):
         features = build_market_features(sample_asset(spread=1.2))
         decision = select_strategy_decision(features, AITradingConfig(), StrategyType.LONG)

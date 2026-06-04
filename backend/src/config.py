@@ -52,7 +52,7 @@ class Settings(BaseSettings):
     min_liquidity_score: float = 0.45
     max_risk_per_trade_percent: float = 1.0
     max_daily_drawdown_percent: float = 3.0
-    max_open_positions: int = 4
+    max_open_positions: int = 6
     dca_enabled: bool = False
     max_dca_count: int = 1
     dca_require_positive_ev: bool = True

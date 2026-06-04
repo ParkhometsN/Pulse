@@ -20,7 +20,7 @@ const STRATEGY_USDT_RUB_RATE = 92;
 const FAVORITES_STORAGE_KEY = "pulse_market_favorites";
 const MARKET_CACHE_MAX_AGE = 1000 * 60 * 5;
 const STRATEGY_CACHE_KEY = "pulse:market:strategies:v2";
-const STRATEGY_CACHE_MAX_AGE = 1000 * 60 * 15;
+const STRATEGY_CACHE_MAX_AGE = 1000 * 30;
 const marketCacheKey = (type, page, source = "default") => `pulse:market:${type}:${source}:page:${page}:v6`;
 const STABLE_CRYPTO_SYMBOLS = new Set(["USDT", "USDC", "DAI", "USD", "BUSD"]);
 const STOCK_SOURCE_TBANK = "tbank";
@@ -138,6 +138,29 @@ const getStrategyCapitalRub = (value, currency = "RUB") => {
 };
 
 const formatSignedStrategyMoney = (value) => `${value >= 0 ? "+" : ""}${formatStrategyMoney(value)}`;
+const STRATEGY_COURAGE_OPTIONS = [
+  {
+    value: "careful",
+    label: "Осторожная",
+    percent: 35,
+    description: "Меньше сделок, ниже экспозиция, больше защиты.",
+  },
+  {
+    value: "balanced",
+    label: "Рабочая",
+    percent: 65,
+    description: "Баланс между смелостью и фильтрами риска.",
+  },
+  {
+    value: "active",
+    label: "Смелая",
+    percent: 90,
+    description: "Больше капитала в рынке, но с теми же EV/Risk стопорами.",
+  },
+];
+const getStrategyCourage = (value) => (
+  STRATEGY_COURAGE_OPTIONS.find((item) => item.value === value) || STRATEGY_COURAGE_OPTIONS[1]
+);
 
 const getStrategyCapital = (strategy) => {
   const backendInitial = Number(strategy.startCapital ?? strategy.paperRun?.startCapital);
@@ -253,6 +276,33 @@ const formatStrategyDateTime = (value) => {
     month: "short",
     hour: "2-digit",
     minute: "2-digit",
+  });
+};
+
+const formatStrategyTickLabel = (timestamp, spanMs) => {
+  const date = new Date(timestamp);
+
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  if (spanMs <= 36 * 60 * 60 * 1000) {
+    return date.toLocaleTimeString("ru-RU", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  }
+
+  if (spanMs <= 92 * 24 * 60 * 60 * 1000) {
+    return date.toLocaleDateString("ru-RU", {
+      day: "numeric",
+      month: "short",
+    });
+  }
+
+  return date.toLocaleDateString("ru-RU", {
+    month: "short",
+    year: "2-digit",
   });
 };
 
@@ -553,6 +603,15 @@ const mergeStrategyRun = (baseStrategy, run) => {
 
   const roi = Number(run.roi ?? getChartRoi(run.chart));
   const decisionMetrics = run.decisionMetrics || {};
+  const openExposure = Number(run.openExposure ?? trades
+    .filter((trade) => trade.status !== "closed")
+    .reduce((sum, trade) => sum + Number(trade.virtualAmount || 0), 0));
+  const deploymentPercent = Number(run.capitalDeploymentPercent ?? (
+    Number(run.startCapital) > 0 ? (openExposure / Number(run.startCapital)) * 100 : 0
+  ));
+  const recoveryState = run.recoveryState || {};
+  const boldness = Number(run.boldness ?? run.riskSettings?.boldness ?? 65);
+  const effectiveBoldness = Number(run.effectiveBoldness ?? recoveryState.effectiveBoldness ?? boldness);
 
   return {
     ...baseStrategy,
@@ -570,6 +629,9 @@ const mergeStrategyRun = (baseStrategy, run) => {
       { label: "Решений AI", value: String(decisionMetrics.decisionsCount ?? 0) },
       { label: "NO_TRADE", value: String(decisionMetrics.noTradeCount ?? 0) },
       { label: "Средний EV", value: `${formatNumberLike(decisionMetrics.avgExpectedValue ?? 0)}%` },
+      { label: "Смелость", value: `${formatNumberLike(effectiveBoldness)}%` },
+      { label: "Режим", value: recoveryState.label || "Рабочий режим" },
+      { label: "В рынке", value: `${formatStrategyMoney(openExposure)} · ${formatNumberLike(deploymentPercent)}%` },
       { label: "Сделок сегодня", value: String(run.totalTradesCount ?? trades.length) },
       { label: "Закрытых сделок", value: String(run.closedTradesCount ?? trades.filter((trade) => trade.status === "closed").length) },
       { label: "Точность закрытых", value: `${formatNumberLike(run.accuracy)}%` },
@@ -579,6 +641,9 @@ const mergeStrategyRun = (baseStrategy, run) => {
     memory: Array.isArray(run.memory) ? run.memory : [],
     errorLog: Array.isArray(run.errorLog) ? run.errorLog : [],
     decisionMetrics,
+    recoveryState,
+    boldness,
+    effectiveBoldness,
     connection: run.connection || null,
     margin: run.margin || null,
     capitalCurrency: run.capitalCurrency || run.connection?.capitalCurrency || "RUB",
@@ -676,7 +741,17 @@ function StrategyCapitalChart({ strategy, color }) {
       value: Number(point.value),
       date: point.time ? new Date(point.time) : null,
     }))
-    .filter((point) => Number.isFinite(point.value));
+    .filter((point) => Number.isFinite(point.value))
+    .sort((left, right) => {
+      const leftTime = left.date?.getTime();
+      const rightTime = right.date?.getTime();
+
+      if (Number.isFinite(leftTime) && Number.isFinite(rightTime)) {
+        return leftTime - rightTime;
+      }
+
+      return 0;
+    });
   const width = 900;
   const height = 230;
   const padding = { top: 18, right: 118, bottom: 34, left: 18 };
@@ -698,8 +773,19 @@ function StrategyCapitalChart({ strategy, color }) {
   const visualMin = minValue - range * 0.12;
   const visualMax = maxValue + range * 0.12;
   const visualRange = visualMax - visualMin || 1;
+  const timeValues = chartPoints
+    .map((point) => point.date?.getTime())
+    .filter((value) => Number.isFinite(value));
+  const minTime = timeValues.length ? Math.min(...timeValues) : 0;
+  const maxTime = timeValues.length ? Math.max(...timeValues) : 0;
+  const timeSpan = maxTime - minTime;
+  const hasTimeScale = timeValues.length >= 2 && timeSpan > 0;
   const points = chartPoints.map((point, index) => {
-    const x = padding.left + (index / Math.max(chartPoints.length - 1, 1)) * chartWidth;
+    const pointTime = point.date?.getTime();
+    const progress = hasTimeScale && Number.isFinite(pointTime)
+      ? (pointTime - minTime) / timeSpan
+      : index / Math.max(chartPoints.length - 1, 1);
+    const x = padding.left + progress * chartWidth;
     const y = padding.top + (1 - ((point.value - visualMin) / visualRange)) * chartHeight;
 
     return { ...point, x, y };
@@ -711,6 +797,23 @@ function StrategyCapitalChart({ strategy, color }) {
   const gridValues = [visualMax, visualMax - visualRange * 0.33, visualMax - visualRange * 0.66, visualMin];
   const lastPoint = points[points.length - 1] || { x: padding.left, y: padding.top, value: 0 };
   const tooltipGoesLeft = hoveredPoint ? hoveredPoint.cursorX > hoveredPoint.chartWidth - 220 : false;
+  const tickCount = hasTimeScale ? (timeSpan <= 36 * 60 * 60 * 1000 ? 5 : 4) : 2;
+  const timeTicks = hasTimeScale
+    ? Array.from({ length: tickCount }, (_, index) => {
+      const tickTime = minTime + (timeSpan * index) / Math.max(tickCount - 1, 1);
+      return {
+        time: tickTime,
+        x: padding.left + ((tickTime - minTime) / timeSpan) * chartWidth,
+        label: formatStrategyTickLabel(tickTime, timeSpan),
+      };
+    })
+    : points
+      .filter((_, index) => index === 0 || index === points.length - 1)
+      .map((point) => ({
+        time: point.date?.getTime(),
+        x: point.x,
+        label: formatStrategyDateTime(point.time).replace(",", ""),
+      }));
 
   const handlePointerMove = (event) => {
     const svgRect = event.currentTarget.getBoundingClientRect();
@@ -723,11 +826,13 @@ function StrategyCapitalChart({ strategy, color }) {
     const rawX = ((event.clientX - svgRect.left - offsetX) / renderedWidth) * width;
     const rawY = ((event.clientY - svgRect.top - offsetY) / renderedHeight) * height;
     const x = Math.min(Math.max(rawX, 0), width);
-    const cursorX = Math.min(Math.max(event.clientX - chartRect.left, 10), Math.max(chartRect.width - 10, 10));
-    const cursorY = Math.min(Math.max(event.clientY - chartRect.top, 24), Math.max(chartRect.height - 24, 24));
     const nearestPoint = points.reduce((nearest, point) => (
       Math.abs(point.x - x) < Math.abs(nearest.x - x) ? point : nearest
     ), points[0]);
+    const renderedPointX = svgRect.left - chartRect.left + offsetX + (nearestPoint.x / width) * renderedWidth;
+    const renderedPointY = svgRect.top - chartRect.top + offsetY + (nearestPoint.y / height) * renderedHeight;
+    const cursorX = Math.min(Math.max(renderedPointX, 10), Math.max(chartRect.width - 10, 10));
+    const cursorY = Math.min(Math.max(renderedPointY, 24), Math.max(chartRect.height - 24, 24));
 
     setHoveredPoint({
       ...nearestPoint,
@@ -773,27 +878,27 @@ function StrategyCapitalChart({ strategy, color }) {
           d={linePath}
           fill="none"
           stroke={color}
-          strokeWidth="3"
+          strokeWidth="2.15"
           strokeLinecap="round"
           strokeLinejoin="round"
           className="strategy_capital_line"
         />
-        <circle cx={lastPoint.x} cy={lastPoint.y} r="5" fill={color} stroke="white" strokeWidth="2" />
+        <circle cx={lastPoint.x} cy={lastPoint.y} r="4" fill={color} stroke="white" strokeWidth="1.8" />
         {hoveredPoint ? (
           <>
             <line x1={hoveredPoint.x} x2={hoveredPoint.x} y1={padding.top} y2={height - padding.bottom} className="strategy_capital_hover" />
-            <circle cx={hoveredPoint.x} cy={hoveredPoint.y} r="5" fill={color} stroke="white" strokeWidth="2" />
+            <circle cx={hoveredPoint.x} cy={hoveredPoint.y} r="4" fill={color} stroke="white" strokeWidth="1.8" />
           </>
         ) : null}
-        {points.map((point, index) => (
+        {timeTicks.map((tick, index) => (
           <text
-            key={`strategy-date-${point.time || index}`}
-            x={point.x}
+            key={`strategy-date-${tick.time || index}`}
+            x={tick.x}
             y={height - 10}
-            textAnchor={index === 0 ? "start" : index === points.length - 1 ? "end" : "middle"}
+            textAnchor={index === 0 ? "start" : index === timeTicks.length - 1 ? "end" : "middle"}
             className="strategy_capital_axis"
           >
-            {index === 0 || index === points.length - 1 ? formatStrategyDateTime(point.time).replace(",", "") : ""}
+            {tick.label}
           </text>
         ))}
       </svg>
@@ -842,6 +947,7 @@ function StrategyConnectPanel({
     linear_cross: "Фьючерсы Cross",
     linear_isolated: "Фьючерсы Isolated",
   };
+  const courage = getStrategyCourage(form.risk);
 
   return (
     <div className="strategy_connect_panel">
@@ -928,6 +1034,26 @@ function StrategyConnectPanel({
         ))}
       </div>
 
+      <div className="strategy_connect_field">
+        <div className="strategy_connect_field_header">
+          <span>Степень смелости</span>
+          <strong>{courage.percent}%</strong>
+        </div>
+        <div className="strategy_connect_chips">
+          {STRATEGY_COURAGE_OPTIONS.map((item) => (
+            <button
+              key={item.value}
+              type="button"
+              className={form.risk === item.value ? "active" : ""}
+              onClick={() => onChange({ risk: item.value })}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+        <p>{courage.description} Если стратегия уйдет в минус, она автоматически снизит эффективную смелость и пересоберет входы.</p>
+      </div>
+
       <div className="strategy_trade_result_card">
         <div>
           <span>Стратегия</span>
@@ -940,6 +1066,10 @@ function StrategyConnectPanel({
         <div>
           <span>Рынок</span>
           <strong>{universeLabels[form.universe]}</strong>
+        </div>
+        <div>
+          <span>Смелость</span>
+          <strong>{courage.label} · {courage.percent}%</strong>
         </div>
         <div>
           <span>Маржа</span>
@@ -1661,7 +1791,7 @@ export default function Market() {
 	  ]);
 
 	  const applyStrategyRuns = useCallback((nextRuns) => {
-      if (!Array.isArray(nextRuns) || nextRuns.length === 0) {
+      if (!Array.isArray(nextRuns)) {
         return;
       }
 
@@ -1704,10 +1834,12 @@ export default function Market() {
 	          return;
 	        }
 
-          const items = response.data?.items || [];
-          if (items.length) {
+          const items = response.data?.items;
+          if (Array.isArray(items)) {
             applyStrategyRuns(items);
-          } else if (response.data?.refreshing && strategyRuns.length === 0) {
+          }
+
+          if ((!Array.isArray(items) || items.length === 0) && response.data?.refreshing && strategyRuns.length === 0) {
             keepLoadingAfterResponse = true;
           }
 

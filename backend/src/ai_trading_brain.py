@@ -111,6 +111,8 @@ class MarketFeatures(BaseModel):
     news_sentiment: float | None = None
     funding_rate: float | None = None
     open_interest_change: float | None = None
+    external_technical_score: float | None = None
+    external_technical_signal: str | None = None
     turnover_24h: float | None = None
     stale: bool = False
     data_quality_flags: list[str] = Field(default_factory=list)
@@ -127,7 +129,7 @@ class AITradingConfig(BaseModel):
     min_liquidity_score: float = 0.45
     max_risk_per_trade_percent: float = 1.0
     max_daily_drawdown_percent: float = 3.0
-    max_open_positions: int = 4
+    max_open_positions: int = 6
     dca_enabled: bool = False
     max_dca_count: int = 1
     dca_require_positive_ev: bool = True
@@ -408,6 +410,8 @@ def build_market_features(asset: dict[str, Any]) -> MarketFeatures:
         news_sentiment=asset.get("newsSentiment"),
         funding_rate=asset.get("fundingRate"),
         open_interest_change=asset.get("openInterestChange"),
+        external_technical_score=asset.get("tradingViewTechnicalScore") or asset.get("externalTechnicalScore"),
+        external_technical_signal=asset.get("tradingViewSignal") or asset.get("externalTechnicalSignal"),
         turnover_24h=turnover_24h,
         stale=bool(asset.get("stale")),
         data_quality_flags=data_quality_flags,
@@ -458,6 +462,15 @@ def calculate_technical_score(features: MarketFeatures, direction: StrategyType)
     score += clamp(sign * change_1d / 28, -0.12, 0.12)
     score += clamp(volume_24h / 250, -0.04, 0.05)
     score += clamp(sign * macd / 6, -0.04, 0.04)
+
+    if features.news_sentiment is not None:
+        score += clamp(sign * features.news_sentiment * 0.035, -0.04, 0.04)
+
+    if features.open_interest_change is not None:
+        score += clamp(sign * features.open_interest_change / 220, -0.025, 0.025)
+
+    if features.external_technical_score is not None:
+        score += clamp(sign * features.external_technical_score * 0.055, -0.07, 0.07)
 
     if direction == StrategyType.LONG:
         if features.ema_trend == "bullish":
@@ -521,6 +534,45 @@ def calculate_probability_tp_before_sl(
 
     if atr > 8:
         probability -= 0.04
+
+    volume_1h = features.volume_change_1h or 0
+    volume_24h = features.volume_change_24h or 0
+    direction_momentum = (
+        (direction == StrategyType.LONG and (features.price_change_1h or 0) > 0)
+        or (direction == StrategyType.SHORT and (features.price_change_1h or 0) < 0)
+    )
+    if direction_momentum and volume_24h > 0:
+        probability += clamp(volume_24h / 900, 0, 0.035)
+    elif not direction_momentum and volume_1h < -20:
+        probability -= 0.025
+
+    if features.news_sentiment is not None:
+        sentiment = clamp(features.news_sentiment, -1, 1)
+        probability += sentiment * (0.035 if direction == StrategyType.LONG else -0.03)
+
+    if features.fear_greed_index is not None:
+        fear_greed = clamp(float(features.fear_greed_index), 0, 100)
+        if direction == StrategyType.LONG and 35 <= fear_greed <= 78:
+            probability += 0.012
+        elif direction == StrategyType.SHORT and fear_greed >= 72:
+            probability += 0.015
+
+    if features.funding_rate is not None:
+        funding = float(features.funding_rate)
+        if direction == StrategyType.SHORT and funding > 0.04:
+            probability += 0.018
+        elif direction == StrategyType.LONG and funding < -0.02:
+            probability += 0.012
+
+    if features.open_interest_change is not None and direction_momentum:
+        probability += clamp(float(features.open_interest_change) / 900, -0.02, 0.025)
+
+    if features.external_technical_score is not None:
+        probability += clamp(
+            (1 if direction == StrategyType.LONG else -1) * features.external_technical_score * 0.045,
+            -0.055,
+            0.055,
+        )
 
     if features.stale:
         probability -= 0.16
@@ -604,7 +656,7 @@ def _position_size_percent(
     if risk_context.loss_streak >= 2:
         base *= 0.65
 
-    return round(clamp(base, 0, 12), 2)
+    return round(clamp(base, 0, 22), 2)
 
 
 def validate_trade_candidate(
@@ -705,7 +757,7 @@ def apply_risk_manager(
 
     return RiskManagerResult(
         allowed=True,
-        adjusted_position_size_percent=round(clamp(position_size, 0, 12), 2),
+        adjusted_position_size_percent=round(clamp(position_size, 0, 22), 2),
         warnings=warnings,
     )
 
@@ -731,6 +783,32 @@ def _build_reasons(features: MarketFeatures, direction: StrategyType, probabilit
         reasons_for.append("ликвидность достаточная для paper-входа")
     elif features.liquidity_score < 0.45:
         reasons_against.append("ликвидность слабая")
+
+    if (features.volume_change_24h or 0) > 20:
+        reasons_for.append("объемы подтверждают повышенный интерес к активу")
+    elif (features.volume_change_24h or 0) < -35:
+        reasons_against.append("объемы снижаются, импульс может быть слабым")
+
+    if features.news_sentiment is not None:
+        if (direction == StrategyType.LONG and features.news_sentiment > 0.2) or (
+            direction == StrategyType.SHORT and features.news_sentiment < -0.2
+        ):
+            reasons_for.append("новостной sentiment поддерживает направление")
+        elif abs(features.news_sentiment) > 0.2:
+            reasons_against.append("новостной sentiment спорит с направлением")
+
+    if features.open_interest_change is not None and abs(features.open_interest_change) >= 8:
+        reasons_for.append("изменение open interest учтено в вероятности сделки")
+
+    if features.external_technical_score is not None:
+        external_supports_direction = (
+            (direction == StrategyType.LONG and features.external_technical_score > 0.15)
+            or (direction == StrategyType.SHORT and features.external_technical_score < -0.15)
+        )
+        if external_supports_direction:
+            reasons_for.append("TradingView-style technical rating подтверждает направление")
+        elif abs(features.external_technical_score) > 0.15:
+            reasons_against.append("TradingView-style technical rating спорит с направлением")
 
     if (features.spread_percent or 0) <= 0.15:
         reasons_for.append("spread находится в допустимом диапазоне")

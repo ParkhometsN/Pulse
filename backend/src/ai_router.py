@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import math
 import time
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
+from uuid import UUID
 
 from aiohttp import ClientSession, ClientTimeout
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -27,6 +29,7 @@ from src.ai_trading_brain import (
 from src.config import settings
 from src.database import get_database_pool
 from src.init import bybit_client, moex_client
+from src.news_router import get_cached_market_mood, get_cached_news
 from src.router import get_coinmarketcap_icon_url, get_cryptocurrency
 from src.stocks_router import (
     calculate_percent_change,
@@ -47,10 +50,11 @@ from src.wallets_router import (
 
 
 router = APIRouter(tags=["ai"])
+logger = logging.getLogger(__name__)
 MOSCOW_TZ = timezone(timedelta(hours=3))
 PAPER_START_CAPITAL = 100_000.0
 PAPER_USD_RUB_RATE = 92.0
-PAPER_STRATEGY_SCHEMA_VERSION = 8
+PAPER_STRATEGY_SCHEMA_VERSION = 9
 PAPER_STRATEGY_IDS = ("ai-short", "ai-long", "ai-short-long")
 PAPER_UNIVERSES = {"crypto", "stocks", "mixed"}
 PAPER_RISK_PROFILES = {"careful", "balanced", "active"}
@@ -60,11 +64,11 @@ CORE_CRYPTO_SYMBOLS = {"BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "T
 CORE_STOCK_SYMBOLS = {"SBER", "GAZP", "LKOH", "YDEX", "GMKN", "ROSN", "NVTK", "TATN", "PLZL", "AFLT"}
 PAPER_MIN_CAPITAL_RUB = 5_000.0
 PAPER_TAKE_PROFIT_PERCENT = 2.0
-PAPER_STOP_LOSS_PERCENT = -6.0
-PAPER_DCA_STEP_PERCENT = -2.0
+PAPER_STOP_LOSS_PERCENT = -3.0
+PAPER_DCA_STEP_PERCENT = -1.4
 PAPER_DCA_ADD_RATIO = 0.45
 PAPER_MAX_SCALE_INS = 1
-PAPER_MAX_HOLD_MINUTES = 240
+PAPER_MAX_HOLD_MINUTES = 180
 PAPER_SCALP_TAKE_PROFIT_PERCENT = 1.0
 PAPER_SCALP_STOP_LOSS_PERCENT = -1.8
 PAPER_SCALP_DCA_STEP_PERCENT = -0.9
@@ -77,7 +81,7 @@ PAPER_REENTRY_COOLDOWN_MINUTES = 20
 PAPER_CHART_POINT_INTERVAL_SECONDS = 60
 PAPER_SCHEDULER_INTERVAL_SECONDS = 60
 PAPER_SCHEDULER_STARTUP_DELAY_SECONDS = 20
-PAPER_MAX_DAILY_TRADES = 240
+PAPER_MAX_DAILY_TRADES = 320
 STRATEGY_MEMORY_SCORE_LIMIT = 15
 STRATEGY_GPT_REVIEW_COOLDOWN_HOURS = 12
 STRATEGY_CANDIDATES_CACHE_TTL_SECONDS = 45
@@ -88,14 +92,48 @@ STRATEGY_STOCK_CANDLES_TIMEOUT_SECONDS = 2.5
 STRATEGY_TBANK_LOOKUP_TIMEOUT_SECONDS = 2.0
 STRATEGY_CRYPTO_KLINE_CANDIDATES_LIMIT = 20
 STRATEGY_STOCK_CANDIDATES_LIMIT = 18
+STRATEGY_MARKET_CONTEXT_TTL_SECONDS = 180
 _strategy_candidates_cache: dict[str, dict[str, Any]] = {}
 _strategy_response_cache: dict[str, dict[str, Any]] = {}
 _strategy_response_refresh_tasks: dict[str, asyncio.Task] = {}
-PAPER_RISK_MAX_ALLOCATION = {
-    "careful": 0.10,
-    "balanced": 0.14,
-    "active": 0.18,
+_strategy_market_context_cache: dict[str, Any] = {
+    "created_at": 0,
+    "payload": None,
 }
+PAPER_RISK_MAX_ALLOCATION = {
+    "careful": 0.18,
+    "balanced": 0.24,
+    "active": 0.32,
+}
+PAPER_RISK_MAX_OPEN_EXPOSURE = {
+    "careful": 0.72,
+    "balanced": 0.90,
+    "active": 0.98,
+}
+PAPER_RISK_MAX_OPEN_POSITIONS = {
+    "careful": 4,
+    "balanced": 5,
+    "active": 6,
+}
+PAPER_RISK_BOLDNESS = {
+    "careful": 35,
+    "balanced": 65,
+    "active": 90,
+}
+PAPER_REGROUP_DRAWDOWN_PERCENT = -2.0
+PAPER_DEFENSIVE_DRAWDOWN_PERCENT = -5.0
+PAPER_REGROUP_LOSS_STREAK = 3
+PAPER_DEFENSIVE_LOSS_STREAK = 5
+NEWS_POSITIVE_TERMS = (
+    "раст", "рост", "выше", "подорож", "прибыл", "выручк", "дивиденд", "байбек",
+    "buyback", "одобр", "рекорд", "ускор", "позитив", "прорыв", "листинг",
+    "approval", "approve", "surge", "rally", "gain", "bull", "strong",
+)
+NEWS_NEGATIVE_TERMS = (
+    "пад", "сниж", "ниже", "убыт", "санкц", "штраф", "расслед", "обвал",
+    "банкрот", "дефолт", "запрет", "хак", "взлом", "отток", "risk", "bear",
+    "drop", "loss", "lawsuit", "hack", "exploit", "ban",
+)
 
 
 class SaveAISettingsRequest(BaseModel):
@@ -772,6 +810,30 @@ async def _load_strategy_connection(user_id: Any, strategy_id: str) -> dict[str,
     }
 
 
+async def _load_active_strategy_ids(user_id: Any) -> list[str]:
+    pool = get_database_pool()
+
+    async with pool.acquire() as connection:
+        rows = await connection.fetch(
+            """
+            select strategy_id
+            from ai_strategy_connections
+            where user_id = $1
+              and is_active = true
+              and strategy_id = any($2::varchar[])
+            order by updated_at desc, connected_at desc
+            """,
+            user_id,
+            list(PAPER_STRATEGY_IDS),
+        )
+
+    return [
+        row["strategy_id"]
+        for row in rows
+        if row["strategy_id"] in PAPER_STRATEGY_IDS
+    ]
+
+
 async def _record_paper_strategy_trades(user_id: Any, strategy_id: str, payload: dict[str, Any]) -> None:
     # Strategy trades live in ai_paper_strategy_runs. Keeping them out of the
     # portfolio trade feed avoids mixing simulations with real broker history.
@@ -868,6 +930,237 @@ def _capital_to_rub(amount: float, currency: str) -> float:
     return max(float(amount or 0), 0) * _capital_currency_rate(currency)
 
 
+def _news_symbol_keys(symbol: str | None) -> set[str]:
+    normalized = str(symbol or "").upper()
+    if not normalized:
+        return set()
+
+    keys = {normalized}
+    if normalized.endswith("USDT"):
+        keys.add(normalized.removesuffix("USDT"))
+    else:
+        keys.add(f"{normalized}USDT")
+
+    return keys
+
+
+def _score_news_sentiment(item: dict[str, Any]) -> float:
+    text = f"{item.get('title') or ''} {item.get('summary') or ''}".lower().replace("ё", "е")
+    positive = sum(1 for term in NEWS_POSITIVE_TERMS if term in text)
+    negative = sum(1 for term in NEWS_NEGATIVE_TERMS if term in text)
+
+    if positive == negative:
+        return 0
+
+    return _clamp((positive - negative) / 5, -1, 1)
+
+
+def _freshness_weight(published_ts: Any) -> float:
+    timestamp = to_float(published_ts)
+    if timestamp <= 0:
+        return 0.45
+
+    age_hours = max((time.time() - timestamp) / 3600, 0)
+    if age_hours <= 6:
+        return 1.0
+    if age_hours <= 24:
+        return 0.72
+    if age_hours <= 72:
+        return 0.42
+    return 0.18
+
+
+def _aggregate_weighted_sentiment(values: list[tuple[float, float]]) -> float | None:
+    total_weight = sum(weight for _, weight in values if weight > 0)
+    if total_weight <= 0:
+        return None
+
+    return _clamp(sum(value * weight for value, weight in values) / total_weight, -1, 1)
+
+
+def _build_tradingview_style_rating(asset: dict[str, Any]) -> dict[str, Any]:
+    chart = asset.get("chart7d") if isinstance(asset.get("chart7d"), list) else []
+    closes = [to_float(point.get("close")) for point in chart if isinstance(point, dict) and to_float(point.get("close")) > 0]
+    price = to_float(asset.get("price")) or (closes[-1] if closes else 0)
+    change_1h = to_float(asset.get("priceChangePercent1h"))
+    change_4h = to_float(asset.get("priceChangePercent4h"))
+    change_24h = to_float(asset.get("priceChangePercent24h"))
+    volume_ratio = to_float(asset.get("volumeTrendRatio"), 1)
+    range_position = to_float(asset.get("rangePosition"), 0.5)
+    spread = to_float(asset.get("bidAskSpreadPercent"))
+    score = 0.0
+
+    if len(closes) >= 8:
+        ema_fast = sum(closes[-8:]) / 8
+        ema_slow = sum(closes[-21:]) / min(len(closes), 21)
+        if price > ema_fast > ema_slow:
+            score += 0.24
+        elif price < ema_fast < ema_slow:
+            score -= 0.24
+
+    score += _clamp(change_1h / 6, -0.18, 0.18)
+    score += _clamp(change_4h / 14, -0.16, 0.16)
+    score += _clamp(change_24h / 35, -0.13, 0.13)
+
+    if volume_ratio >= 1.15 and change_1h > 0:
+        score += 0.08
+    elif volume_ratio >= 1.15 and change_1h < 0:
+        score -= 0.08
+
+    if 0.35 <= range_position <= 0.82:
+        score += 0.04
+    elif range_position > 0.94:
+        score -= 0.05
+
+    if spread > 0.2:
+        score -= min(spread / 3, 0.12)
+
+    normalized_score = _clamp(score, -1, 1)
+    if normalized_score >= 0.55:
+        signal = "strong_buy"
+    elif normalized_score >= 0.18:
+        signal = "buy"
+    elif normalized_score <= -0.55:
+        signal = "strong_sell"
+    elif normalized_score <= -0.18:
+        signal = "sell"
+    else:
+        signal = "neutral"
+
+    return {
+        "score": round(normalized_score, 4),
+        "signal": signal,
+        "source": "pulse_tradingview_style_rating",
+    }
+
+
+async def _load_strategy_market_context() -> dict[str, Any]:
+    cached = _strategy_market_context_cache.get("payload")
+    created_at = to_float(_strategy_market_context_cache.get("created_at"))
+
+    if cached and time.monotonic() - created_at < STRATEGY_MARKET_CONTEXT_TTL_SECONDS:
+        return cached
+
+    news_items: list[dict[str, Any]] = []
+    market_mood: dict[str, Any] = {}
+    try:
+        news_items, market_mood = await asyncio.gather(
+            get_cached_news(),
+            get_cached_market_mood(),
+        )
+    except Exception:
+        try:
+            news_items = await get_cached_news()
+        except Exception:
+            news_items = []
+        try:
+            market_mood = await get_cached_market_mood()
+        except Exception:
+            market_mood = {}
+
+    asset_sentiment: dict[str, list[tuple[float, float]]] = {}
+    category_sentiment: dict[str, list[tuple[float, float]]] = {
+        "crypto": [],
+        "stocks": [],
+        "markets": [],
+    }
+    asset_news_counts: dict[str, int] = {}
+
+    for item in news_items if isinstance(news_items, list) else []:
+        sentiment = _score_news_sentiment(item)
+        weight = _freshness_weight(item.get("publishedTs")) * max(to_float(item.get("score"), 1), 1)
+        category = str(item.get("category") or "markets").lower()
+        category_sentiment.setdefault(category, []).append((sentiment, weight))
+        related_assets = item.get("relatedAssets") if isinstance(item.get("relatedAssets"), list) else []
+
+        for related_asset in related_assets:
+            if not isinstance(related_asset, dict):
+                continue
+
+            for key in _news_symbol_keys(related_asset.get("routeSymbol") or related_asset.get("symbol")):
+                asset_sentiment.setdefault(key, []).append((sentiment, weight + 2))
+                asset_news_counts[key] = asset_news_counts.get(key, 0) + 1
+
+    current_mood = market_mood.get("current") if isinstance(market_mood, dict) else {}
+    fear_greed = to_float((current_mood or {}).get("value"), 50)
+    fear_greed_sentiment = _clamp((fear_greed - 50) / 50, -1, 1)
+    payload = {
+        "fearGreedIndex": fear_greed,
+        "fearGreedSentiment": round(fear_greed_sentiment, 4),
+        "assetSentiment": {
+            symbol: round(value, 4)
+            for symbol, values in asset_sentiment.items()
+            if (value := _aggregate_weighted_sentiment(values)) is not None
+        },
+        "assetNewsCounts": asset_news_counts,
+        "categorySentiment": {
+            category: round(value, 4)
+            for category, values in category_sentiment.items()
+            if (value := _aggregate_weighted_sentiment(values)) is not None
+        },
+        "sourceManifest": ["pulse_news_feed", "fear_greed_index", "pulse_tradingview_style_rating"],
+        "updatedAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+    _strategy_market_context_cache["payload"] = payload
+    _strategy_market_context_cache["created_at"] = time.monotonic()
+    return payload
+
+
+def _enrich_strategy_candidate_with_context(asset: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+    asset_type = str(asset.get("assetType") or "crypto").lower()
+    symbol_keys = _news_symbol_keys(asset.get("symbol"))
+    asset_sentiment_map = context.get("assetSentiment") if isinstance(context.get("assetSentiment"), dict) else {}
+    news_counts = context.get("assetNewsCounts") if isinstance(context.get("assetNewsCounts"), dict) else {}
+    category_sentiment = context.get("categorySentiment") if isinstance(context.get("categorySentiment"), dict) else {}
+    direct_values = [
+        to_float(asset_sentiment_map.get(symbol_key))
+        for symbol_key in symbol_keys
+        if asset_sentiment_map.get(symbol_key) is not None
+    ]
+    direct_sentiment = sum(direct_values) / len(direct_values) if direct_values else None
+    category_key = "crypto" if asset_type == "crypto" else "stocks"
+    fallback_sentiment = (
+        to_float(category_sentiment.get(category_key))
+        if category_sentiment.get(category_key) is not None
+        else None
+    )
+    market_sentiment = to_float(category_sentiment.get("markets"))
+    fear_greed_sentiment = to_float(context.get("fearGreedSentiment"))
+    combined_sentiment = direct_sentiment
+
+    if combined_sentiment is None:
+        combined_sentiment = fallback_sentiment if fallback_sentiment is not None else 0
+
+    if asset_type == "crypto":
+        combined_sentiment = combined_sentiment * 0.65 + fear_greed_sentiment * 0.25 + market_sentiment * 0.10
+    else:
+        combined_sentiment = combined_sentiment * 0.75 + market_sentiment * 0.25
+
+    technical_rating = _build_tradingview_style_rating(asset)
+    source_manifest = [
+        *list(asset.get("sourceManifest") or []),
+        *list(context.get("sourceManifest") or []),
+    ]
+
+    return {
+        **asset,
+        "newsSentiment": round(_clamp(combined_sentiment, -1, 1), 4),
+        "assetNewsCount": sum(int(news_counts.get(symbol_key) or 0) for symbol_key in symbol_keys),
+        "fearGreedIndex": context.get("fearGreedIndex") if asset_type == "crypto" else asset.get("fearGreedIndex"),
+        "marketContext": {
+            "directNewsSentiment": direct_sentiment,
+            "categorySentiment": fallback_sentiment,
+            "marketSentiment": market_sentiment,
+            "fearGreedSentiment": fear_greed_sentiment if asset_type == "crypto" else None,
+            "sourceManifest": context.get("sourceManifest") or [],
+        },
+        "tradingViewTechnicalScore": technical_rating["score"],
+        "tradingViewSignal": technical_rating["signal"],
+        "sourceManifest": list(dict.fromkeys(source_manifest)),
+    }
+
+
 def _parse_strategy_datetime(value: Any) -> datetime | None:
     if isinstance(value, datetime):
         return value
@@ -961,7 +1254,9 @@ def _strategy_type_for_strategy_id(strategy_id: str) -> StrategyType:
         return StrategyType.LONG
 
     if strategy_id == "ai-short":
-        return StrategyType.SHORT
+        # The UI "Short" strategy is a short-term scalp/momentum mode, not a
+        # permanent bearish short. It should buy strong impulse and exit fast.
+        return StrategyType.LONG
 
     return StrategyType.LONG_SHORT
 
@@ -1241,10 +1536,309 @@ def _calculate_short_probability(score_payload: dict[str, Any]) -> float:
 
 def _strategy_config(strategy_id: str) -> dict[str, str]:
     return {
-        "ai-short": {"title": "ИИ торговля Short", "mode": "short", "color": "var(--red)"},
+        "ai-short": {"title": "ИИ торговля Short", "mode": "scalp", "color": "var(--green)"},
         "ai-long": {"title": "ИИ торговля Long", "mode": "long", "color": "var(--green)"},
         "ai-short-long": {"title": "ИИ торговля Short + Long", "mode": "hybrid", "color": "var(--primary-blue)"},
     }[strategy_id]
+
+
+def _strategy_risk_settings(risk_profile: str | None) -> dict[str, float | int]:
+    normalized_profile = str(risk_profile or "balanced").lower()
+
+    if normalized_profile not in PAPER_RISK_PROFILES:
+        normalized_profile = "balanced"
+
+    return {
+        "max_allocation": PAPER_RISK_MAX_ALLOCATION[normalized_profile],
+        "max_open_exposure": PAPER_RISK_MAX_OPEN_EXPOSURE[normalized_profile],
+        "max_open_positions": PAPER_RISK_MAX_OPEN_POSITIONS[normalized_profile],
+        "boldness": PAPER_RISK_BOLDNESS[normalized_profile],
+    }
+
+
+def _score_payload_ai_decision(score_payload: dict[str, Any]) -> dict[str, Any]:
+    ai_decision = score_payload.get("aiDecision")
+    return ai_decision if isinstance(ai_decision, dict) else {}
+
+
+def _score_payload_factors(score_payload: dict[str, Any]) -> dict[str, Any]:
+    factors = score_payload.get("factors")
+    return factors if isinstance(factors, dict) else {}
+
+
+def _normalized_liquidity(value: Any) -> float:
+    liquidity = to_float(value)
+    if liquidity > 1:
+        liquidity /= 100
+    return _clamp(liquidity, 0, 1)
+
+
+def _strategy_entry_rank(item: tuple[float, str, dict[str, Any], dict[str, Any]]) -> float:
+    probability, side, asset, score_payload = item
+    ai_decision = _score_payload_ai_decision(score_payload)
+    factors = _score_payload_factors(score_payload)
+    liquidity = _normalized_liquidity(
+        ai_decision.get("liquidity_score")
+        or ai_decision.get("liquidityScore")
+        or factors.get("liquidity_score")
+        or factors.get("liquidityScore")
+        or factors.get("liquidity")
+    )
+    expected_value = to_float(ai_decision.get("expected_value_percent") or ai_decision.get("expectedValuePercent"))
+    risk_reward = to_float(ai_decision.get("risk_reward") or ai_decision.get("riskReward"), 1)
+    spread = to_float(factors.get("spread_percent") or factors.get("spreadPercent") or asset.get("bidAskSpreadPercent"))
+    volume_change = to_float(factors.get("volume_change_24h") or factors.get("volumeChange24h"))
+    change_1h = to_float(factors.get("price_change_1h") or factors.get("priceChange1h") or asset.get("priceChangePercent1h"))
+    turnover = to_float(asset.get("turnover24h") or asset.get("volume24h"))
+    turnover_bonus = _clamp((math.log10(max(turnover, 1)) - 5) * 1.4, -2.5, 6)
+    momentum_bonus = 0.0
+
+    if side == "Long" and change_1h > 0:
+        momentum_bonus += _clamp(change_1h * 0.65, 0, 4.5)
+    elif side == "Short" and change_1h < 0:
+        momentum_bonus += _clamp(abs(change_1h) * 0.65, 0, 4.5)
+
+    if volume_change > 0:
+        momentum_bonus += _clamp(volume_change / 35, 0, 3)
+
+    return (
+        probability
+        + expected_value * 10
+        + max(risk_reward - 1.2, 0) * 6
+        + liquidity * 8
+        + turnover_bonus
+        + momentum_bonus
+        - spread * 14
+    )
+
+
+def _strategy_entry_weight(item: tuple[float, str, dict[str, Any], dict[str, Any]]) -> float:
+    probability, side, asset, score_payload = item
+    ai_decision = _score_payload_ai_decision(score_payload)
+    factors = _score_payload_factors(score_payload)
+    liquidity = _normalized_liquidity(
+        ai_decision.get("liquidity_score")
+        or ai_decision.get("liquidityScore")
+        or factors.get("liquidity_score")
+        or factors.get("liquidityScore")
+        or factors.get("liquidity")
+    )
+    expected_value = to_float(ai_decision.get("expected_value_percent") or ai_decision.get("expectedValuePercent"))
+    risk_reward = to_float(ai_decision.get("risk_reward") or ai_decision.get("riskReward"), 1)
+    position_size = to_float(ai_decision.get("position_size_percent") or ai_decision.get("positionSizePercent"))
+    volatility = to_float(
+        factors.get("volatility_atr")
+        or factors.get("volatilityAtr")
+        or factors.get("volatility")
+    )
+    change_1h = to_float(factors.get("price_change_1h") or factors.get("priceChange1h") or asset.get("priceChangePercent1h"))
+    volume_change = to_float(factors.get("volume_change_24h") or factors.get("volumeChange24h"))
+    scalp_bonus = 0.0
+
+    if score_payload.get("strategyLeg") == "scalp" and side == "Long" and change_1h > 0:
+        scalp_bonus = 0.65
+
+    weight = (
+        0.8
+        + max(probability - 60, 0) / 12
+        + max(expected_value, 0) * 2.8
+        + max(risk_reward - 1.2, 0) * 1.4
+        + liquidity * 1.25
+        + position_size / 18
+        + _clamp(volume_change / 80, -0.25, 0.75)
+        + scalp_bonus
+        - max(volatility - 4, 0) * 0.16
+    )
+
+    return _clamp(weight, 0.05, 8)
+
+
+def _allocate_strategy_entries(
+    selected: list[tuple[float, str, dict[str, Any], dict[str, Any]]],
+    start_capital: float,
+    risk_profile: str | None,
+    available_exposure: float | None = None,
+) -> list[float]:
+    if not selected or start_capital <= 0:
+        return []
+
+    settings_payload = _strategy_risk_settings(risk_profile)
+    max_single = start_capital * float(settings_payload["max_allocation"])
+    exposure_budget = start_capital * float(settings_payload["max_open_exposure"])
+
+    if available_exposure is not None:
+        exposure_budget = min(exposure_budget, max(available_exposure, 0))
+
+    min_single = min(max(start_capital * 0.005, 250), 1_000)
+    weights = [_strategy_entry_weight(item) for item in selected]
+    allocations = [0.0 for _ in selected]
+    remaining_indices = set(range(len(selected)))
+    remaining_budget = exposure_budget
+
+    while remaining_indices and remaining_budget > min_single:
+        total_weight = sum(weights[index] for index in remaining_indices)
+        if total_weight <= 0:
+            break
+
+        capped_indices: list[int] = []
+        for index in list(remaining_indices):
+            proposed = remaining_budget * weights[index] / total_weight
+            if proposed >= max_single:
+                allocations[index] = max_single
+                remaining_budget -= max_single
+                capped_indices.append(index)
+
+        if not capped_indices:
+            for index in remaining_indices:
+                allocations[index] = remaining_budget * weights[index] / total_weight
+            break
+
+        for index in capped_indices:
+            remaining_indices.discard(index)
+
+    return [
+        round(allocation, 2) if allocation >= min_single else 0
+        for allocation in allocations
+    ]
+
+
+def _strategy_closed_loss_streak(trades: list[dict[str, Any]]) -> int:
+    closed_trades = [
+        trade
+        for trade in trades
+        if isinstance(trade, dict) and trade.get("status") == "closed"
+    ]
+    closed_trades.sort(
+        key=lambda trade: trade.get("closedAt") or trade.get("updatedAt") or trade.get("executedAt") or "",
+        reverse=True,
+    )
+
+    streak = 0
+    for trade in closed_trades:
+        if to_float(trade.get("resultAmount")) < 0:
+            streak += 1
+            continue
+
+        break
+
+    return streak
+
+
+def _build_strategy_recovery_state(
+    trades: list[dict[str, Any]],
+    start_capital: float,
+    equity_pnl: float,
+    risk_settings: dict[str, float | int],
+) -> dict[str, Any]:
+    drawdown_percent = (equity_pnl / start_capital) * 100 if start_capital else 0
+    loss_streak = _strategy_closed_loss_streak(trades)
+    base_boldness = float(risk_settings.get("boldness") or 65)
+    state = "normal"
+    label = "Рабочий режим"
+    reason = "Сигналы проходят стандартные EV/Risk фильтры."
+    exposure_multiplier = 1.0
+    probability_bonus = 0.0
+    max_open_positions = int(risk_settings.get("max_open_positions") or 5)
+
+    if drawdown_percent <= PAPER_DEFENSIVE_DRAWDOWN_PERCENT or loss_streak >= PAPER_DEFENSIVE_LOSS_STREAK:
+        state = "defensive"
+        label = "Защитная пересборка"
+        reason = "Просадка или серия убытков высокая: стратегия режет риск и берет только самые сильные входы."
+        exposure_multiplier = 0.28
+        probability_bonus = 8.0
+        max_open_positions = max(1, min(max_open_positions, 2))
+    elif drawdown_percent <= PAPER_REGROUP_DRAWDOWN_PERCENT or loss_streak >= PAPER_REGROUP_LOSS_STREAK:
+        state = "regroup"
+        label = "Пересборка"
+        reason = "Стратегия ушла в минус: снижаем смелость, повышаем порог входа и убираем слабые позиции."
+        exposure_multiplier = 0.58
+        probability_bonus = 4.0
+        max_open_positions = max(2, min(max_open_positions, 3))
+
+    return {
+        "state": state,
+        "label": label,
+        "reason": reason,
+        "drawdownPercent": round(drawdown_percent, 2),
+        "lossStreak": loss_streak,
+        "exposureMultiplier": exposure_multiplier,
+        "probabilityBonus": probability_bonus,
+        "maxOpenPositions": max_open_positions,
+        "baseBoldness": round(base_boldness, 2),
+        "effectiveBoldness": round(base_boldness * exposure_multiplier, 2),
+    }
+
+
+def _entry_passes_recovery_filter(
+    item: tuple[float, str, dict[str, Any], dict[str, Any]],
+    recovery_state: dict[str, Any],
+) -> bool:
+    probability, _, _, score_payload = item
+    if recovery_state.get("state") == "normal":
+        return True
+
+    ai_decision = _score_payload_ai_decision(score_payload)
+    min_probability = 60 + to_float(recovery_state.get("probabilityBonus"))
+    min_ev = 0.08 if recovery_state.get("state") == "regroup" else 0.16
+    expected_value = to_float(ai_decision.get("expected_value_percent") or ai_decision.get("expectedValuePercent"))
+    risk_reward = to_float(ai_decision.get("risk_reward") or ai_decision.get("riskReward"), 1)
+
+    return probability >= min_probability and expected_value >= min_ev and risk_reward >= 1.25
+
+
+def _apply_strategy_recovery_actions(
+    trades: list[dict[str, Any]],
+    recovery_state: dict[str, Any],
+) -> list[dict[str, Any]]:
+    state = str(recovery_state.get("state") or "normal")
+    if state == "normal":
+        return trades
+
+    now = _strategy_now().isoformat()
+    next_trades: list[dict[str, Any]] = []
+    cut_threshold = -0.45 if state == "defensive" else -0.85
+    probability_drop = 5 if state == "defensive" else 7
+
+    for trade in trades:
+        if trade.get("status") == "closed":
+            next_trades.append(trade)
+            continue
+
+        result_percent = to_float(trade.get("resultPercent"))
+        entry_probability = to_float(trade.get("probability"))
+        current_probability = to_float(trade.get("currentProbability"), entry_probability)
+        should_cut = (
+            result_percent <= cut_threshold
+            and current_probability <= max(entry_probability - probability_drop, 54)
+        )
+        should_lock_small_profit = (
+            state == "defensive"
+            and result_percent >= 0.25
+            and current_probability < 64
+        )
+
+        if should_cut or should_lock_small_profit:
+            events = list(trade.get("events") or [])
+            events.append({
+                "type": "recovery_rebalance",
+                "createdAt": now,
+                "label": "Пересборка стратегии",
+                "state": state,
+                "reason": recovery_state.get("reason"),
+            })
+            next_trades.append({
+                **trade,
+                "status": "closed",
+                "closeReason": "recovery_rebalance",
+                "closedAt": now,
+                "events": events,
+                "updatedAt": now,
+            })
+            continue
+
+        next_trades.append(trade)
+
+    return next_trades
 
 
 def _strategy_trade_rules(payload: dict[str, Any], trade: dict[str, Any]) -> dict[str, float | None]:
@@ -1491,6 +2085,15 @@ def _select_strategy_entries(
     short_ranked: list[tuple[float, str, dict[str, Any], dict[str, Any]]] = []
     connection = connection or {}
     universe = str(connection.get("universe") or "mixed").lower()
+    risk_profile = str(connection.get("riskProfile") or connection.get("risk_profile") or "balanced").lower()
+    risk_settings = _strategy_risk_settings(risk_profile)
+    base_ai_config = _ai_trading_config()
+    ai_config = base_ai_config.model_copy(update={
+        "max_open_positions": max(
+            base_ai_config.max_open_positions,
+            int(risk_settings["max_open_positions"]),
+        ),
+    })
     excluded_symbols = excluded_symbols or set()
 
     for asset in candidates:
@@ -1510,7 +2113,7 @@ def _select_strategy_entries(
         preferred_strategy = _strategy_type_for_strategy_id(strategy_id)
         decision = select_strategy_decision(
             features,
-            _ai_trading_config(),
+            ai_config,
             preferred_strategy,
             RiskContext(open_positions_count=len(excluded_symbols)),
         )
@@ -1524,8 +2127,19 @@ def _select_strategy_entries(
             continue
 
         side = "Short" if decision.final_action == FinalAction.OPEN_SHORT else "Long"
-        probability = round(decision.probability_tp_before_sl * 100, 2)
+        raw_probability = round(decision.probability_tp_before_sl * 100, 2)
+        memory_item = (memory or {}).get(symbol)
+        if _memory_blocks_entry(memory_item, raw_probability):
+            continue
+
+        memory_adjustment = _memory_score_adjustment(memory_item)
+        probability = round(_clamp(raw_probability + memory_adjustment, 0, 100), 2)
+        if probability < 60:
+            continue
+
         strategy_leg = "short" if side == "Short" else "long"
+        if mode == "scalp":
+            strategy_leg = "scalp"
         if mode == "hybrid":
             strategy_leg = "hybrid_short" if side == "Short" else "hybrid_long"
 
@@ -1543,13 +2157,19 @@ def _select_strategy_entries(
             "memory": {
                 "rawLongProbability": round((decision.probability_long_success or 0) * 100, 2),
                 "rawShortProbability": round((decision.probability_short_success or 0) * 100, 2),
-                "memoryAdjustment": 0,
-                "note": "disabled_for_ai_trading_brain_v1",
+                "rawProbability": raw_probability,
+                "memoryAdjustment": round(memory_adjustment, 2),
+                "tradesCount": int((memory_item or {}).get("tradesCount") or 0),
+                "winsCount": int((memory_item or {}).get("winsCount") or 0),
+                "lossesCount": int((memory_item or {}).get("lossesCount") or 0),
+                "note": "strategy_memory_applied" if memory_item else "no_strategy_memory_yet",
             },
         }
 
         if mode == "short" and side == "Short":
             short_ranked.append((probability, side, asset, score_payload))
+        elif mode == "scalp" and side == "Long":
+            long_ranked.append((probability, side, asset, score_payload))
         elif mode == "long" and side == "Long":
             long_ranked.append((probability, side, asset, score_payload))
         elif mode == "hybrid":
@@ -1558,29 +2178,14 @@ def _select_strategy_entries(
             else:
                 long_ranked.append((probability, side, asset, score_payload))
 
-    long_ranked.sort(key=lambda item: item[0], reverse=True)
-    short_ranked.sort(key=lambda item: item[0], reverse=True)
+    long_ranked.sort(key=_strategy_entry_rank, reverse=True)
+    short_ranked.sort(key=_strategy_entry_rank, reverse=True)
 
     if config["mode"] == "hybrid":
         selected: list[tuple[float, str, dict[str, Any], dict[str, Any]]] = []
         selected_symbols: set[str] = set()
 
-        def add_unique(items: list[tuple[float, str, dict[str, Any], dict[str, Any]]], max_items: int) -> None:
-            for item in items:
-                symbol = str(item[2].get("symbol") or "").upper()
-                if not symbol or symbol in selected_symbols:
-                    continue
-
-                selected.append(item)
-                selected_symbols.add(symbol)
-
-                if len(selected) >= max_items:
-                    return
-
-        add_unique(long_ranked[:3], limit)
-        add_unique(short_ranked[:3], limit)
-
-        rest = sorted([*long_ranked, *short_ranked], key=lambda item: item[0], reverse=True)
+        rest = sorted([*long_ranked, *short_ranked], key=_strategy_entry_rank, reverse=True)
         for item in rest:
             if len(selected) >= limit:
                 break
@@ -1590,7 +2195,10 @@ def _select_strategy_entries(
                 selected_symbols.add(symbol)
         return selected[:limit]
 
-    return (short_ranked if config["mode"] == "short" else long_ranked)[:limit]
+    if config["mode"] == "short":
+        return short_ranked[:limit]
+
+    return long_ranked[:limit]
 
 
 def _build_strategy_trade(
@@ -1831,6 +2439,29 @@ async def _load_strategy_candidates(user_id: Any | None = None) -> list[dict[str
     except Exception:
         pass
 
+    if candidates:
+        try:
+            market_context = await _load_strategy_market_context()
+            candidates = [
+                _enrich_strategy_candidate_with_context(candidate, market_context)
+                for candidate in candidates
+            ]
+        except Exception:
+            candidates = [
+                {
+                    **candidate,
+                    "sourceManifest": [
+                        *list(candidate.get("sourceManifest") or []),
+                        "market_context_unavailable",
+                    ],
+                    "dataQualityFlags": [
+                        *list(candidate.get("dataQualityFlags") or []),
+                        "market_context_unavailable",
+                    ],
+                }
+                for candidate in candidates
+            ]
+
     if len(_strategy_candidates_cache) > 300:
         oldest_key = min(
             _strategy_candidates_cache,
@@ -1857,13 +2488,13 @@ def _build_strategy_payload(
     config = _strategy_config(strategy_id)
     connection = connection or {}
     risk_profile = str(connection.get("riskProfile") or connection.get("risk_profile") or "balanced").lower()
-    max_allocation = PAPER_RISK_MAX_ALLOCATION.get(risk_profile, PAPER_RISK_MAX_ALLOCATION["balanced"])
+    risk_settings = _strategy_risk_settings(risk_profile)
     decision_log: list[dict[str, Any]] = []
     selected = _select_strategy_entries(
         strategy_id,
         candidates,
         connection,
-        limit=4,
+        limit=int(risk_settings["max_open_positions"]),
         memory=memory,
         decision_log=decision_log,
     )
@@ -1880,9 +2511,12 @@ def _build_strategy_payload(
         "label": "Старт",
     }]
     trades = []
+    allocations = _allocate_strategy_entries(selected, normalized_start_capital, risk_profile)
+    recovery_state = _build_strategy_recovery_state(trades, normalized_start_capital, 0, risk_settings)
 
-    for index, (probability, side, asset, score_payload) in enumerate(selected):
-        allocation = normalized_start_capital * min(max_allocation, 0.055 + max(probability - 60, 0) / 900)
+    for index, ((probability, side, asset, score_payload), allocation) in enumerate(zip(selected, allocations)):
+        if allocation <= 0:
+            continue
         executed_at = start_at + timedelta(seconds=index + 1)
         trades.append(_build_strategy_trade(probability, side, asset, score_payload, allocation, executed_at))
 
@@ -1937,6 +2571,14 @@ def _build_strategy_payload(
         "threshold": 60,
         "schemaVersion": PAPER_STRATEGY_SCHEMA_VERSION,
         "connection": connection,
+        "riskSettings": risk_settings,
+        "recoveryState": recovery_state,
+        "boldness": risk_settings.get("boldness"),
+        "effectiveBoldness": recovery_state.get("effectiveBoldness"),
+        "capitalDeploymentPercent": round(
+            sum(to_float(trade.get("virtualAmount")) for trade in trades) / normalized_start_capital * 100,
+            2,
+        ) if normalized_start_capital else 0,
         "capitalCurrency": connection.get("capitalCurrency") or "RUB",
         "margin": {
             "enabled": bool(connection.get("marginEnabled")),
@@ -1955,8 +2597,11 @@ def _mark_strategy_to_market(
 ) -> dict[str, Any]:
     candidate_map = _strategy_candidates_by_symbol(candidates)
     start_capital = float(payload.get("startCapital") or PAPER_START_CAPITAL)
+    connection = payload.get("connection") or {}
+    risk_profile = str(connection.get("riskProfile") or connection.get("risk_profile") or "balanced").lower()
+    risk_settings = _strategy_risk_settings(risk_profile)
     updated_trades = []
-    max_open_exposure = start_capital * 0.65
+    max_open_exposure = start_capital * float(risk_settings["max_open_exposure"])
     planned_open_exposure = sum(
         to_float(trade.get("virtualAmount"))
         for trade in payload.get("trades") or []
@@ -2132,6 +2777,24 @@ def _mark_strategy_to_market(
             "updatedAt": _strategy_now().isoformat(),
         })
 
+    pre_entry_realized_pnl = sum(
+        to_float(trade.get("resultAmount"))
+        for trade in updated_trades
+        if trade.get("status") == "closed"
+    )
+    pre_entry_unrealized_pnl = sum(
+        to_float(trade.get("resultAmount"))
+        for trade in updated_trades
+        if trade.get("status") != "closed"
+    )
+    recovery_state = _build_strategy_recovery_state(
+        updated_trades,
+        start_capital,
+        pre_entry_realized_pnl + pre_entry_unrealized_pnl,
+        risk_settings,
+    )
+    updated_trades = _apply_strategy_recovery_actions(updated_trades, recovery_state)
+
     open_symbols = {
         str(trade.get("routeSymbol") or trade.get("asset") or "").upper()
         for trade in updated_trades
@@ -2142,13 +2805,11 @@ def _mark_strategy_to_market(
         for trade in updated_trades
         if trade.get("status") != "closed" or _is_recent_strategy_trade(trade)
     }
-    connection = payload.get("connection") or {}
-    max_open_positions = 4
+    max_open_positions = int(recovery_state.get("maxOpenPositions") or risk_settings["max_open_positions"])
+    max_open_exposure *= float(recovery_state.get("exposureMultiplier") or 1)
     decision_log = list(payload.get("decisionLog") or [])
 
     if len(open_symbols) < max_open_positions and len(updated_trades) < PAPER_MAX_DAILY_TRADES:
-        risk_profile = str(connection.get("riskProfile") or connection.get("risk_profile") or "balanced").lower()
-        max_allocation = PAPER_RISK_MAX_ALLOCATION.get(risk_profile, PAPER_RISK_MAX_ALLOCATION["balanced"])
         new_entries = _select_strategy_entries(
             str(payload.get("id") or ""),
             candidates,
@@ -2158,6 +2819,11 @@ def _mark_strategy_to_market(
             memory=memory,
             decision_log=decision_log,
         )
+        new_entries = [
+            entry
+            for entry in new_entries
+            if _entry_passes_recovery_filter(entry, recovery_state)
+        ]
 
         open_exposure = sum(
             to_float(trade.get("virtualAmount"))
@@ -2165,13 +2831,14 @@ def _mark_strategy_to_market(
             if trade.get("status") != "closed"
         )
         free_exposure = max(max_open_exposure - open_exposure, 0)
+        allocations = _allocate_strategy_entries(
+            new_entries,
+            start_capital,
+            risk_profile,
+            available_exposure=free_exposure,
+        )
 
-        for index, (probability, side, asset, score_payload) in enumerate(new_entries):
-            remaining_slots = max(len(new_entries) - index, 1)
-            allocation = min(
-                start_capital * min(max_allocation, 0.045 + max(probability - 60, 0) / 1000),
-                free_exposure / remaining_slots if free_exposure > 0 else 0,
-            )
+        for index, ((probability, side, asset, score_payload), allocation) in enumerate(zip(new_entries, allocations)):
             if allocation < 100:
                 continue
 
@@ -2194,6 +2861,11 @@ def _mark_strategy_to_market(
     )
     unrealized_pnl = sum(
         to_float(trade.get("resultAmount"))
+        for trade in updated_trades
+        if trade.get("status") != "closed"
+    )
+    current_open_exposure = sum(
+        to_float(trade.get("virtualAmount"))
         for trade in updated_trades
         if trade.get("status") != "closed"
     )
@@ -2256,6 +2928,12 @@ def _mark_strategy_to_market(
         "openTradesCount": sum(1 for trade in updated_trades if trade.get("status") != "closed"),
         "closedTradesCount": len(closed_trades),
         "totalTradesCount": len(updated_trades),
+        "riskSettings": risk_settings,
+        "recoveryState": recovery_state,
+        "boldness": risk_settings.get("boldness"),
+        "effectiveBoldness": recovery_state.get("effectiveBoldness"),
+        "openExposure": round(current_open_exposure, 2),
+        "capitalDeploymentPercent": round((current_open_exposure / start_capital) * 100 if start_capital else 0, 2),
         "chart": chart,
         "chartPoints": chart_points,
         "trades": updated_trades,
@@ -2478,6 +3156,41 @@ async def _record_strategy_learning(user_id: Any, strategy_id: str, payload: dic
                     json.dumps(lesson),
                     STRATEGY_MEMORY_SCORE_LIMIT,
                 )
+                decision_id = str(trade.get("aiDecisionId") or "")
+                try:
+                    UUID(decision_id)
+                except Exception:
+                    decision_id = ""
+
+                if decision_id:
+                    opened_at = _parse_strategy_datetime(trade.get("executedAt"))
+                    closed_at = _parse_strategy_datetime(trade.get("closedAt"))
+                    time_to_exit_seconds = (
+                        int((closed_at - opened_at).total_seconds())
+                        if opened_at and closed_at
+                        else None
+                    )
+                    await connection.execute(
+                        """
+                        update ai_trade_decisions
+                        set result = $4,
+                            pnl_percent = $5,
+                            pnl_amount = $6,
+                            time_to_exit_seconds = $7,
+                            exit_reason = $8
+                        where id = $1::uuid
+                          and user_id = $2
+                          and strategy_id = $3
+                        """,
+                        decision_id,
+                        user_id,
+                        strategy_id,
+                        event_type,
+                        result_percent,
+                        result_amount,
+                        time_to_exit_seconds,
+                        close_reason,
+                    )
                 inserted_events.append({
                     "assetSymbol": asset_symbol,
                     "eventType": event_type,
@@ -2496,6 +3209,23 @@ async def _record_strategy_learning(user_id: Any, strategy_id: str, payload: dic
             event["assetSymbol"],
             event,
         )
+
+
+def _schedule_strategy_learning(user_id: Any, strategy_id: str, payload: dict[str, Any]) -> None:
+    try:
+        payload_copy = json.loads(json.dumps(payload, default=str))
+    except Exception:
+        payload_copy = payload
+
+    task = asyncio.create_task(_record_strategy_learning(user_id, strategy_id, payload_copy))
+
+    def _log_learning_error(done_task: asyncio.Task) -> None:
+        try:
+            done_task.result()
+        except Exception:
+            logger.exception("Strategy learning task failed", extra={"strategy_id": strategy_id})
+
+    task.add_done_callback(_log_learning_error)
 
 
 def _safe_json_payload(value: Any, fallback: Any) -> Any:
@@ -2709,6 +3439,7 @@ async def _load_strategy_lifetime(user_id: Any, strategy_id: str) -> dict[str, A
     trades: list[dict[str, Any]] = []
     seen_points: set[str] = set()
     first_start_capital: float | None = None
+    latest_run_date = max((row["run_date"] for row in rows), default=None)
 
     for row in rows:
         if first_start_capital is None:
@@ -2782,6 +3513,11 @@ async def _load_strategy_lifetime(user_id: Any, strategy_id: str) -> dict[str, A
 
         for trade in row_trades if isinstance(row_trades, list) else []:
             if not isinstance(trade, dict):
+                continue
+
+            # Older daily runs can contain positions that were open when the day
+            # rolled over. They are historical state, not current exposure.
+            if trade.get("status") != "closed" and row["run_date"] != latest_run_date:
                 continue
 
             trades.append({
@@ -2949,6 +3685,10 @@ async def _get_or_create_strategy_run(
     pool = get_database_pool()
     connection_settings = await _load_strategy_connection(user_id, strategy_id)
     strategy_memory: dict[str, dict[str, Any]] = {}
+    try:
+        strategy_memory = await _load_strategy_memory(user_id, strategy_id)
+    except Exception:
+        logger.exception("Failed to load strategy memory", extra={"strategy_id": strategy_id})
     configured_capital_amount = float(
         start_capital
         or (connection_settings.get("virtualCapital") if connection_settings else None)
@@ -2996,6 +3736,7 @@ async def _get_or_create_strategy_run(
             await _record_strategy_audit_logs(user_id, strategy_id, run_date, updated_payload)
             await _record_strategy_ai_decisions(user_id, strategy_id, updated_payload)
             await _record_paper_strategy_trades(user_id, strategy_id, updated_payload)
+            _schedule_strategy_learning(user_id, strategy_id, updated_payload)
             return await _attach_strategy_lifetime(user_id, updated_payload)
 
     candidates = candidates if candidates is not None else await _load_strategy_candidates(user_id)
@@ -3013,6 +3754,7 @@ async def _get_or_create_strategy_run(
     await _record_strategy_audit_logs(user_id, strategy_id, run_date, payload)
     await _record_strategy_ai_decisions(user_id, strategy_id, payload)
     await _record_paper_strategy_trades(user_id, strategy_id, payload)
+    _schedule_strategy_learning(user_id, strategy_id, payload)
 
     return await _attach_strategy_lifetime(user_id, {**payload, "runDate": run_date.isoformat()})
 
@@ -3133,16 +3875,23 @@ async def _load_strategy_snapshot_from_database(user_id: Any) -> list[dict[str, 
 
 async def _refresh_strategy_response_cache(user_id: Any) -> dict[str, Any] | None:
     try:
+        active_strategy_ids = await _load_active_strategy_ids(user_id)
+        if not active_strategy_ids:
+            payload = _build_strategy_response([], refreshing=False)
+            _set_cached_strategy_response(user_id, payload)
+            return payload
+
         candidates = await _load_strategy_candidates(user_id)
         results = await asyncio.gather(*[
             _get_or_create_strategy_run(user_id, strategy_id, candidates=candidates)
-            for strategy_id in PAPER_STRATEGY_IDS
+            for strategy_id in active_strategy_ids
         ], return_exceptions=True)
         items = [item for item in results if isinstance(item, dict)]
         payload = _build_strategy_response(items, refreshing=False)
         _set_cached_strategy_response(user_id, payload)
         return payload
     except Exception:
+        logger.exception("Failed to refresh strategy response cache", extra={"user_id": str(user_id)})
         return None
 
 
@@ -3638,11 +4387,28 @@ async def get_ai_strategies(current_user=Depends(get_current_user)):
         return cached_response
 
     try:
+        active_strategy_ids = await asyncio.wait_for(
+            _load_active_strategy_ids(current_user["id"]),
+            timeout=STRATEGY_SNAPSHOT_TIMEOUT_SECONDS,
+        )
+    except Exception:
+        logger.exception("Failed to load active strategy ids", extra={"user_id": str(current_user["id"])})
+        active_strategy_ids = []
+
+    if not active_strategy_ids:
+        return _build_strategy_response([], refreshing=False)
+
+    try:
         snapshot_items = await asyncio.wait_for(
             _load_strategy_snapshot_from_database(current_user["id"]),
             timeout=STRATEGY_SNAPSHOT_TIMEOUT_SECONDS,
         )
+        snapshot_items = [
+            item for item in snapshot_items
+            if item.get("id") in active_strategy_ids
+        ]
     except Exception:
+        logger.exception("Failed to load strategy snapshot", extra={"user_id": str(current_user["id"])})
         snapshot_items = []
 
     _schedule_strategy_response_refresh(current_user["id"])
@@ -3819,10 +4585,8 @@ async def reset_ai_strategy_history(
         await connection.execute(
             """
             delete from ai_trade_decisions
-            where user_id = $1 and (
-                strategy_id = any($2::varchar[])
-                or strategy_id is null
-            )
+            where user_id = $1
+              and strategy_id = any($2::varchar[])
             """,
             current_user["id"],
             strategy_ids,
@@ -3927,7 +4691,12 @@ async def connect_ai_strategy(
     )
     _invalidate_strategy_response_cache(current_user["id"])
     try:
+        active_strategy_ids = await _load_active_strategy_ids(current_user["id"])
         snapshot_items = await _load_strategy_snapshot_from_database(current_user["id"])
+        snapshot_items = [
+            item for item in snapshot_items
+            if item.get("id") in active_strategy_ids
+        ]
         _set_cached_strategy_response(
             current_user["id"],
             _build_strategy_response(snapshot_items, refreshing=False),
@@ -3952,6 +4721,37 @@ async def connect_ai_strategy(
     }
 
 
+@router.post("/ai/strategies/{strategy_id}/disconnect")
+async def disconnect_ai_strategy(
+    strategy_id: str,
+    current_user=Depends(get_current_user),
+):
+    if strategy_id not in PAPER_STRATEGY_IDS:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Стратегия не найдена")
+
+    pool = get_database_pool()
+    async with pool.acquire() as connection:
+        result = await connection.execute(
+            """
+            update ai_strategy_connections
+            set is_active = false,
+                updated_at = now()
+            where user_id = $1 and strategy_id = $2
+            """,
+            current_user["id"],
+            strategy_id,
+        )
+
+    _invalidate_strategy_response_cache(current_user["id"])
+
+    return {
+        "disconnected": True,
+        "strategyId": strategy_id,
+        "status": result,
+        "updatedAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 async def run_due_paper_strategies_for_all_users() -> None:
     pool = get_database_pool()
 
@@ -3960,24 +4760,16 @@ async def run_due_paper_strategies_for_all_users() -> None:
             """
             select
                 users.id as user_id,
-                coalesce(
-                    array_agg(distinct ai_strategy_connections.strategy_id)
-                        filter (where ai_strategy_connections.is_active = true),
-                    array[]::varchar[]
-                ) as strategy_ids
+                array_agg(distinct ai_strategy_connections.strategy_id) as strategy_ids
             from users
-            left join ai_strategy_connections
+            join ai_strategy_connections
                 on ai_strategy_connections.user_id = users.id
-            where users.id in (
-                select user_id from ai_strategy_connections where is_active = true
-                union
-                select user_id from ai_paper_strategy_runs
-                union
-                select user_id from user_ai_settings
-            )
+               and ai_strategy_connections.is_active = true
+               and ai_strategy_connections.strategy_id = any($1::varchar[])
             group by users.id
             limit 100
-            """
+            """,
+            list(PAPER_STRATEGY_IDS),
         )
 
     for row in rows:
@@ -3987,16 +4779,28 @@ async def run_due_paper_strategies_for_all_users() -> None:
             for strategy_id in (row["strategy_ids"] or [])
             if strategy_id in PAPER_STRATEGY_IDS
         ]
-        strategy_ids = list(dict.fromkeys([*active_strategy_ids, *PAPER_STRATEGY_IDS]))
+        strategy_ids = list(dict.fromkeys(active_strategy_ids))
 
         if not strategy_ids:
             continue
 
-        candidates = await _load_strategy_candidates(user_id)
-        results = await asyncio.gather(*[
-            _get_or_create_strategy_run(user_id, strategy_id, candidates=candidates)
-            for strategy_id in strategy_ids
-        ], return_exceptions=True)
+        try:
+            candidates = await _load_strategy_candidates(user_id)
+            results = await asyncio.gather(*[
+                _get_or_create_strategy_run(user_id, strategy_id, candidates=candidates)
+                for strategy_id in strategy_ids
+            ], return_exceptions=True)
+        except Exception:
+            logger.exception("Failed to run due paper strategies", extra={"user_id": str(user_id)})
+            continue
+
+        for result in results:
+            if isinstance(result, Exception):
+                logger.error(
+                    "Paper strategy update failed",
+                    exc_info=(type(result), result, result.__traceback__),
+                    extra={"user_id": str(user_id)},
+                )
         items = [item for item in results if isinstance(item, dict)]
         if items:
             _set_cached_strategy_response(user_id, _build_strategy_response(items, refreshing=False))
@@ -4013,7 +4817,7 @@ async def paper_strategy_scheduler(stop_event: asyncio.Event) -> None:
         try:
             await run_due_paper_strategies_for_all_users()
         except Exception:
-            pass
+            logger.exception("Paper strategy scheduler iteration failed")
 
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=PAPER_SCHEDULER_INTERVAL_SECONDS)
