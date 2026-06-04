@@ -4,6 +4,7 @@ from decimal import Decimal
 import unittest
 
 from src.wallets_router import (
+    _current_value_percent_from_change,
     _merge_wallet_assets_by_identity,
     _portfolio_change_value,
     _yield_percent_from_change,
@@ -20,6 +21,14 @@ class WalletPortfolioTest(unittest.TestCase):
         change_value = _portfolio_change_value(Decimal("60.92"), Decimal("5.62"))
 
         self.assertEqual(round(float(change_value), 2), 3.24)
+
+    def test_total_portfolio_change_percent_uses_current_value(self):
+        change_percent = _current_value_percent_from_change(
+            Decimal("64.52"),
+            Decimal("2.91"),
+        )
+
+        self.assertEqual(round(float(change_percent), 2), 4.51)
 
     def test_merge_tbank_cash_and_money_position_deduplicates_usd_asset(self):
         merged_assets = _merge_wallet_assets_by_identity([

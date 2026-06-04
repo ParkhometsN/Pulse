@@ -212,6 +212,14 @@ def _yield_percent_from_change(total_value: Decimal, change_value: Decimal) -> D
     )
 
 
+def _current_value_percent_from_change(total_value: Decimal, change_value: Decimal) -> Decimal:
+    return (
+        change_value / total_value * Decimal("100")
+        if total_value > 0
+        else Decimal("0")
+    )
+
+
 def _normalize_asset_type(instrument_type: str | None) -> str:
     normalized_type = str(instrument_type or "").lower()
 
@@ -2789,8 +2797,7 @@ async def get_portfolio_summary(
     active_wallets = [wallet for wallet in wallets if wallet["status"] == "active"]
     total_value = sum(Decimal(str(wallet["totalValueRub"])) for wallet in active_wallets)
     total_change = sum(Decimal(str(wallet["changeRub"])) for wallet in active_wallets)
-    base_value = total_value - total_change
-    change_percent = (total_change / base_value * Decimal("100")) if base_value > 0 else Decimal("0")
+    change_percent = _current_value_percent_from_change(total_value, total_change)
 
     async with pool.acquire() as connection:
         async with connection.transaction():

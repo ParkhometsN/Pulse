@@ -40,7 +40,7 @@ import { readCachedValue, writeCachedValue } from "../../lib/clientCache";
 const GUIDE_PDF_URL = "/docs/bybitisruction.pdf";
 const TBANK_GUIDE_PDF_URL = "/docs/TBANKAPIINSTUCTIONS.pdf";
 const DASHBOARD_TOP_GROWTH_CACHE_KEY = "pulse:dashboard:top-growth:v1";
-const DASHBOARD_PORTFOLIO_CACHE_KEY = "pulse:dashboard:portfolio-summary:v1";
+const DASHBOARD_PORTFOLIO_CACHE_KEY = "pulse:dashboard:portfolio-summary:v2";
 const DASHBOARD_ANALYTICS_CACHE_KEY = "pulse:dashboard:portfolio-analytics:v1";
 const DASHBOARD_TRADES_CACHE_KEY = "pulse:dashboard:portfolio-trades:v1";
 const DASHBOARD_TOP_GROWTH_CACHE_MAX_AGE = 1000 * 60 * 5;
