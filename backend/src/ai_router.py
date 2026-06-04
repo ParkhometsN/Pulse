@@ -84,6 +84,7 @@ PAPER_SCHEDULER_STARTUP_DELAY_SECONDS = 20
 PAPER_MAX_DAILY_TRADES = 320
 STRATEGY_MEMORY_SCORE_LIMIT = 15
 STRATEGY_GPT_REVIEW_COOLDOWN_HOURS = 12
+ASSET_SCORE_MODEL = "deterministic-v3"
 STRATEGY_CANDIDATES_CACHE_TTL_SECONDS = 45
 STRATEGY_RESPONSE_CACHE_TTL_SECONDS = 12
 STRATEGY_SNAPSHOT_TIMEOUT_SECONDS = 2.0
@@ -299,7 +300,11 @@ def _calculate_asset_score(asset: dict[str, Any]) -> dict[str, Any]:
             composite -= 14
 
     composite = _clamp(composite, 0, 100)
-    data_flags: list[str] = []
+    data_flags: list[str] = [
+        str(flag)
+        for flag in (asset.get("dataQualityFlags") or [])
+        if flag
+    ]
 
     if len(closes) < 3:
         data_flags.append("short_chart_history")
@@ -326,6 +331,18 @@ def _calculate_asset_score(asset: dict[str, Any]) -> dict[str, Any]:
     )
     signal = _format_signal(composite, confidence)
     target_move = _clamp((composite - 50) / 100 * max(6, volatility * 1.8), -18, 18)
+
+    severe_data_flags = {
+        "ticker_only_fallback",
+        "short_chart_history",
+        "missing_intraday_confirmation",
+        "missing_turnover",
+    }
+    if any(flag in severe_data_flags for flag in data_flags):
+        # При слабом покрытии данных таргет должен быть осторожным:
+        # лучше узкий research-сценарий, чем уверенный прогноз из одного тикера.
+        target_move *= 0.45
+
     target_price = current_price * (1 + target_move / 100) if current_price > 0 else 0
     range_width = max(abs(target_move) * 0.38, min(max(volatility, 1.2), 8))
     target_range_low = target_price * (1 - range_width / 100) if target_price > 0 else 0
@@ -502,7 +519,8 @@ async def _call_openai_asset_summary(
         },
         "model_forecast": score_payload,
         "format": (
-            "4-6 небольших абзацев. Объясни драйверы, риски, качество данных и почему сигнал BUY/HOLD/SELL/NO_SIGNAL. "
+            "5 коротких блоков с заголовками: Коротко, Что поддерживает сценарий, Что против, "
+            "Качество данных, Итог. Не повторяй один и тот же шаблон; адаптируй текст под цифры актива. "
             "Не выдумывай точные факты без источников. Если данных мало, прямо скажи об этом."
         ),
     }
@@ -731,7 +749,7 @@ def _build_unavailable_score_payload(symbol: str, asset_type: str) -> dict[str, 
         "targetPrice": 0,
         "targetRangeLow": 0,
         "targetRangeHigh": 0,
-        "model": "deterministic-v2",
+        "model": ASSET_SCORE_MODEL,
         "summary": "AI-прогноз временно ограничен: рыночный провайдер не ответил. На фронте используется локальный дневной расчет по последним данным актива.",
         "factors": {},
         "riskFlags": ["market_provider_unavailable"],
@@ -3980,6 +3998,7 @@ async def get_ai_asset_score(
                    factors, source_manifest, data_quality_flags, created_at
             from ai_asset_scores
             where user_id = $1 and asset_type = $2 and symbol = $3
+              and model = $4
               and created_at >= date_trunc('day', now() at time zone 'Europe/Moscow') at time zone 'Europe/Moscow'
             order by created_at desc
             limit 1
@@ -3987,6 +4006,7 @@ async def get_ai_asset_score(
             current_user["id"],
             asset_type,
             normalized_symbol,
+            ASSET_SCORE_MODEL,
         )
 
     if cached:
@@ -4013,7 +4033,7 @@ async def get_ai_asset_score(
         return _build_unavailable_score_payload(normalized_symbol, asset_type)
 
     score_payload = _calculate_asset_score(asset)
-    model = "deterministic-v2"
+    model = ASSET_SCORE_MODEL
     final_score = _clamp(score_payload["score"], 0, 100)
     final_payload = {
         **score_payload,
@@ -4064,12 +4084,28 @@ async def get_ai_asset_summary(
     if not summary:
         flags = score_payload.get("dataQualityFlags") or []
         signal = score_payload.get("signal") or "NO_SIGNAL"
+        factors = score_payload.get("factors") or {}
+        score = round(float(score_payload.get("score") or 0), 1)
+        change_1d = factors.get("change1d")
+        volatility = factors.get("volatility")
+        liquidity = factors.get("liquidity")
+        target_move = score_payload.get("targetMovePercent")
+        data_note = (
+            "Данных достаточно для базовой оценки."
+            if not flags
+            else f"Есть ограничения качества данных: {', '.join(flags)}."
+        )
         summary = (
-            f"{asset.get('name') or normalized_symbol}: модельный сигнал {signal}, "
-            f"вероятность {score_payload.get('score')}%. "
-            "Расчет построен на динамике цены, волатильности, ликвидности и устойчивости тренда. "
-            "GPT-расширение сейчас недоступно или ключ не подключен, поэтому показана локальная сводка. "
-            f"Флаги качества данных: {', '.join(flags) if flags else 'критичных ограничений не найдено'}."
+            f"Коротко: {asset.get('name') or normalized_symbol} сейчас получает модельную оценку {score}% "
+            f"и статус {signal}. Это исследовательский сценарий, а не персональная рекомендация.\n\n"
+            f"Что поддерживает сценарий: дневное изменение {change_1d if change_1d is not None else 'н/д'}%, "
+            f"ликвидность оценивается на {liquidity if liquidity is not None else 'н/д'} из 100, "
+            "а расчет смотрит на momentum, качество тренда и волатильность.\n\n"
+            f"Что против: волатильность {volatility if volatility is not None else 'н/д'}% и слабые участки данных "
+            "могут быстро менять картину, поэтому сигнал нельзя воспринимать как готовую сделку.\n\n"
+            f"Качество данных: {data_note} Если виден fallback по тикеру, прогноз специально сжат и осторожен.\n\n"
+            f"Итог: базовый сценарий по модели — движение около {target_move if target_move is not None else 'н/д'}% "
+            "от текущей цены. Для входа все равно нужны стакан, спред, риск-лимит и подтверждение объема."
         )
 
     return {
@@ -4077,7 +4113,7 @@ async def get_ai_asset_summary(
         "assetType": asset_type,
         "title": f"Сводка GPT · {asset.get('name') or normalized_symbol}",
         "summary": summary,
-        "model": model if api_key else "deterministic-v2",
+        "model": model if api_key else ASSET_SCORE_MODEL,
         "score": score_payload["score"],
         "signal": score_payload["signal"],
         "createdAt": datetime.now(timezone.utc).isoformat(),

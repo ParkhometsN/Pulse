@@ -190,16 +190,6 @@ const formatPercent = (value) => {
   return `${number > 0 ? "+" : ""}${number.toFixed(2)}%`;
 };
 
-const formatDecisionPercent = (value, multiplier = 100) => {
-  const number = Number(value);
-
-  if (!Number.isFinite(number)) {
-    return "—";
-  }
-
-  return `${(number * multiplier).toFixed(1).replace(".", ",")}%`;
-};
-
 const formatSignedMoney = (value, currencySymbol) => {
   const number = Number(value) || 0;
   const sign = number > 0 ? "+" : number < 0 ? "-" : "";
@@ -1339,6 +1329,10 @@ export default function CoinPage() {
     key: "",
     title: "Сводка GPT",
     text: "",
+    score: null,
+    signal: "",
+    model: "",
+    createdAt: "",
     isLoading: false,
     error: "",
   });
@@ -2355,7 +2349,6 @@ export default function CoinPage() {
 
   const aiScore = aiScoreState.key === aiScoreKey ? aiScoreState.data : null;
   const aiDecision = aiDecisionState.key === aiScoreKey ? aiDecisionState.data : null;
-  const isAiDecisionLoading = aiDecisionState.key === aiScoreKey && aiDecisionState.isLoading;
   const isAiScoreLoading = aiScoreState.key === aiScoreKey && aiScoreState.isLoading;
   const hasAiScore = Number.isFinite(Number(aiScore?.score));
   const aiProbability = hasAiScore
@@ -2364,36 +2357,14 @@ export default function CoinPage() {
   const aiSignal = hasAiScore
     ? aiScore?.signal || (aiProbability >= 60 ? "BUY" : aiProbability <= 35 ? "SELL" : "HOLD")
     : "NO_SIGNAL";
-	  const aiSignalLabel = {
-	    BUY: "Покупать",
-	    HOLD: "Наблюдать",
-	    SELL: "Продавать",
-	    NO_SIGNAL: "Нет сигнала",
-	  }[aiSignal] || "Наблюдать";
-	  const aiSignalTone = aiSignal === "BUY" ? "positive" : aiSignal === "SELL" ? "negative" : "neutral";
-  const aiDecisionAction = aiDecision?.final_action || aiDecision?.finalAction || "NO_TRADE";
-  const aiDecisionTone = aiDecisionAction === "OPEN_LONG"
-    ? "positive"
-    : aiDecisionAction === "OPEN_SHORT"
-      ? "negative"
-      : "neutral";
-  const aiDecisionStatus = aiDecision?.risk_manager_passed || aiDecision?.riskManagerPassed
-    ? "TRADE_ALLOWED"
-    : aiDecisionAction === "NO_TRADE"
-      ? "NO_TRADE"
-      : "BLOCKED_BY_RISK_MANAGER";
-  const aiDecisionStatusLabel = {
-    TRADE_ALLOWED: "Сделка разрешена",
-    BLOCKED_BY_RISK_MANAGER: "Заблокировано Risk Manager",
-    NO_TRADE: "NO_TRADE",
-  }[aiDecisionStatus];
-  const aiDecisionActionLabel = {
-    OPEN_LONG: "Открыть LONG",
-    OPEN_SHORT: "Открыть SHORT",
-    CLOSE_POSITION: "Закрыть позицию",
-    HOLD: "Держать",
-    NO_TRADE: "Не входить",
-  }[aiDecisionAction] || "Не входить";
+		  const aiSignalLabel = {
+		    BUY: "Покупать",
+		    HOLD: "Наблюдать",
+		    SELL: "Продавать",
+		    NO_SIGNAL: "Нет сигнала",
+		  }[aiSignal] || "Наблюдать";
+		  const aiSignalTone = aiSignal === "BUY" ? "positive" : aiSignal === "SELL" ? "negative" : "neutral";
+
   const applyAiProtectivePlan = useCallback(() => {
     if (currentPrice <= 0) {
       return;
@@ -2448,6 +2419,10 @@ export default function CoinPage() {
       key: aiScoreKey,
       title: currentState.key === aiScoreKey ? currentState.title : "Сводка GPT",
       text: currentState.key === aiScoreKey ? currentState.text : "",
+      score: currentState.key === aiScoreKey ? currentState.score : null,
+      signal: currentState.key === aiScoreKey ? currentState.signal : "",
+      model: currentState.key === aiScoreKey ? currentState.model : "",
+      createdAt: currentState.key === aiScoreKey ? currentState.createdAt : "",
       error: "",
       isLoading: true,
     }));
@@ -2464,6 +2439,10 @@ export default function CoinPage() {
           key: aiScoreKey,
           title: response.data?.title || `Сводка GPT · ${assetName}`,
           text: response.data?.summary || "GPT не вернул текст сводки.",
+          score: response.data?.score ?? null,
+          signal: response.data?.signal || "",
+          model: response.data?.model || "",
+          createdAt: response.data?.createdAt || "",
           error: "",
           isLoading: false,
         });
@@ -2473,6 +2452,10 @@ export default function CoinPage() {
           key: aiScoreKey,
           title: `Сводка GPT · ${assetName}`,
           text: "",
+          score: null,
+          signal: "",
+          model: "",
+          createdAt: "",
           error: getApiErrorText(error, "Не удалось загрузить GPT-сводку."),
           isLoading: false,
         });
@@ -2829,26 +2812,65 @@ export default function CoinPage() {
 
       controller.abort();
     };
-  }, [activeChartRange, asset, assetLoadedKey, chartKey, isOverviewTab, isStock, symbol]);
+	  }, [activeChartRange, asset, assetLoadedKey, chartKey, isOverviewTab, isStock, symbol]);
+
+  const summaryScore = Number(aiSummaryState.score);
+  const summarySignalLabel = {
+    BUY: "Покупать",
+    HOLD: "Наблюдать",
+    SELL: "Продавать",
+    NO_SIGNAL: "Нет сигнала",
+  }[aiSummaryState.signal] || aiSignalLabel;
+  const summarySignalTone = aiSummaryState.signal === "BUY"
+    ? "positive"
+    : aiSummaryState.signal === "SELL"
+      ? "negative"
+      : "neutral";
+  const aiSummaryMetaItems = [
+    Number.isFinite(summaryScore)
+      ? { label: "Оценка", value: `${Math.round(summaryScore)}%`, tone: summarySignalTone }
+      : null,
+    { label: "Сигнал", value: summarySignalLabel, tone: summarySignalTone },
+    aiSummaryState.model
+      ? { label: "Модель", value: aiSummaryState.model, tone: "neutral" }
+      : null,
+  ].filter(Boolean);
+  const aiSummarySubtitle = `${assetName || symbol} · ${formatMoney(currentPrice, currencySymbol)}`;
+  const renderAiSummaryParagraph = (paragraph, index) => {
+    const cleanParagraph = String(paragraph || "").replace(/^[-•]\s*/, "").trim();
+    const separatorIndex = cleanParagraph.indexOf(":");
+    const hasHeading = separatorIndex > 0 && separatorIndex <= 34;
+
+    if (hasHeading) {
+      return (
+        <section className="TextAlert-section" key={`ai-summary-${index}`}>
+          <h3>{cleanParagraph.slice(0, separatorIndex)}</h3>
+          <p>{cleanParagraph.slice(separatorIndex + 1).trim()}</p>
+        </section>
+      );
+    }
+
+    return <p className="TextAlert-paragraph" key={`ai-summary-${index}`}>{cleanParagraph}</p>;
+  };
 
 
   return (
     <div className="app_pages">
 	          <div className="app_content">
 		        {textAlert && (
-		            <TextAlert
-		              TextAlertButton = {() => setTesxtAlert(false)}
-		              title={aiSummaryState.title}
-		              isLoading={aiSummaryState.isLoading}
-		              error={aiSummaryState.error}
-		            >
-		              {normalizeTextContent(aiSummaryState.text, "Сводка пока не загружена.")
-		                .split(/\n+/)
-		                .filter(Boolean)
-		                .map((paragraph, index) => (
-	                  <p key={`ai-summary-${index}`}>{paragraph}</p>
-	                ))}
-	            </TextAlert>
+			            <TextAlert
+			              TextAlertButton = {() => setTesxtAlert(false)}
+			              title={aiSummaryState.title}
+                    subtitle={aiSummarySubtitle}
+                    metaItems={aiSummaryMetaItems}
+			              isLoading={aiSummaryState.isLoading}
+			              error={aiSummaryState.error}
+			            >
+			              {normalizeTextContent(aiSummaryState.text, "Сводка пока не загружена.")
+			                .split(/\n+/)
+			                .filter(Boolean)
+			                .map(renderAiSummaryParagraph)}
+		            </TextAlert>
 	        )}
 
         {tradeSuccessAlert ? (
@@ -3446,72 +3468,7 @@ export default function CoinPage() {
 	                              </div>
 	                            </div>
 	                          </div>
-                            <div className="ai_trade_decision_card">
-                              {isAiDecisionLoading && !aiDecision ? (
-                                <LoaderAnimation height={90} rounded="16px" />
-                              ) : aiDecision ? (
-                                <>
-                                  <div className="ai_trade_decision_header">
-                                    <span className={`ai_trade_decision_status ai_trade_decision_status_${aiDecisionTone}`}>
-                                      {aiDecisionStatusLabel}
-                                    </span>
-                                    <strong>{aiDecisionActionLabel}</strong>
-                                  </div>
-                                  <div className="ai_trade_decision_grid">
-                                    <div>
-                                      <span>Стратегия</span>
-                                      <strong>{aiDecision.strategy_type || aiDecision.strategyType}</strong>
-                                    </div>
-                                    <div>
-                                      <span>P(TP раньше SL)</span>
-                                      <strong>{formatDecisionPercent(aiDecision.probability_tp_before_sl ?? aiDecision.probabilityTpBeforeSl)}</strong>
-                                    </div>
-                                    <div>
-                                      <span>EV после комиссий</span>
-                                      <strong className={`forecast_delta_${Number(aiDecision.expected_value_percent ?? aiDecision.expectedValuePercent) >= 0 ? "positive" : "negative"}`}>
-                                        {formatPercent(aiDecision.expected_value_percent ?? aiDecision.expectedValuePercent)}
-                                      </strong>
-                                    </div>
-                                    <div>
-                                      <span>Risk/Reward</span>
-                                      <strong>{formatNumber(aiDecision.risk_reward ?? aiDecision.riskReward, 2, 2)}</strong>
-                                    </div>
-                                    <div>
-                                      <span>Режим рынка</span>
-                                      <strong>{aiDecision.market_regime || aiDecision.marketRegime}</strong>
-                                    </div>
-                                    <div>
-                                      <span>Размер позиции</span>
-                                      <strong>{formatPercent(aiDecision.position_size_percent ?? aiDecision.positionSizePercent)}</strong>
-                                    </div>
-                                  </div>
-                                  {(aiDecision.rejection_reason || aiDecision.rejectionReason) ? (
-                                    <p className="ai_trade_decision_rejection">
-                                      {aiDecision.rejection_reason || aiDecision.rejectionReason}
-                                    </p>
-                                  ) : null}
-                                  <div className="ai_trade_decision_reasons">
-                                    <div>
-                                      <span>За сделку</span>
-                                      {(aiDecision.reasons_for || aiDecision.reasonsFor || []).slice(0, 3).map((reason) => (
-                                        <p key={`for-${reason}`}>{reason}</p>
-                                      ))}
-                                    </div>
-                                    <div>
-                                      <span>Против</span>
-                                      {(aiDecision.reasons_against || aiDecision.reasonsAgainst || []).slice(0, 3).map((reason) => (
-                                        <p key={`against-${reason}`}>{reason}</p>
-                                      ))}
-                                    </div>
-                                  </div>
-                                </>
-                              ) : (
-                                <p className="ai_trade_decision_rejection">
-                                  {aiDecisionState.error || "AI Trading Brain пока не вернул решение."}
-                                </p>
-                              )}
-                            </div>
-	                          <div className="downAIBlock">
+		                          <div className="downAIBlock">
 	                            <div className="tbysell flex items-center gap-[8px]">
 	                              <p className={`ai_signal_text ai_signal_text_${aiSignalTone}`}>{aiSignalLabel}</p>
 	                              <Buttons onClick ={getTextAlert}  type='nm_black_prymary'>Сводка</Buttons>

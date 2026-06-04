@@ -487,9 +487,82 @@ html{
   padding: 20px;
   background-color: var(--black);
   height: 60vh;
-  max-width: 600px;
+  width: min(680px, calc(100vw - 28px));
+  max-width: 680px;
   overflow-x: hidden;
   overflow-y: auto;
+  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.42);
+}
+.TextAlert-eyebrow {
+  display: inline-flex;
+  margin-bottom: 6px;
+  color: var(--primary-blue);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.TextAlert-subtitle {
+  margin-top: -4px;
+  color: var(--gray);
+  font-size: 13px;
+  line-height: 1.35;
+}
+.TextAlert-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 4px 0 2px;
+}
+.TextAlert-meta_item {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 32px;
+  padding: 7px 10px;
+  border: 1px solid var(--black-t);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--gray);
+}
+.TextAlert-meta_item small {
+  color: var(--gray);
+  font-size: 11px;
+}
+.TextAlert-meta_item strong {
+  color: white;
+  font-size: 12px;
+  font-weight: 700;
+}
+.TextAlert-meta_item_positive strong {
+  color: var(--green);
+}
+.TextAlert-meta_item_negative strong {
+  color: var(--red);
+}
+.TextAlert-body {
+  display: grid;
+  gap: 10px;
+}
+.TextAlert-section,
+.TextAlert-paragraph {
+  margin: 0;
+  padding: 13px 14px;
+  border: 1px solid var(--black-t);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.028);
+}
+.TextAlert-section h3 {
+  margin: 0 0 6px;
+  color: white;
+  font-size: 13px;
+  font-weight: 800;
+}
+.TextAlert-section p,
+.TextAlert-paragraph {
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 13px;
+  line-height: 1.55;
 }
 .shure_conteuner{
   display: flex;
@@ -569,7 +642,8 @@ html{
     padding: 20px;
     background-color: var(--black);
     height: 100%;
-    max-width: 600px;
+    width: 100%;
+    max-width: 680px;
     overflow-x: hidden;
     overflow-y: auto;
 }
