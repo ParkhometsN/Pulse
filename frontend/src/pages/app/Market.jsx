@@ -25,6 +25,7 @@ const marketCacheKey = (type, page, source = "default") => `pulse:market:${type}
 const STABLE_CRYPTO_SYMBOLS = new Set(["USDT", "USDC", "DAI", "USD", "BUSD"]);
 const STOCK_SOURCE_TBANK = "tbank";
 const STOCK_SOURCE_MOEX = "moex";
+const STRATEGY_NEUTRAL_CHART_COLOR = "rgba(255, 255, 255, 0.42)";
 
 const MARKET_STRATEGIES = [
   {
@@ -34,7 +35,7 @@ const MARKET_STRATEGIES = [
       "Короткосрочная momentum-стратегия: ищет ликвидные активы, которые уже ускоряются сегодня, и быстро фиксирует движение.",
     tag: "Scalp",
     direction: "Импульс",
-    chartColor: "var(--green)",
+    chartColor: STRATEGY_NEUTRAL_CHART_COLOR,
     chart: [100000, 100000, 100000, 100000],
     stats: [
       { label: "Модель", value: "Scalp AI" },
@@ -53,7 +54,7 @@ const MARKET_STRATEGIES = [
       "Стратегия ищет активы с сильным восходящим импульсом и открывает long-сделки только при вероятности сигнала от 60%.",
     tag: "Long",
     direction: "Растет",
-    chartColor: "var(--green)",
+    chartColor: STRATEGY_NEUTRAL_CHART_COLOR,
     chart: [100000, 100000, 100000, 100000],
     stats: [
       { label: "Модель", value: "Growth AI" },
@@ -72,7 +73,7 @@ const MARKET_STRATEGIES = [
       "Гибридная стратегия сравнивает вероятность роста и падения, выбирает более сильное направление и ведет капитал по выбранному рынку.",
     tag: "Hybrid",
     direction: "Смешанный",
-    chartColor: "var(--primary-blue)",
+    chartColor: STRATEGY_NEUTRAL_CHART_COLOR,
     chart: [100000, 100000, 100000, 100000],
     stats: [
       { label: "Модель", value: "Hybrid AI" },
@@ -617,7 +618,9 @@ const mergeStrategyRun = (baseStrategy, run) => {
     ...baseStrategy,
     chart: Array.isArray(run.chart) && run.chart.length > 1 ? run.chart : baseStrategy.chart,
     chartPoints: Array.isArray(run.chartPoints) && run.chartPoints.length > 1 ? run.chartPoints : null,
-    chartColor: roi === 0 ? baseStrategy.chartColor : getStrategyToneColor(getStrategyTone(roi)),
+    chartColor: Math.abs(roi) < 0.01
+      ? STRATEGY_NEUTRAL_CHART_COLOR
+      : getStrategyToneColor(getStrategyTone(roi)),
     startedAt: run.startedAt,
     realizedProfit: Number(run.realizedProfit ?? run.profit ?? 0),
     unrealizedProfit: Number(run.unrealizedProfit ?? 0),
@@ -686,9 +689,12 @@ function StrategyLineChart({ values = [], color = "var(--primary-blue)", size = 
   const min = Math.min(...chartValues);
   const max = Math.max(...chartValues);
   const range = max - min || 1;
+  const isFlat = max === min;
   const chartPoints = chartValues.map((value, index) => {
       const x = padding + (index / Math.max(chartValues.length - 1, 1)) * (width - padding * 2);
-      const y = height - padding - ((value - min) / range) * (height - padding * 2);
+      const y = isFlat
+        ? height / 2
+        : height - padding - ((value - min) / range) * (height - padding * 2);
 
       return { x, y };
     });
@@ -1401,6 +1407,11 @@ function StrategyDrawer({
               <div className="strategy_section_title">
                 <h3>Открытые позиции</h3>
                 <p>Что стратегия держит прямо сейчас</p>
+                <LoaderAnimation
+                  variant="spinner"
+                  label="AI анализирует рынок"
+                  className="strategy_live_loader"
+                />
               </div>
               <div className="strategy_history_list strategy_history_list_preview">
                 {strategy.history.map((item) => {
@@ -1944,11 +1955,6 @@ export default function Market() {
                         {strategiesError ? (
                           <p className="market_error">{strategiesError}</p>
                         ) : null}
-                    {!isStrategiesLoading && strategyRuns.length === 0 ? (
-                      <p className="strategy_empty_notice">
-                        Стратегии пока не подключены. Откройте карточку и нажмите «Подключить стратегию», чтобы запустить новый AI-мозг с чистой статистикой.
-                      </p>
-                    ) : null}
 				                    {isStrategiesLoading ? (
 	                          MARKET_STRATEGIES.map((strategy) => (
 	                            <StrategyCardSkeleton key={`strategy-skeleton-${strategy.id}`} />
@@ -2721,12 +2727,8 @@ export default function Market() {
   }, [activePage, fetchStocks]);
 
 		  useEffect(() => {
-		    if (activePage !== "strategies") {
-		      return;
-		    }
-
 		    const initialFetchTimer = window.setTimeout(() => {
-		      fetchStrategies(strategyRuns.length === 0);
+		      fetchStrategies(activePage === "strategies" && strategyRuns.length === 0);
 		    }, 0);
 	    const interval = window.setInterval(() => {
 	      if (document.hidden) {

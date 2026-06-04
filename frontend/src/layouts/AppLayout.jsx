@@ -106,7 +106,27 @@ export default function AppLayout() {
     }, [fetchCurrency]);
 
   const visibleCurrencies = currencies.length > 0 ? currencies : MARQUEE_FALLBACK_CURRENCIES;
-  const marqueeCurrencies = [...visibleCurrencies, ...visibleCurrencies];
+  const renderMarqueeCoin = (coin, index, groupIndex = 0) => {
+    const change24h = Number(coin.change24h) || 0;
+    const color =
+      change24h === 0 ? "#969696" : change24h > 0 ? "#00e0a4" : "#ff3b30";
+
+    return (
+      <div className="coin_mn" key={`${coin.id || coin.name || coin.baseCoin}-${groupIndex}-${index}`}>
+        <CoinIcon
+          baseCoin={coin.baseCoin}
+          iconUrl={coin.iconUrl}
+          label={coin.name}
+        />
+
+        <p>{coin.name}</p>
+
+        <p className="persent_money" style={{ color }}>
+          {change24h.toFixed(2)}%
+        </p>
+      </div>
+    );
+  };
 
   return (
     <div className="MainAppScreen">
@@ -131,28 +151,13 @@ export default function AppLayout() {
               <LoaderAnimation />
             </div>
           ) : (
-            <div className="marquee-content">
-              {marqueeCurrencies.map((coin, index) => {
-                const change24h = Number(coin.change24h) || 0;
-                const color =
-                  change24h === 0 ? "#969696" : change24h > 0 ? "#00e0a4" : "#ff3b30";
-
-                return (
-                  <div className="coin_mn" key={`${coin.id || coin.name || coin.baseCoin}-${index}`}>
-                    <CoinIcon
-                      baseCoin={coin.baseCoin}
-                      iconUrl={coin.iconUrl}
-                      label={coin.name}
-                    />
-
-                    <p>{coin.name}</p>
-
-                    <p className="persent_money" style={{ color }}>
-                      {change24h.toFixed(2)}%
-                    </p>
-                  </div>
-                );
-              })}
+            <div className="marquee_track">
+              <div className="marquee_group">
+                {visibleCurrencies.map((coin, index) => renderMarqueeCoin(coin, index, 0))}
+              </div>
+              <div className="marquee_group" aria-hidden="true">
+                {visibleCurrencies.map((coin, index) => renderMarqueeCoin(coin, index, 1))}
+              </div>
             </div>
           )}
         </div>

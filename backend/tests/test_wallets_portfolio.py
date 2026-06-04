@@ -5,6 +5,7 @@ import unittest
 
 from src.wallets_router import (
     _merge_wallet_assets_by_identity,
+    _portfolio_change_value,
     _yield_percent_from_change,
 )
 
@@ -14,6 +15,11 @@ class WalletPortfolioTest(unittest.TestCase):
         percent = _yield_percent_from_change(Decimal("60.92"), Decimal("3.24"))
 
         self.assertEqual(round(float(percent), 2), 5.62)
+
+    def test_tbank_portfolio_expected_yield_percent_converts_to_money(self):
+        change_value = _portfolio_change_value(Decimal("60.92"), Decimal("5.62"))
+
+        self.assertEqual(round(float(change_value), 2), 3.24)
 
     def test_merge_tbank_cash_and_money_position_deduplicates_usd_asset(self):
         merged_assets = _merge_wallet_assets_by_identity([

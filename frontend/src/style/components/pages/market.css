@@ -305,19 +305,6 @@ grid-template-columns: repeat(1, 1fr);
     pointer-events: none;
 }
 
-.strategy_empty_notice {
-    grid-column: 1 / -1;
-    width: 100%;
-    margin: 0;
-    padding: 14px 16px;
-    border: 1.5px solid rgba(30, 117, 255, 0.24);
-    border-radius: 18px;
-    background: rgba(30, 117, 255, 0.08);
-    color: rgba(255, 255, 255, 0.76);
-    font-size: 13px;
-    line-height: 1.45;
-}
-
 .strategy_skeleton_chart {
     background-image: none;
 }
@@ -723,6 +710,18 @@ grid-template-columns: repeat(1, 1fr);
     display: flex;
     flex-direction: column;
     gap: 8px;
+}
+
+.strategy_live_loader.loaderPulse_wrap {
+    width: fit-content;
+    min-height: 30px;
+    padding: 0 12px;
+    margin-top: 4px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.035);
+    border-color: rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.62);
+    font-size: 11px;
 }
 
 .strategy_history_item {

@@ -5,24 +5,29 @@
     position: relative;
 }
 
-.marquee-content {
+.marquee_track {
+    display: flex;
+    width: max-content;
+    animation: pulseMarqueeTrack 26s linear infinite;
+    will-change: transform;
+}
+
+.marquee_group {
     padding-bottom: 25px;
     padding-top: 14px;
     display: flex;
     gap: 16px;
+    padding-right: 16px;
+    flex: 0 0 auto;
     white-space: nowrap;
-    animation: marquee 15s linear infinite;
-    width: fit-content;
-    min-width: max-content;
-    will-change: transform;
 }
 
-@keyframes marquee {
+@keyframes pulseMarqueeTrack {
     0% {
-        transform: translateX(0);
+        transform: translate3d(0, 0, 0);
     }
     100% {
-        transform: translateX(-50%);
+        transform: translate3d(-50%, 0, 0);
     }
 }
 

@@ -1612,8 +1612,8 @@ async def _build_tbank_wallet_summary(row) -> dict[str, Any]:
 
     portfolio = await tbank_client.get_portfolio(row["api_key"], account_id, "RUB")
     total_value = proto_decimal(_get(portfolio, "totalAmountPortfolio", "total_amount_portfolio"))
-    expected_yield = proto_decimal(_get(portfolio, "expectedYield", "expected_yield"))
-    expected_yield_percent = _yield_percent_from_change(total_value, expected_yield)
+    expected_yield_percent = proto_decimal(_get(portfolio, "expectedYield", "expected_yield"))
+    expected_yield = _portfolio_change_value(total_value, expected_yield_percent)
     positions = portfolio.get("positions", [])
     position_assets = await asyncio.gather(
         *[
