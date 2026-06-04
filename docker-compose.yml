@@ -1,6 +1,13 @@
+x-pulse-logging: &pulse-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   postgres:
     image: postgres:16-alpine
+    logging: *pulse-logging
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-pulse}
       POSTGRES_USER: ${POSTGRES_USER:-pulse_user}
@@ -20,6 +27,7 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+    logging: *pulse-logging
     env_file:
       - ./backend/.env
     environment:
@@ -46,6 +54,7 @@ services:
       dockerfile: Dockerfile
       args:
         VITE_API_BASE_URL: /api
+    logging: *pulse-logging
     environment:
       - NODE_ENV=production
       - VITE_API_BASE_URL=/api

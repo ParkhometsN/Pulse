@@ -223,6 +223,32 @@ html{
   }
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .container_loading_element::after {
+    animation: loaderSurfaceWave 1.8s ease-in-out infinite !important;
+  }
+
+  .loaderPulse_wrap::before {
+    animation: loaderDotPulse 1.6s ease-in-out infinite !important;
+  }
+
+  .loaderPulse_wrap span {
+    animation: loaderTextPulse 1.6s ease-in-out infinite !important;
+  }
+
+  .strategy_skeleton_text span,
+  .strategy_skeleton_text p,
+  .strategy_skeleton_button,
+  .strategy_skeleton_meta,
+  .strategy_skeleton_tag {
+    animation: strategySkeletonWave 1.8s ease-in-out infinite !important;
+  }
+
+  .marquee_track {
+    animation: pulseMarqueeTrack 42s linear infinite !important;
+  }
+}
+
 .content_settingsss,
 .content_settings{
   padding: 20px;
