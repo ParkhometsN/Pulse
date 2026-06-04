@@ -11,6 +11,13 @@ import AreYouShure from "../components/ui/DilogShure";
 const MARQUEE_CACHE_KEY = "pulse:app-layout:marquee:v1";
 const MARQUEE_CACHE_MAX_AGE = 1000 * 60 * 10;
 const MARQUEE_REFRESH_INTERVAL = 1000 * 60;
+const MARQUEE_FALLBACK_CURRENCIES = [
+  { id: "fallback-btc", name: "Bitcoin", baseCoin: "BTC", change24h: 0 },
+  { id: "fallback-eth", name: "Ethereum", baseCoin: "ETH", change24h: 0 },
+  { id: "fallback-usdt", name: "Tether", baseCoin: "USDT", change24h: 0 },
+  { id: "fallback-sol", name: "Solana", baseCoin: "SOL", change24h: 0 },
+  { id: "fallback-ton", name: "Toncoin", baseCoin: "TON", change24h: 0 },
+];
 
 export default function AppLayout() {
     const [currencies, setCurrencies] = useState(
@@ -56,8 +63,10 @@ export default function AppLayout() {
           ? response.data
           : response.data.items || [];
         const nextCurrencies = data.slice(0, 15).map(normalizeCurrency);
-        setCurrencies(nextCurrencies);
-        writeCachedValue(MARQUEE_CACHE_KEY, nextCurrencies);
+        if (nextCurrencies.length > 0) {
+          setCurrencies(nextCurrencies);
+          writeCachedValue(MARQUEE_CACHE_KEY, nextCurrencies);
+        }
       })
       .catch((error) => {
         if (signal?.aborted || error?.code === "ERR_CANCELED") {
@@ -96,6 +105,9 @@ export default function AppLayout() {
       };
     }, [fetchCurrency]);
 
+  const visibleCurrencies = currencies.length > 0 ? currencies : MARQUEE_FALLBACK_CURRENCIES;
+  const marqueeCurrencies = [...visibleCurrencies, ...visibleCurrencies];
+
   return (
     <div className="MainAppScreen">
       <Sidebar 
@@ -120,13 +132,13 @@ export default function AppLayout() {
             </div>
           ) : (
             <div className="marquee-content">
-              {currencies.map((coin, index) => {
+              {marqueeCurrencies.map((coin, index) => {
                 const change24h = Number(coin.change24h) || 0;
                 const color =
                   change24h === 0 ? "#969696" : change24h > 0 ? "#00e0a4" : "#ff3b30";
 
                 return (
-                  <div className="coin_mn" key={coin.id || coin.name || index}>
+                  <div className="coin_mn" key={`${coin.id || coin.name || coin.baseCoin}-${index}`}>
                     <CoinIcon
                       baseCoin={coin.baseCoin}
                       iconUrl={coin.iconUrl}

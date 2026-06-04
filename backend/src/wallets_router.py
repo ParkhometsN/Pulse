@@ -63,6 +63,13 @@ TBANK_MONEY_FIGI_CODES = {
     "USD000UTSTOM": ("USD", "Доллар США"),
     "EUR_RUB__TOM": ("EUR", "Евро"),
 }
+TBANK_MONEY_SYMBOL_ALIASES = {
+    figi: payload[0]
+    for figi, payload in TBANK_MONEY_FIGI_CODES.items()
+}
+TBANK_MONEY_SYMBOL_ALIASES.update({
+    "RUR": "RUB",
+})
 MONEY_ICON_URLS = {
     "RUB": "https://invest-brands.cdn-tinkoff.ru/rublex160.png",
     "RUR": "https://invest-brands.cdn-tinkoff.ru/rublex160.png",
@@ -196,6 +203,15 @@ def _decimal_from_string(value: Any) -> Decimal:
         return Decimal("0")
 
 
+def _yield_percent_from_change(total_value: Decimal, change_value: Decimal) -> Decimal:
+    base_value = total_value - change_value
+    return (
+        change_value / base_value * Decimal("100")
+        if base_value > 0
+        else Decimal("0")
+    )
+
+
 def _normalize_asset_type(instrument_type: str | None) -> str:
     normalized_type = str(instrument_type or "").lower()
 
@@ -206,6 +222,11 @@ def _normalize_asset_type(instrument_type: str | None) -> str:
         return "currency"
 
     return normalized_type or "asset"
+
+
+def _normalize_money_symbol(value: str | None) -> str:
+    normalized_value = str(value or "").strip().upper()
+    return TBANK_MONEY_SYMBOL_ALIASES.get(normalized_value, normalized_value)
 
 
 def _normalize_tbank_symbol(figi: str | None, ticker: str | None, instrument: dict[str, Any]) -> str:
@@ -267,7 +288,7 @@ def _get_tbank_icon_url(instrument: dict[str, Any], symbol: str, asset_type: str
 
 
 def _get_money_icon_url(currency: str | None) -> str | None:
-    return MONEY_ICON_URLS.get(str(currency or "").upper())
+    return MONEY_ICON_URLS.get(_normalize_money_symbol(currency))
 
 
 def _is_supported_tbank_market_share(instrument: dict[str, Any]) -> bool:
@@ -884,30 +905,86 @@ def _merge_wallet_assets_by_identity(assets: list[dict[str, Any]]) -> list[dict[
             continue
 
         asset_type = str(asset.get("type") or asset.get("assetType") or "").lower()
-        symbol = str(asset.get("symbol") or asset.get("shortName") or asset.get("figi") or "").upper()
+        raw_symbol = str(asset.get("symbol") or asset.get("shortName") or asset.get("figi") or "").upper()
         figi = str(asset.get("figi") or "").upper()
+        if asset_type == "currency":
+            figi_symbol = _normalize_money_symbol(figi)
+            raw_money_symbol = _normalize_money_symbol(raw_symbol)
+            symbol = figi_symbol if figi_symbol in MONEY_ICON_URLS else raw_money_symbol
+        else:
+            symbol = raw_symbol
         identity = ("currency", symbol) if asset_type == "currency" and symbol in MONEY_ICON_URLS else (figi or symbol, asset_type)
 
         if not identity[0]:
             continue
 
+        normalized_asset = dict(asset)
+        if asset_type == "currency" and symbol in MONEY_ICON_URLS:
+            normalized_asset.update({
+                "symbol": symbol,
+                "shortName": symbol,
+                "routeSymbol": symbol,
+                "name": {
+                    "RUB": "Российский рубль",
+                    "USD": "Доллар США",
+                    "EUR": "Евро",
+                    "USDT": "Tether",
+                    "USDC": "USD Coin",
+                }.get(symbol, asset.get("name") or symbol),
+                "type": "currency",
+                "instrumentType": "currency",
+                "iconUrl": asset.get("iconUrl") or _get_money_icon_url(symbol),
+            })
+
         existing = merged_assets.get(identity)
         if not existing:
-            merged_assets[identity] = dict(asset)
+            merged_assets[identity] = normalized_asset
+            continue
+
+        if asset_type == "currency" and str(normalized_asset.get("provider") or existing.get("provider") or "").lower() == "tbank":
+            for numeric_key in ("quantity", "availableQuantity", "valueRub", "valueUsd"):
+                existing[numeric_key] = _decimal_to_precise_float(
+                    max(
+                        _decimal_from_string(existing.get(numeric_key)),
+                        _decimal_from_string(normalized_asset.get(numeric_key)),
+                    ),
+                    8 if numeric_key in {"quantity", "availableQuantity"} else 2,
+                )
+
+            for numeric_key in ("changeRub", "changeUsd"):
+                current_change = _decimal_from_string(existing.get(numeric_key))
+                next_change = _decimal_from_string(normalized_asset.get(numeric_key))
+                existing[numeric_key] = _decimal_to_precise_float(
+                    next_change if abs(next_change) > abs(current_change) else current_change,
+                    2,
+                )
+
+            value_rub = _decimal_from_string(existing.get("valueRub"))
+            change_rub = _decimal_from_string(existing.get("changeRub"))
+            existing["changePercent"] = round(float(_yield_percent_from_change(value_rub, change_rub)), 2)
+            existing["currentPriceRub"] = existing.get("currentPriceRub") or normalized_asset.get("currentPriceRub")
+            existing["currentPriceUsd"] = existing.get("currentPriceUsd") or normalized_asset.get("currentPriceUsd")
+            existing["iconUrl"] = existing.get("iconUrl") or normalized_asset.get("iconUrl")
+            existing["name"] = existing.get("name") or normalized_asset.get("name")
+            existing["shortName"] = existing.get("shortName") or normalized_asset.get("shortName")
+            existing["figi"] = existing.get("figi") or normalized_asset.get("figi")
             continue
 
         for numeric_key in ("quantity", "availableQuantity", "valueRub", "valueUsd", "changeRub", "changeUsd"):
             existing[numeric_key] = _decimal_to_precise_float(
-                _decimal_from_string(existing.get(numeric_key)) + _decimal_from_string(asset.get(numeric_key)),
+                _decimal_from_string(existing.get(numeric_key)) + _decimal_from_string(normalized_asset.get(numeric_key)),
                 8 if numeric_key in {"quantity", "availableQuantity"} else 2,
             )
 
-        existing["currentPriceRub"] = existing.get("currentPriceRub") or asset.get("currentPriceRub")
-        existing["currentPriceUsd"] = existing.get("currentPriceUsd") or asset.get("currentPriceUsd")
-        existing["iconUrl"] = existing.get("iconUrl") or asset.get("iconUrl")
-        existing["name"] = existing.get("name") or asset.get("name")
-        existing["shortName"] = existing.get("shortName") or asset.get("shortName")
-        existing["figi"] = existing.get("figi") or asset.get("figi")
+        value_rub = _decimal_from_string(existing.get("valueRub"))
+        change_rub = _decimal_from_string(existing.get("changeRub"))
+        existing["changePercent"] = round(float(_yield_percent_from_change(value_rub, change_rub)), 2)
+        existing["currentPriceRub"] = existing.get("currentPriceRub") or normalized_asset.get("currentPriceRub")
+        existing["currentPriceUsd"] = existing.get("currentPriceUsd") or normalized_asset.get("currentPriceUsd")
+        existing["iconUrl"] = existing.get("iconUrl") or normalized_asset.get("iconUrl")
+        existing["name"] = existing.get("name") or normalized_asset.get("name")
+        existing["shortName"] = existing.get("shortName") or normalized_asset.get("shortName")
+        existing["figi"] = existing.get("figi") or normalized_asset.get("figi")
 
     return list(merged_assets.values())
 
@@ -1503,11 +1580,7 @@ async def _serialize_tbank_asset(token: str, position: dict[str, Any]) -> dict[s
     )
     normalized_type = _normalize_asset_type(instrument_type)
     symbol = _normalize_tbank_symbol(figi, ticker, instrument)
-    expected_yield_percent = (
-        expected_yield / (asset_value - expected_yield) * Decimal("100")
-        if asset_value - expected_yield > 0
-        else Decimal("0")
-    )
+    expected_yield_percent = _yield_percent_from_change(asset_value, expected_yield)
 
     return {
         "id": figi,
@@ -1539,8 +1612,8 @@ async def _build_tbank_wallet_summary(row) -> dict[str, Any]:
 
     portfolio = await tbank_client.get_portfolio(row["api_key"], account_id, "RUB")
     total_value = proto_decimal(_get(portfolio, "totalAmountPortfolio", "total_amount_portfolio"))
-    expected_yield_percent = proto_decimal(_get(portfolio, "expectedYield", "expected_yield"))
-    change_value = _portfolio_change_value(total_value, expected_yield_percent)
+    expected_yield = proto_decimal(_get(portfolio, "expectedYield", "expected_yield"))
+    expected_yield_percent = _yield_percent_from_change(total_value, expected_yield)
     positions = portfolio.get("positions", [])
     position_assets = await asyncio.gather(
         *[
@@ -1550,13 +1623,13 @@ async def _build_tbank_wallet_summary(row) -> dict[str, Any]:
         ]
     )
     cash_assets = await _load_tbank_cash_assets(row["api_key"], account_id)
-    cash_symbols = {asset["symbol"] for asset in cash_assets}
+    cash_symbols = {_normalize_money_symbol(asset["symbol"]) for asset in cash_assets}
     assets = _merge_wallet_assets_by_identity([
         *cash_assets,
         *[
             asset
             for asset in position_assets
-            if asset["symbol"] not in cash_symbols
+            if _normalize_money_symbol(asset["symbol"]) not in cash_symbols
         ],
     ])
     assets.sort(
@@ -1571,7 +1644,7 @@ async def _build_tbank_wallet_summary(row) -> dict[str, Any]:
         "accountName": account.get("accountName") or "Инвестиционный счет",
         "accountTypeLabel": account.get("accountTypeLabel") or "брокерский счет",
         "totalValueRub": _decimal_to_float(total_value),
-        "changeRub": _decimal_to_float(change_value),
+        "changeRub": _decimal_to_float(expected_yield),
         "changePercent": round(float(expected_yield_percent), 2),
         "assetCount": len([asset for asset in assets if asset["quantity"] != 0]),
         "assets": assets,

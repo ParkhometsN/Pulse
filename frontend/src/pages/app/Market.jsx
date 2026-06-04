@@ -1540,7 +1540,7 @@ export default function Market() {
   const [strategyRuns, setStrategyRuns] = useState(
     () => readCachedValue(STRATEGY_CACHE_KEY, STRATEGY_CACHE_MAX_AGE)?.items || []
   );
-  const [, setIsStrategiesLoading] = useState(
+  const [isStrategiesLoading, setIsStrategiesLoading] = useState(
     activePage === "strategies" && strategyRuns.length === 0
   );
   const [strategiesError, setStrategiesError] = useState("");
@@ -1944,10 +1944,15 @@ export default function Market() {
                         {strategiesError ? (
                           <p className="market_error">{strategiesError}</p>
                         ) : null}
-			                    {strategyRuns.length === 0 ? (
-                          MARKET_STRATEGIES.map((strategy) => (
-                            <StrategyCardSkeleton key={`strategy-skeleton-${strategy.id}`} />
-                          ))
+                    {!isStrategiesLoading && strategyRuns.length === 0 ? (
+                      <p className="strategy_empty_notice">
+                        Стратегии пока не подключены. Откройте карточку и нажмите «Подключить стратегию», чтобы запустить новый AI-мозг с чистой статистикой.
+                      </p>
+                    ) : null}
+				                    {isStrategiesLoading ? (
+	                          MARKET_STRATEGIES.map((strategy) => (
+	                            <StrategyCardSkeleton key={`strategy-skeleton-${strategy.id}`} />
+	                          ))
                         ) : marketStrategies.map((strategy) => {
                           const capital = getStrategyCapital(strategy);
                           const tone = getStrategyTone(capital.roi);

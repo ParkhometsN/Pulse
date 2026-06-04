@@ -13,6 +13,8 @@
     white-space: nowrap;
     animation: marquee 15s linear infinite;
     width: fit-content;
+    min-width: max-content;
+    will-change: transform;
 }
 
 @keyframes marquee {
@@ -47,6 +49,12 @@
     height: 42px;
     padding: 8px 10px 14px 10px;
     box-sizing: border-box;
+}
+
+.marquee_loading .container_loading_element {
+    min-height: 20px !important;
+    height: 20px !important;
+    border-radius: 999px !important;
 }
 
 /* Чтобы не было горизонтального скролла */

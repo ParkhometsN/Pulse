@@ -253,13 +253,20 @@ const LEGACY_TBANK_MONEY_SYMBOLS = {
   RUB000UTSTOM: "RUB",
   USD000UTSTOM: "USD",
   EUR_RUB__TOM: "EUR",
+  RUR: "RUB",
 };
 
 const LEGACY_TBANK_MONEY_NAMES = {
   RUB000UTSTOM: "Российский рубль",
   USD000UTSTOM: "Доллар США",
   EUR_RUB__TOM: "Евро",
+  RUB: "Российский рубль",
+  RUR: "Российский рубль",
+  USD: "Доллар США",
+  EUR: "Евро",
 };
+
+const PORTFOLIO_MONEY_SYMBOLS = new Set(["RUB", "USD", "EUR", "USDT", "USDC"]);
 
 const PROVIDER_ICONS = {
   tbank: Tbankicon,
@@ -288,11 +295,16 @@ const getSafeChangeTone = (value) => {
 const getChartTooltipText = (value) =>
   `${formatRub(value)} ₽`;
 
-const getLegacyDisplaySymbol = (symbol) =>
-  LEGACY_TBANK_MONEY_SYMBOLS[symbol] || symbol;
+const getLegacyDisplaySymbol = (symbol) => {
+  const normalizedSymbol = String(symbol || "").trim().toUpperCase();
+  return LEGACY_TBANK_MONEY_SYMBOLS[normalizedSymbol] || normalizedSymbol;
+};
 
-const getLegacyDisplayName = (name, symbol) =>
-  LEGACY_TBANK_MONEY_NAMES[name] || LEGACY_TBANK_MONEY_NAMES[symbol] || name;
+const getLegacyDisplayName = (name, symbol) => {
+  const normalizedName = String(name || "").trim().toUpperCase();
+  const normalizedSymbol = String(symbol || "").trim().toUpperCase();
+  return LEGACY_TBANK_MONEY_NAMES[normalizedName] || LEGACY_TBANK_MONEY_NAMES[normalizedSymbol] || name;
+};
 
 const formatRub = (value) =>
   Number(value).toLocaleString("ru-RU", {
@@ -325,6 +337,24 @@ const normalizeDisplaySymbol = (symbol) => {
   }
 
   return getLegacyDisplaySymbol(symbol);
+};
+
+const getPortfolioMoneySymbol = (asset) => {
+  const values = [
+    asset?.symbol,
+    asset?.shortName,
+    asset?.coin,
+    asset?.figi,
+  ];
+
+  for (const value of values) {
+    const normalizedValue = getLegacyDisplaySymbol(value);
+    if (PORTFOLIO_MONEY_SYMBOLS.has(normalizedValue)) {
+      return normalizedValue;
+    }
+  }
+
+  return "";
 };
 
 const formatTradeDate = (value) => {
@@ -425,28 +455,58 @@ const getAssetRouteType = (asset) => {
   return "stock";
 };
 
+const getAssetPortfolioGroup = (asset) => {
+  if (asset.type === "currency" || getPortfolioMoneySymbol(asset)) {
+    return "Валюта";
+  }
+
+  return getAssetRouteType(asset) === "crypto" ? "Криптовалюта" : "Акции";
+};
+
 const mergePortfolioCurrencyAssets = (assets) => {
   const merged = new Map();
 
   assets.forEach((asset, index) => {
-    const symbol = normalizeDisplaySymbol(asset.symbol || asset.shortName || asset.coin || "").toUpperCase();
+    const moneySymbol = getPortfolioMoneySymbol(asset);
+    const symbol = moneySymbol || normalizeDisplaySymbol(asset.symbol || asset.shortName || asset.coin || "").toUpperCase();
     const type = String(asset.type || "").toLowerCase();
     const provider = String(asset.provider || "").toLowerCase();
-    const shouldMerge = type === "currency" && symbol;
+    const shouldMerge = Boolean(symbol) && (
+      type === "currency"
+      || type === "money"
+      || (provider === "tbank" && PORTFOLIO_MONEY_SYMBOLS.has(symbol))
+    );
     const key = shouldMerge
       ? `${provider}:currency:${symbol}`
       : `${provider}:${asset.walletId || ""}:${asset.figi || asset.id || asset.symbol || index}`;
 
     if (!shouldMerge || !merged.has(key)) {
-      merged.set(key, { ...asset, symbol });
+      merged.set(key, {
+        ...asset,
+        symbol,
+        shortName: shouldMerge ? symbol : asset.shortName,
+        type: shouldMerge ? "currency" : asset.type,
+        name: shouldMerge ? getLegacyDisplayName(asset.name, symbol) : asset.name,
+      });
       return;
     }
 
     const current = merged.get(key);
-    const nextQuantity = (Number(current.quantity) || 0) + (Number(asset.quantity) || 0);
-    const nextAvailableQuantity = (Number(current.availableQuantity) || 0) + (Number(asset.availableQuantity) || 0);
-    const nextValueRub = (Number(current.valueRub) || 0) + (Number(asset.valueRub) || 0);
-    const nextChangeRub = (Number(current.changeRub) || 0) + (Number(asset.changeRub) || 0);
+    const shouldDedupeTbankMoney = provider === "tbank" && PORTFOLIO_MONEY_SYMBOLS.has(symbol);
+    const currentChangeRub = Number(current.changeRub) || 0;
+    const assetChangeRub = Number(asset.changeRub) || 0;
+    const nextQuantity = shouldDedupeTbankMoney
+      ? Math.max(Number(current.quantity) || 0, Number(asset.quantity) || 0)
+      : (Number(current.quantity) || 0) + (Number(asset.quantity) || 0);
+    const nextAvailableQuantity = shouldDedupeTbankMoney
+      ? Math.max(Number(current.availableQuantity) || 0, Number(asset.availableQuantity) || 0)
+      : (Number(current.availableQuantity) || 0) + (Number(asset.availableQuantity) || 0);
+    const nextValueRub = shouldDedupeTbankMoney
+      ? Math.max(Number(current.valueRub) || 0, Number(asset.valueRub) || 0)
+      : (Number(current.valueRub) || 0) + (Number(asset.valueRub) || 0);
+    const nextChangeRub = shouldDedupeTbankMoney
+      ? (Math.abs(assetChangeRub) > Math.abs(currentChangeRub) ? assetChangeRub : currentChangeRub)
+      : currentChangeRub + assetChangeRub;
 
     merged.set(key, {
       ...current,
@@ -456,6 +516,10 @@ const mergePortfolioCurrencyAssets = (assets) => {
       changeRub: nextChangeRub,
       changePercent: nextValueRub ? (nextChangeRub / Math.max(nextValueRub - nextChangeRub, 1)) * 100 : 0,
       iconUrl: current.iconUrl || asset.iconUrl,
+      symbol,
+      shortName: symbol,
+      type: "currency",
+      name: current.name || getLegacyDisplayName(asset.name, symbol),
     });
   });
 
@@ -541,13 +605,15 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const chartYear = CHART_YEARS[chartYearIndex] || CHART_YEARS[0];
 
-  const fetchPortfolioSummary = useCallback(async ({ silent = false } = {}) => {
+  const fetchPortfolioSummary = useCallback(async ({ silent = false, forceRefresh = false } = {}) => {
     if (!silent) {
       setIsPortfolioLoading(true);
     }
 
     try {
-      const response = await api.get("/portfolio/summary");
+      const response = await api.get("/portfolio/summary", {
+        params: forceRefresh ? { force_refresh: true } : undefined,
+      });
       const nextSummary = {
         ...EMPTY_PORTFOLIO_SUMMARY,
         ...response.data,
@@ -619,14 +685,14 @@ export default function Dashboard() {
   }, []);
 
   useEffect(() => {
-    const refreshPortfolioData = async ({ silent = false } = {}) => {
-      await fetchPortfolioSummary({ silent });
+    const refreshPortfolioData = async ({ silent = false, forceRefresh = false } = {}) => {
+      await fetchPortfolioSummary({ silent, forceRefresh });
       await fetchPortfolioAnalytics();
       await fetchPortfolioTrades();
     };
 
     const initialRefresh = window.setTimeout(() => {
-      refreshPortfolioData();
+      refreshPortfolioData({ forceRefresh: true });
     }, 0);
 
     const refreshInterval = window.setInterval(() => {
@@ -791,7 +857,7 @@ export default function Dashboard() {
   const tradeHistoryGroups = groupTradesByDate(portfolioTrades.items || []);
   const portfolioPieData = (() => {
     const groups = portfolioAssets.reduce((acc, asset) => {
-      const label = getAssetRouteType(asset) === "crypto" ? "Криптовалюта" : "Акции";
+      const label = getAssetPortfolioGroup(asset);
       acc[label] = (acc[label] || 0) + (Number(asset.valueRub) || 0);
       return acc;
     }, {});
@@ -857,7 +923,7 @@ export default function Dashboard() {
         return nextSummary;
       });
       setWalletPendingDelete(null);
-      await fetchPortfolioSummary({ silent: true });
+      await fetchPortfolioSummary({ silent: true, forceRefresh: true });
       await fetchPortfolioAnalytics();
       await fetchPortfolioTrades();
     } catch (error) {
@@ -923,7 +989,7 @@ export default function Dashboard() {
       setApiKey("");
       setApiSecret("");
       setTbankToken("");
-      await fetchPortfolioSummary({ silent: true });
+      await fetchPortfolioSummary({ silent: true, forceRefresh: true });
       await fetchPortfolioAnalytics();
       await fetchPortfolioTrades();
       window.setTimeout(() => {
@@ -1453,6 +1519,7 @@ export default function Dashboard() {
                               )}
                               symbol={normalizeDisplaySymbol(asset.shortName || asset.symbol || asset.coin)}
                               icon={asset.iconUrl}
+                              assetType={asset.type === "currency" ? "crypto" : getAssetRouteType(asset)}
                               priceFrom={formatCompactNumber(asset.quantity)}
                               priceTo={`${formatRub(convertedAssetValue)} ${currency.symbol}`}
                               change={`${formatSignedMoney(convertedAssetChange, currency.symbol)} (${formatPercent(asset.changePercent)})`}
