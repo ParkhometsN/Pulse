@@ -2610,7 +2610,12 @@ def _build_strategy_payload(
 
     now = _strategy_now()
     scheduled_at = _strategy_start_datetime(run_date)
-    start_at = now if run_date == now.date() else scheduled_at
+    # The run_date is a logical trading day that starts at 13:00 MSK. When the
+    # scheduler boots before 13:00 on a clean database, run_date points to the
+    # previous day. New paper entries must still be executed at the real current
+    # time, otherwise they look many hours old and are immediately closed by
+    # time-exit rules.
+    start_at = now if scheduled_at <= now else scheduled_at
     normalized_start_capital = max(float(start_capital or PAPER_START_CAPITAL), 1)
     capital = normalized_start_capital
     chart = [round(capital, 2)]
