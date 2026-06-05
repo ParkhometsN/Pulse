@@ -958,8 +958,8 @@ function StrategyConnectPanel({
   return (
     <div className="strategy_connect_panel">
       <div className="strategy_section_title">
-        <h3>Настройка стратегии</h3>
-        <p>Стратегии работают автономно в paper-режиме. Здесь можно изменить рынок, капитал, валюту и отдельные параметры маржинальной торговли.</p>
+        <h3>Подключение стратегии</h3>
+        <p>Стратегии автономно ведут paper-статистику. Подключение сохраняет выбранный рынок, капитал, валюту и параметры маржинальной торговли для вашей версии стратегии.</p>
       </div>
 
       <div className="strategy_trade_side_switch">
@@ -1010,7 +1010,7 @@ function StrategyConnectPanel({
           <p>{formatStrategyCapital(normalizedAmount || minAmount, capitalCurrency)}</p>
         </div>
         <div className="border_blue">
-          <span>Минимум капитала</span>
+          <span>Минимум подключения</span>
           <p>{formatStrategyCapital(minAmount, capitalCurrency)}</p>
         </div>
       </div>
@@ -1148,15 +1148,15 @@ function StrategyConnectPanel({
       {!message ? (
         <p className={capitalRub < STRATEGY_MIN_CAPITAL_RUB ? "strategy_connect_hint strategy_connect_hint_error" : "strategy_connect_hint"}>
           {capitalRub < STRATEGY_MIN_CAPITAL_RUB
-            ? "Минимальная сумма стратегии — 5 000 ₽."
-            : "После сохранения стратегия продолжит автономную paper-торговлю с обновленными параметрами и отдельной историей."}
+            ? "Минимальная сумма подключения стратегии — 5 000 ₽."
+            : "После подключения стратегия продолжит paper-торговлю с вашими параметрами, отдельно от реального портфеля."}
         </p>
       ) : null}
 
       <div className="strategy_connect_actions">
         <Buttons type="text" onClick={onBack}>Назад</Buttons>
         <Buttons type="primary-full" onClick={onConnect} disabled={isConnecting || capitalRub < STRATEGY_MIN_CAPITAL_RUB}>
-          {isConnecting ? "Сохраняем..." : "Сохранить настройки"}
+          {isConnecting ? "Подключаем..." : "Подключить стратегию"}
         </Buttons>
       </div>
     </div>
@@ -1328,7 +1328,7 @@ function StrategyDrawer({
               <div className="strategy_connect_hero">
                 <span>{strategy.tag}</span>
                 <h2>{strategy.title}</h2>
-                <p>Настрой капитал, рынок, валюту и маржинальный режим. Paper-стратегии работают автономно и без ручного подключения.</p>
+                <p>Изучи автономный результат стратегии и подключи ее к выбранному paper-капиталу, рынку и валюте.</p>
               </div>
             ) : (
               <StrategyCapitalChart strategy={strategy} color={strategy.chartColor} />
@@ -1478,7 +1478,7 @@ function StrategyDrawer({
             </div>
 
             <Buttons type="primary-full" className="strategy_connect_button" onClick={onOpenConnect}>
-              Настроить стратегию
+              Подключить стратегию
             </Buttons>
             <Buttons type="black_prymary-widht" className="strategy_history_button" onClick={onOpenHistory}>
               История стратегии
@@ -1747,7 +1747,7 @@ export default function Market() {
 	    };
 
       if (capitalRub < STRATEGY_MIN_CAPITAL_RUB) {
-        setStrategyConnectMessage("Минимальная сумма стратегии — 5 000 ₽.");
+        setStrategyConnectMessage("Минимальная сумма подключения стратегии — 5 000 ₽.");
         return;
       }
 
@@ -1782,10 +1782,10 @@ export default function Market() {
 	        amount: String(Math.round(normalizedAmount)),
 	      }));
 	      setStrategyConnectMessage(
-	        `Настройки сохранены: ${formatStrategyCapital(normalizedAmount, capitalCurrency)} по ${universeLabels[strategyConnectForm.universe] || "рынку"}.`
+	        `Стратегия подключена на ${formatStrategyCapital(normalizedAmount, capitalCurrency)} по ${universeLabels[strategyConnectForm.universe] || "рынку"}.`
 	      );
 	    } catch {
-	      setStrategyConnectMessage("Не удалось сохранить настройки стратегии. Проверьте backend и попробуйте еще раз.");
+	      setStrategyConnectMessage("Не удалось сохранить подключение стратегии. Проверьте backend и попробуйте еще раз.");
 	    } finally {
 	      setIsConnectingStrategy(false);
 	    }
