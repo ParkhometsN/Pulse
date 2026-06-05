@@ -45,6 +45,7 @@ class Settings(BaseSettings):
     openai_model: str = "gpt-4.1-mini"
     ai_trading_enabled: bool = True
     ai_auto_execution_enabled: bool = False
+    ai_autonomous_paper_strategies_enabled: bool = True
     min_probability_tp_before_sl: float = 0.58
     min_risk_reward: float = 1.2
     min_expected_value_percent: float = 0.05

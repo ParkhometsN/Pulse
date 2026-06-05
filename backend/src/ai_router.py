@@ -60,6 +60,9 @@ PAPER_UNIVERSES = {"crypto", "stocks", "mixed"}
 PAPER_RISK_PROFILES = {"careful", "balanced", "active"}
 PAPER_CAPITAL_CURRENCIES = {"RUB", "USDT", "USD"}
 PAPER_MARGIN_MODES = {"none", "spot_cross", "linear_cross", "linear_isolated"}
+PAPER_AUTONOMOUS_DEFAULT_UNIVERSE = "crypto"
+PAPER_AUTONOMOUS_DEFAULT_RISK_PROFILE = "active"
+PAPER_AUTONOMOUS_DEFAULT_CAPITAL_CURRENCY = "RUB"
 CORE_CRYPTO_SYMBOLS = {"BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "TONUSDT"}
 CORE_STOCK_SYMBOLS = {"SBER", "GAZP", "LKOH", "YDEX", "GMKN", "ROSN", "NVTK", "TATN", "PLZL", "AFLT"}
 PAPER_MIN_CAPITAL_RUB = 5_000.0
@@ -850,6 +853,94 @@ async def _load_active_strategy_ids(user_id: Any) -> list[str]:
         for row in rows
         if row["strategy_id"] in PAPER_STRATEGY_IDS
     ]
+
+
+async def _ensure_autonomous_strategy_connections(user_id: Any) -> list[str]:
+    if not settings.ai_trading_enabled or not settings.ai_autonomous_paper_strategies_enabled:
+        return await _load_active_strategy_ids(user_id)
+
+    pool = get_database_pool()
+
+    async with pool.acquire() as connection:
+        rows = await connection.fetch(
+            """
+            select strategy_id
+            from ai_strategy_connections
+            where user_id = $1
+              and strategy_id = any($2::varchar[])
+            """,
+            user_id,
+            list(PAPER_STRATEGY_IDS),
+        )
+        existing_strategy_ids = {row["strategy_id"] for row in rows}
+        missing_strategy_ids = [
+            strategy_id
+            for strategy_id in PAPER_STRATEGY_IDS
+            if strategy_id not in existing_strategy_ids
+        ]
+
+        if missing_strategy_ids:
+            await connection.executemany(
+                """
+                insert into ai_strategy_connections (
+                    user_id, strategy_id, virtual_capital, universe, risk_profile,
+                    capital_currency, margin_enabled, margin_mode, leverage, is_active
+                )
+                values ($1, $2, $3, $4, $5, $6, false, 'none', 1, true)
+                on conflict (user_id, strategy_id) do nothing
+                """,
+                [
+                    (
+                        user_id,
+                        strategy_id,
+                        PAPER_START_CAPITAL,
+                        PAPER_AUTONOMOUS_DEFAULT_UNIVERSE,
+                        PAPER_AUTONOMOUS_DEFAULT_RISK_PROFILE,
+                        PAPER_AUTONOMOUS_DEFAULT_CAPITAL_CURRENCY,
+                    )
+                    for strategy_id in missing_strategy_ids
+                ],
+            )
+            logger.info(
+                "Bootstrapped autonomous AI paper strategies",
+                extra={
+                    "user_id": str(user_id),
+                    "strategy_ids": ",".join(missing_strategy_ids),
+                },
+            )
+
+    return await _load_active_strategy_ids(user_id)
+
+
+async def _ensure_autonomous_strategy_connections_for_all_users(limit: int = 100) -> None:
+    if not settings.ai_trading_enabled or not settings.ai_autonomous_paper_strategies_enabled:
+        return
+
+    pool = get_database_pool()
+
+    async with pool.acquire() as connection:
+        user_rows = await connection.fetch(
+            """
+            select id
+            from users
+            order by created_at desc
+            limit $1
+            """,
+            limit,
+        )
+
+    if not user_rows:
+        logger.info("Paper strategy scheduler idle: no users found")
+        return
+
+    results = await asyncio.gather(*[
+        _ensure_autonomous_strategy_connections(row["id"])
+        for row in user_rows
+    ], return_exceptions=True)
+
+    failed = sum(1 for result in results if isinstance(result, Exception))
+    if failed:
+        logger.warning("Autonomous strategy bootstrap had failures", extra={"failed_count": failed})
 
 
 async def _record_paper_strategy_trades(user_id: Any, strategy_id: str, payload: dict[str, Any]) -> None:
@@ -3893,7 +3984,7 @@ async def _load_strategy_snapshot_from_database(user_id: Any) -> list[dict[str, 
 
 async def _refresh_strategy_response_cache(user_id: Any) -> dict[str, Any] | None:
     try:
-        active_strategy_ids = await _load_active_strategy_ids(user_id)
+        active_strategy_ids = await _ensure_autonomous_strategy_connections(user_id)
         if not active_strategy_ids:
             payload = _build_strategy_response([], refreshing=False)
             _set_cached_strategy_response(user_id, payload)
@@ -4424,7 +4515,7 @@ async def get_ai_strategies(current_user=Depends(get_current_user)):
 
     try:
         active_strategy_ids = await asyncio.wait_for(
-            _load_active_strategy_ids(current_user["id"]),
+            _ensure_autonomous_strategy_connections(current_user["id"]),
             timeout=STRATEGY_SNAPSHOT_TIMEOUT_SECONDS,
         )
     except Exception:
@@ -4462,6 +4553,7 @@ async def get_ai_strategy_history(
     strategy_id: str | None = Query(default=None, max_length=80),
     current_user=Depends(get_current_user),
 ):
+    await _ensure_autonomous_strategy_connections(current_user["id"])
     strategy_ids = [strategy_id] if strategy_id in PAPER_STRATEGY_IDS else list(PAPER_STRATEGY_IDS)
     cached_candidates = _strategy_candidates_cache.get(str(current_user["id"]))
     if cached_candidates and time.monotonic() - cached_candidates["created_at"] < STRATEGY_CANDIDATES_CACHE_TTL_SECONDS:
@@ -4790,6 +4882,7 @@ async def disconnect_ai_strategy(
 
 async def run_due_paper_strategies_for_all_users() -> None:
     pool = get_database_pool()
+    await _ensure_autonomous_strategy_connections_for_all_users()
 
     async with pool.acquire() as connection:
         rows = await connection.fetch(
@@ -4807,6 +4900,10 @@ async def run_due_paper_strategies_for_all_users() -> None:
             """,
             list(PAPER_STRATEGY_IDS),
         )
+
+    if not rows:
+        logger.info("Paper strategy scheduler idle: no active autonomous strategies")
+        return
 
     for row in rows:
         user_id = row["user_id"]
@@ -4840,6 +4937,14 @@ async def run_due_paper_strategies_for_all_users() -> None:
         items = [item for item in results if isinstance(item, dict)]
         if items:
             _set_cached_strategy_response(user_id, _build_strategy_response(items, refreshing=False))
+            logger.info(
+                "Paper strategies updated",
+                extra={
+                    "user_id": str(user_id),
+                    "strategies_count": len(items),
+                    "candidates_count": len(candidates),
+                },
+            )
 
 
 async def paper_strategy_scheduler(stop_event: asyncio.Event) -> None:

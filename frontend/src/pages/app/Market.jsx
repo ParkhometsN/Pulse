@@ -958,8 +958,8 @@ function StrategyConnectPanel({
   return (
     <div className="strategy_connect_panel">
       <div className="strategy_section_title">
-        <h3>Подключение стратегии</h3>
-        <p>Стратегия подключается к выбранному рынку с лимитом капитала, защитой по минимальной сумме и отдельными параметрами маржинальной торговли.</p>
+        <h3>Настройка стратегии</h3>
+        <p>Стратегии работают автономно в paper-режиме. Здесь можно изменить рынок, капитал, валюту и отдельные параметры маржинальной торговли.</p>
       </div>
 
       <div className="strategy_trade_side_switch">
@@ -1010,7 +1010,7 @@ function StrategyConnectPanel({
           <p>{formatStrategyCapital(normalizedAmount || minAmount, capitalCurrency)}</p>
         </div>
         <div className="border_blue">
-          <span>Минимум подключения</span>
+          <span>Минимум капитала</span>
           <p>{formatStrategyCapital(minAmount, capitalCurrency)}</p>
         </div>
       </div>
@@ -1148,15 +1148,15 @@ function StrategyConnectPanel({
       {!message ? (
         <p className={capitalRub < STRATEGY_MIN_CAPITAL_RUB ? "strategy_connect_hint strategy_connect_hint_error" : "strategy_connect_hint"}>
           {capitalRub < STRATEGY_MIN_CAPITAL_RUB
-            ? "Минимальная сумма подключения стратегии — 5 000 ₽."
-            : "После подключения стратегия стартует с нулевым PnL, сохраняет сделки отдельно от портфеля и ведет историю за всё время."}
+            ? "Минимальная сумма стратегии — 5 000 ₽."
+            : "После сохранения стратегия продолжит автономную paper-торговлю с обновленными параметрами и отдельной историей."}
         </p>
       ) : null}
 
       <div className="strategy_connect_actions">
         <Buttons type="text" onClick={onBack}>Назад</Buttons>
         <Buttons type="primary-full" onClick={onConnect} disabled={isConnecting || capitalRub < STRATEGY_MIN_CAPITAL_RUB}>
-          {isConnecting ? "Подключаем..." : "Подключить стратегию"}
+          {isConnecting ? "Сохраняем..." : "Сохранить настройки"}
         </Buttons>
       </div>
     </div>
@@ -1264,7 +1264,7 @@ function StrategyHistoryPanel({
             </div>
           )) : (
             <div className="strategy_history_empty">
-              История появится после подключения стратегии и первых сигналов.
+              История появится после первых автономных сигналов стратегии.
             </div>
           )}
         </div>
@@ -1328,7 +1328,7 @@ function StrategyDrawer({
               <div className="strategy_connect_hero">
                 <span>{strategy.tag}</span>
                 <h2>{strategy.title}</h2>
-                <p>Настрой капитал, рынок, валюту и маржинальный режим перед подключением стратегии.</p>
+                <p>Настрой капитал, рынок, валюту и маржинальный режим. Paper-стратегии работают автономно и без ручного подключения.</p>
               </div>
             ) : (
               <StrategyCapitalChart strategy={strategy} color={strategy.chartColor} />
@@ -1478,7 +1478,7 @@ function StrategyDrawer({
             </div>
 
             <Buttons type="primary-full" className="strategy_connect_button" onClick={onOpenConnect}>
-              Подключить стратегию
+              Настроить стратегию
             </Buttons>
             <Buttons type="black_prymary-widht" className="strategy_history_button" onClick={onOpenHistory}>
               История стратегии
@@ -1747,7 +1747,7 @@ export default function Market() {
 	    };
 
       if (capitalRub < STRATEGY_MIN_CAPITAL_RUB) {
-        setStrategyConnectMessage("Минимальная сумма подключения стратегии — 5 000 ₽.");
+        setStrategyConnectMessage("Минимальная сумма стратегии — 5 000 ₽.");
         return;
       }
 
@@ -1782,10 +1782,10 @@ export default function Market() {
 	        amount: String(Math.round(normalizedAmount)),
 	      }));
 	      setStrategyConnectMessage(
-	        `Стратегия подключена на ${formatStrategyCapital(normalizedAmount, capitalCurrency)} по ${universeLabels[strategyConnectForm.universe] || "рынку"}.`
+	        `Настройки сохранены: ${formatStrategyCapital(normalizedAmount, capitalCurrency)} по ${universeLabels[strategyConnectForm.universe] || "рынку"}.`
 	      );
 	    } catch {
-	      setStrategyConnectMessage("Не удалось сохранить подключение стратегии. Проверьте backend и попробуйте еще раз.");
+	      setStrategyConnectMessage("Не удалось сохранить настройки стратегии. Проверьте backend и попробуйте еще раз.");
 	    } finally {
 	      setIsConnectingStrategy(false);
 	    }
