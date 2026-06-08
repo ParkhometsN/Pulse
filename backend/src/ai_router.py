@@ -2451,6 +2451,16 @@ def _build_strategy_trade(
     price_currency_rate = _paper_price_rate(asset_type, quote_currency)
     quantity = allocation_rub / (entry_price * price_currency_rate) if entry_price > 0 else 0
     ai_decision = score_payload.get("aiDecision") or {}
+    opening_pnl = _calculate_paper_trade_pnl(
+        side,
+        asset_type,
+        quote_currency,
+        entry_price,
+        entry_price,
+        quantity,
+    )
+    opening_result_amount = opening_pnl["resultAmount"]
+    opening_result_percent = (opening_result_amount / allocation_rub * 100) if allocation_rub > 0 else 0
 
     return {
         "asset": asset.get("symbol"),
@@ -2466,8 +2476,9 @@ def _build_strategy_trade(
         "quoteCurrency": quote_currency,
         "settlementCurrency": "RUB",
         "virtualAmount": round(allocation_rub, 2),
-        "resultPercent": 0,
-        "resultAmount": 0,
+        "feesAmount": round(opening_pnl["feesAmount"], 2),
+        "resultPercent": round(opening_result_percent, 2),
+        "resultAmount": round(opening_result_amount, 2),
         "signal": score_payload["signal"],
         "aiDecisionId": ai_decision.get("id"),
         "takeProfit": ai_decision.get("take_profit") or ai_decision.get("takeProfit"),
