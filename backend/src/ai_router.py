@@ -4180,11 +4180,13 @@ def _schedule_strategy_response_refresh(user_id: Any) -> None:
 async def get_ai_settings(current_user=Depends(get_current_user)):
     user_settings = await _load_user_ai_settings(current_user["id"])
     api_key = user_settings.get("api_key")
+    provider = user_settings.get("provider") or "openai"
+    has_provider_env_key = provider == "openai" and bool(settings.resolved_openai_api_key)
 
     return {
-        "provider": user_settings.get("provider") or "openai",
+        "provider": provider,
         "model": user_settings.get("model") or settings.openai_model,
-        "hasApiKey": bool(api_key or settings.resolved_openai_api_key),
+        "hasApiKey": bool(api_key or has_provider_env_key),
         "savedInDatabase": bool(api_key),
         "maskedApiKey": _mask_api_key(api_key),
         "updatedAt": user_settings.get("updated_at").isoformat() if user_settings.get("updated_at") else None,
@@ -4217,14 +4219,15 @@ async def save_ai_settings(payload: SaveAISettingsRequest, current_user=Depends(
 
     saved_settings = await _load_user_ai_settings(current_user["id"])
     saved_api_key = saved_settings.get("api_key") or api_key
+    has_provider_env_key = provider == "openai" and bool(settings.resolved_openai_api_key)
 
     return {
         "provider": provider,
         "model": model,
-        "hasApiKey": bool(saved_api_key or settings.resolved_openai_api_key),
+        "hasApiKey": bool(saved_api_key or has_provider_env_key),
         "savedInDatabase": bool(saved_api_key),
         "maskedApiKey": _mask_api_key(saved_api_key),
-        "message": "Ключ ChatGPT сохранен в базе данных.",
+        "message": "AI-ключ сохранен в базе данных.",
     }
 
 

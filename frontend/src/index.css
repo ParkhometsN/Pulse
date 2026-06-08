@@ -27,6 +27,7 @@ body{
     font-family: "Inter", sans-serif;
     font-weight: 400;
 }
+
 html,
 body {
   scrollbar-width: none; /* Firefox */
@@ -691,4 +692,42 @@ html{
     gap: 16px;
     flex-direction: column;
 }
+}
+
+/* Production overlay override: keeps GPT summaries above navigation, marquees and drawers. */
+.containerTEXtAket {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 2147483000 !important;
+  display: grid !important;
+  place-items: center !important;
+  width: 100vw !important;
+  height: 100dvh !important;
+  padding: 18px !important;
+  background: rgba(0, 0, 0, 0.72) !important;
+  backdrop-filter: blur(12px) !important;
+}
+
+.TextAlert-content {
+  width: min(680px, calc(100vw - 32px)) !important;
+  height: auto !important;
+  max-height: min(78dvh, 760px) !important;
+  border-radius: 22px !important;
+  border: 1.5px solid rgba(255, 255, 255, 0.1) !important;
+  background: rgba(18, 18, 20, 0.98) !important;
+  box-shadow: 0 34px 110px rgba(0, 0, 0, 0.58) !important;
+}
+
+@media screen and (max-width: 620px) {
+  .containerTEXtAket {
+    padding: 12px !important;
+    align-items: center !important;
+  }
+
+  .TextAlert-content {
+    width: calc(100vw - 24px) !important;
+    max-height: calc(100dvh - 24px) !important;
+    padding: 16px !important;
+    border-radius: 18px !important;
+  }
 }

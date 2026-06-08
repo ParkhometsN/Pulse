@@ -12,8 +12,14 @@ export default function TextAlert({
 }){
     return (
         <>
-        <div className="containerTEXtAket" role="dialog" aria-modal="true" aria-label={title}>
-            <div className="TextAlert-content">
+        <div
+            className="containerTEXtAket"
+            role="dialog"
+            aria-modal="true"
+            aria-label={title}
+            onMouseDown={TextAlertButton}
+        >
+            <div className="TextAlert-content" onMouseDown={(event) => event.stopPropagation()}>
                 <div className="controolTextAlert">
                     <div>
                         <span className="TextAlert-eyebrow">Pulse AI</span>

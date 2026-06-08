@@ -332,43 +332,15 @@ const getStrategyTradeActionTime = (trade) => (
 );
 
 const getStrategyTradeAmountMeta = (trade) => {
-  const baseAsset = getStrategyTradeBase(trade);
-
   return `${formatStrategyQuantity(trade.quantity)} · ${formatStrategyCapital(
     trade.virtualAmount || 0,
     trade.settlementCurrency || "RUB"
-  )} · ${baseAsset}`;
+  )}`;
 };
 
 const getStrategyTradePnlMeta = (trade) => (
   `${formatSignedStrategyPercent(trade.resultPercent)} · ${formatSignedStrategyMoney(trade.resultAmount || 0)}`
 );
-
-const formatStrategyPrice = (value, currency = "USDT") => {
-  const number = Number(value);
-
-  if (!Number.isFinite(number)) {
-    return `0 ${currency}`;
-  }
-
-  return `${number.toLocaleString("ru-RU", {
-    maximumFractionDigits: number >= 100 ? 3 : number >= 1 ? 5 : 8,
-  })} ${currency}`;
-};
-
-const getStrategyTradeExecutionMeta = (trade) => {
-  const entry = formatStrategyPrice(trade.entryPrice, trade.quoteCurrency || "USDT");
-  const exitLabel = trade.status === "closed" ? "Выход" : "Сейчас";
-  const exit = formatStrategyPrice(
-    trade.status === "closed" ? trade.exitPrice : trade.currentPrice || trade.exitPrice,
-    trade.quoteCurrency || "USDT"
-  );
-  const fees = Number(trade.feesAmount);
-
-  return `${trade.side === "Short" ? "Вход: продажа" : "Вход: покупка"} · ${entry} · ${exitLabel}: ${exit}${
-    Number.isFinite(fees) && fees > 0 ? ` · комиссия ${formatStrategyMoney(fees)}` : ""
-  }`;
-};
 
 const getStrategyTradeEntryAction = (trade) => (
   trade.side === "Short" ? "Продажа" : "Покупка"
@@ -442,6 +414,108 @@ const createStrategyHistoryEvent = (trade, type) => {
   };
 };
 
+const normalizeStrategyChartPoints = (strategy) => {
+  const currentCapital = Number(strategy.currentCapital ?? strategy.paperRun?.currentCapital);
+  const initialCapital = Number(strategy.startCapital ?? strategy.paperRun?.startCapital ?? strategy.chart?.[0] ?? 0);
+  const rawChartPoints = [
+    ...(Array.isArray(strategy.chartPoints) ? strategy.chartPoints : []),
+    ...(Array.isArray(strategy.paperRun?.chartPoints) ? strategy.paperRun.chartPoints : []),
+  ];
+  const strategyTrades = [
+    ...(Array.isArray(strategy.historyAllTime) ? strategy.historyAllTime : []),
+    ...(Array.isArray(strategy.paperRun?.trades) ? strategy.paperRun.trades : []),
+  ];
+  const firstKnownDate = [
+    strategy.startedAt,
+    strategy.paperRun?.startedAt,
+    ...rawChartPoints.map((point) => point?.time),
+    ...strategyTrades.map((trade) => trade.executedAt || trade.closedAt || trade.updatedAt),
+  ]
+    .map((value) => (value ? new Date(value) : null))
+    .filter((date) => date && !Number.isNaN(date.getTime()))
+    .sort((leftDate, rightDate) => leftDate.getTime() - rightDate.getTime())[0];
+  const startDate = firstKnownDate || new Date();
+  const pointsFromBackend = rawChartPoints
+    .map((point) => ({
+      time: point?.time,
+      value: Number(point?.value),
+      label: point?.label || "Капитал",
+    }))
+    .filter((point) => point.time && Number.isFinite(point.value));
+  const fallbackPoints = pointsFromBackend.length
+    ? []
+    : (Array.isArray(strategy.chart) ? strategy.chart : []).map((value, index) => ({
+      value: Number(value),
+      time: new Date(startDate.getTime() + index * 60 * 60 * 1000).toISOString(),
+      label: index === 0 ? "Старт" : "Капитал",
+    })).filter((point) => Number.isFinite(point.value));
+  const mergedPoints = [...pointsFromBackend, ...fallbackPoints]
+    .sort((left, right) => new Date(left.time).getTime() - new Date(right.time).getTime());
+  const pointsByTime = new Map();
+
+  mergedPoints.forEach((point) => {
+    const date = new Date(point.time);
+
+    if (Number.isNaN(date.getTime())) {
+      return;
+    }
+
+    pointsByTime.set(date.toISOString(), {
+      ...point,
+      time: date.toISOString(),
+    });
+  });
+
+  const normalizedPoints = Array.from(pointsByTime.values())
+    .sort((left, right) => new Date(left.time).getTime() - new Date(right.time).getTime());
+
+  if (!normalizedPoints.length) {
+    const startValue = Number.isFinite(initialCapital) && initialCapital > 0 ? initialCapital : 0;
+    normalizedPoints.push({
+      time: startDate.toISOString(),
+      value: startValue,
+      label: "Старт",
+    });
+  }
+
+  const firstPoint = normalizedPoints[0];
+
+  if (
+    firstKnownDate
+    && firstPoint
+    && new Date(firstPoint.time).getTime() - firstKnownDate.getTime() > 60 * 1000
+  ) {
+    normalizedPoints.unshift({
+      time: firstKnownDate.toISOString(),
+      value: Number.isFinite(initialCapital) && initialCapital > 0 ? initialCapital : Number(firstPoint.value) || 0,
+      label: "Старт стратегии",
+    });
+  }
+
+  if (Number.isFinite(currentCapital) && normalizedPoints.length) {
+    const updatedAt = strategy.updatedAt || strategy.paperRun?.updatedAt || new Date().toISOString();
+    const lastPoint = normalizedPoints[normalizedPoints.length - 1];
+    const lastTime = new Date(lastPoint.time).getTime();
+    const nextTime = new Date(updatedAt).getTime();
+
+    if (Number.isFinite(nextTime) && nextTime >= lastTime && Math.abs(Number(lastPoint.value) - currentCapital) >= 0.01) {
+      normalizedPoints.push({
+        time: new Date(nextTime).toISOString(),
+        value: currentCapital,
+        label: "Текущий капитал",
+      });
+    } else if (Math.abs(Number(lastPoint.value) - currentCapital) >= 0.01) {
+      normalizedPoints[normalizedPoints.length - 1] = {
+        ...lastPoint,
+        value: currentCapital,
+        label: "Текущий капитал",
+      };
+    }
+  }
+
+  return normalizedPoints;
+};
+
 const getStrategyHistoryGroups = (items = []) => {
   const events = [];
 
@@ -479,79 +553,12 @@ const getStrategyHistoryGroups = (items = []) => {
 };
 
 const getStrategyChartPoints = (strategy) => {
-  const currentCapital = Number(strategy.currentCapital ?? strategy.paperRun?.currentCapital);
-  const initialCapital = Number(strategy.startCapital ?? strategy.paperRun?.startCapital ?? strategy.chart?.[0] ?? 0);
-  const strategyTrades = [
-    ...(Array.isArray(strategy.historyAllTime) ? strategy.historyAllTime : []),
-    ...(Array.isArray(strategy.paperRun?.trades) ? strategy.paperRun.trades : []),
-  ];
-  const strategyStartDate = [
-    strategy.connection?.connectedAt,
-    strategy.startedAt,
-    strategy.paperRun?.startedAt,
-    ...strategyTrades.map((trade) => trade.executedAt || trade.closedAt || trade.updatedAt),
-  ]
-    .map((value) => (value ? new Date(value) : null))
-    .filter((date) => date && !Number.isNaN(date.getTime()))
-    .sort((leftDate, rightDate) => leftDate.getTime() - rightDate.getTime())[0];
-  const strategyStartAt = strategyStartDate?.toISOString();
-  const updatedAt = strategy.updatedAt || strategy.paperRun?.updatedAt || new Date().toISOString();
-  const prependStartPoint = (points) => {
-    const startDate = strategyStartAt ? new Date(strategyStartAt) : null;
-    const firstDate = points[0]?.time ? new Date(points[0].time) : null;
-
-    if (
-      !startDate
-      || Number.isNaN(startDate.getTime())
-      || !firstDate
-      || Number.isNaN(firstDate.getTime())
-      || firstDate.getTime() - startDate.getTime() <= 60 * 1000
-    ) {
-      return points;
-    }
-
-    return [
-      {
-        time: startDate.toISOString(),
-        value: Number.isFinite(initialCapital) && initialCapital > 0 ? initialCapital : Number(points[0]?.value) || 0,
-        label: "Старт стратегии",
-      },
-      ...points,
-    ];
-  };
-  const appendCurrentPoint = (points) => {
-    if (!Number.isFinite(currentCapital) || !points.length) {
-      return points;
-    }
-
-    const lastValue = Number(points[points.length - 1]?.value);
-
-    if (Number.isFinite(lastValue) && Math.abs(lastValue - currentCapital) < 0.01) {
-      return points;
-    }
-
-    return [
-      ...points,
-      {
-        time: updatedAt,
-        value: currentCapital,
-        label: "Текущий капитал",
-      },
-    ];
-  };
-
-  if (Array.isArray(strategy.chartPoints) && strategy.chartPoints.length > 1) {
-    return prependStartPoint(appendCurrentPoint(strategy.chartPoints));
-  }
-
-  const startDate = strategyStartAt ? new Date(strategyStartAt) : new Date();
-
-  return prependStartPoint(appendCurrentPoint((strategy.chart || []).map((value, index) => ({
-    value,
-    time: new Date(startDate.getTime() + index * 11 * 60 * 1000).toISOString(),
-    label: index === 0 ? "Старт" : `Шаг ${index}`,
-  }))));
+  return normalizeStrategyChartPoints(strategy);
 };
+
+const getStrategyChartValues = (strategy) => (
+  getStrategyChartPoints(strategy).map((point) => Number(point.value)).filter(Number.isFinite)
+);
 
 const formatNumberLike = (value) => {
   const number = Number(value);
@@ -604,19 +611,12 @@ const mergeStrategyRun = (baseStrategy, run) => {
 
   const roi = Number(run.roi ?? getChartRoi(run.chart));
   const decisionMetrics = run.decisionMetrics || {};
-  const openExposure = Number(run.openExposure ?? trades
-    .filter((trade) => trade.status !== "closed")
-    .reduce((sum, trade) => sum + Number(trade.virtualAmount || 0), 0));
-  const deploymentPercent = Number(run.capitalDeploymentPercent ?? (
-    Number(run.startCapital) > 0 ? (openExposure / Number(run.startCapital)) * 100 : 0
-  ));
   const recoveryState = run.recoveryState || {};
   const boldness = Number(run.boldness ?? run.riskSettings?.boldness ?? 65);
   const effectiveBoldness = Number(run.effectiveBoldness ?? recoveryState.effectiveBoldness ?? boldness);
 
   return {
     ...baseStrategy,
-    chart: Array.isArray(run.chart) && run.chart.length > 1 ? run.chart : baseStrategy.chart,
     chartPoints: Array.isArray(run.chartPoints) && run.chartPoints.length > 1 ? run.chartPoints : null,
     chartColor: Math.abs(roi) < 0.01
       ? STRATEGY_NEUTRAL_CHART_COLOR
@@ -629,12 +629,6 @@ const mergeStrategyRun = (baseStrategy, run) => {
     history,
     stats: [
       { label: "Модель", value: baseStrategy.stats[0]?.value || "Pulse AI" },
-      { label: "Решений AI", value: String(decisionMetrics.decisionsCount ?? 0) },
-      { label: "NO_TRADE", value: String(decisionMetrics.noTradeCount ?? 0) },
-      { label: "Средний EV", value: `${formatNumberLike(decisionMetrics.avgExpectedValue ?? 0)}%` },
-      { label: "Смелость", value: `${formatNumberLike(effectiveBoldness)}%` },
-      { label: "Режим", value: recoveryState.label || "Рабочий режим" },
-      { label: "В рынке", value: `${formatStrategyMoney(openExposure)} · ${formatNumberLike(deploymentPercent)}%` },
       { label: "Сделок сегодня", value: String(run.totalTradesCount ?? trades.length) },
       { label: "Закрытых сделок", value: String(run.closedTradesCount ?? trades.filter((trade) => trade.status === "closed").length) },
       { label: "Точность закрытых", value: `${formatNumberLike(run.accuracy)}%` },
@@ -1168,9 +1162,7 @@ function StrategyHistoryPanel({
   items,
   isLoading,
   error,
-  isResetting,
   onBack,
-  onReset,
   onOpenAsset,
 }) {
   const historyItems = Array.isArray(items) && items.length
@@ -1184,14 +1176,6 @@ function StrategyHistoryPanel({
         <h3>История стратегии</h3>
         <p>Отдельная история сигналов и сделок стратегии. Она не смешивается с историей портфеля.</p>
       </div>
-      <button
-        className="strategy_reset_history_button"
-        type="button"
-        onClick={onReset}
-        disabled={isResetting}
-      >
-        {isResetting ? "Очищаем..." : "Очистить историю и начать заново"}
-      </button>
 
       {isLoading ? (
         <div className="strategy_history_loading">
@@ -1210,6 +1194,7 @@ function StrategyHistoryPanel({
                   const tone = getStrategyTone(item.resultAmount);
                   const isNavigable = item.asset && item.asset !== "NO_SIGNAL";
                   const actionTone = item.action === "Продажа" ? "sell" : "buy";
+                  const shouldShowPnl = item.isExit || item.status !== "closed";
 
                   return (
                     <button
@@ -1244,18 +1229,11 @@ function StrategyHistoryPanel({
                         <strong>
                           {getStrategyTradeAmountMeta(item)}
                         </strong>
-                        <small className="strategy_trade_history_price">
-                          {item.isExit ? "Цена выхода" : "Цена входа"} · {formatStrategyPrice(item.price, item.quoteCurrency || "USDT")}
-                        </small>
-                        {item.isExit ? (
+                        {shouldShowPnl ? (
                           <small className={`strategy_history_pnl strategy_history_result_${tone}`}>
                             {getStrategyTradePnlMeta(item)}
                           </small>
-                        ) : (
-                          <small className="strategy_history_pnl strategy_history_result_neutral">
-                            Вход в позицию
-                          </small>
-                        )}
+                        ) : null}
                       </div>
                     </button>
                   );
@@ -1286,12 +1264,10 @@ function StrategyDrawer({
   historyItems,
   isHistoryLoading,
   historyError,
-  isHistoryResetting,
   isConnecting,
   onConnectFormChange,
   onOpenConnect,
   onOpenHistory,
-  onResetHistory,
   onBackToOverview,
   onConnectStrategy,
   onOpenAsset,
@@ -1304,9 +1280,12 @@ function StrategyDrawer({
   const capital = getStrategyCapital(strategy);
   const strategyStats = [
     { label: "Стартовый капитал", value: formatStrategyMoney(capital.initial) },
-    { label: "Текущий капитал", value: formatStrategyMoney(capital.current), tone: getStrategyTone(capital.equityProfit) },
-    { label: "Зафиксировано", value: formatSignedStrategyMoney(capital.realizedProfit), accent: true },
-    { label: "Открытая переоценка", value: formatSignedStrategyMoney(capital.unrealizedProfit), tone: getStrategyTone(capital.unrealizedProfit) },
+    {
+      label: "Текущий капитал",
+      value: formatStrategyMoney(capital.current),
+      tone: getStrategyTone(capital.equityProfit),
+      current: true,
+    },
     ...strategy.stats.filter((item) => item.label !== "Модель"),
   ];
   const startedAtLabel = formatStrategyDateTime(strategy.startedAt || strategy.paperRun?.startedAt);
@@ -1367,9 +1346,7 @@ function StrategyDrawer({
               items={historyItems}
               isLoading={isHistoryLoading}
               error={historyError}
-              isResetting={isHistoryResetting}
               onBack={onBackToOverview}
-              onReset={onResetHistory}
               onOpenAsset={onOpenAsset}
             />
           </div>
@@ -1393,6 +1370,7 @@ function StrategyDrawer({
                   className={[
                     "strategy_stat_card",
                     item.accent ? "strategy_stat_card_accent" : "",
+                    item.current ? "strategy_stat_card_current" : "",
                     item.tone ? `strategy_stat_card_${item.tone}` : "",
                   ].filter(Boolean).join(" ")}
                   key={`${strategy.id}-${item.label}`}
@@ -1464,9 +1442,6 @@ function StrategyDrawer({
                           {getStrategyTradeEntryAction(item)}
                         </span>
                         <span>{getStrategyTradeAmountMeta(item)}</span>
-                        <em className="strategy_history_execution">
-                          {getStrategyTradeExecutionMeta(item)}
-                        </em>
                         <small className={`strategy_history_pnl strategy_history_result_${tone}`}>
                           {getStrategyTradePnlMeta(item)}
                         </small>
@@ -1962,6 +1937,7 @@ export default function Market() {
                         ) : marketStrategies.map((strategy) => {
                           const capital = getStrategyCapital(strategy);
                           const tone = getStrategyTone(capital.roi);
+                          const chartValues = getStrategyChartValues(strategy);
 
                           return (
 		                      <MarketCardBot
@@ -1980,7 +1956,7 @@ export default function Market() {
 				                        ImgContentCard={
 				                          <div className="strategy_chart_preview">
 				                            <StrategyLineChart
-				                              values={strategy.chart}
+				                              values={chartValues}
 				                              color={strategy.chartColor}
 				                            />
 				                          </div>

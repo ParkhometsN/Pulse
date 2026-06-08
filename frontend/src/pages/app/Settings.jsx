@@ -14,6 +14,40 @@ import api from "../../lib/api";
 import { clearAuthSession, getStoredUser } from "../../lib/auth";
 import { getApiErrorMessage } from "../../lib/apiError";
 
+const AI_PROVIDER_OPTIONS = [
+  {
+    id: "openai",
+    label: "ChatGPT",
+    model: "gpt-4.1-mini",
+    placeholder: "OpenAI API key",
+    hint: "Ключ ChatGPT используется для сводок, прогнозов и AI Trading Brain.",
+  },
+  {
+    id: "deepseek",
+    label: "DeepSeek",
+    model: "deepseek-chat",
+    placeholder: "DeepSeek API key",
+    hint: "Подготовлено для DeepSeek: ключ сохранится в базе, интеграцию можно расширять без изменения UI.",
+  },
+  {
+    id: "anthropic",
+    label: "Claude",
+    model: "claude-3-5-sonnet-latest",
+    placeholder: "Anthropic API key",
+    hint: "Подготовлено для Claude: ключ сохранится в базе для будущего AI-провайдера.",
+  },
+];
+
+const getAIProviderOption = (provider) => {
+  const normalizedProvider = String(provider || "").toLowerCase();
+
+  if (normalizedProvider === "chatgpt") {
+    return AI_PROVIDER_OPTIONS[0];
+  }
+
+  return AI_PROVIDER_OPTIONS.find((item) => item.id === normalizedProvider) || AI_PROVIDER_OPTIONS[0];
+};
+
 export default function Settings() {
   const navigate = useNavigate();
   const user = getStoredUser();
@@ -27,14 +61,15 @@ export default function Settings() {
   const [isDeleting, setIsDeleting] = React.useState(false);
   const [alert, setAlert] = React.useState(null);
   const [isOpen, setIsOpen] = useState(false);
-  const [selected, setSelected] = useState('ChatGPT');
-
-  const options = ['ChatGPT'];
+  const [selectedProvider, setSelectedProvider] = useState(AI_PROVIDER_OPTIONS[0]);
 
   const toggleDropdown = () => setIsOpen(!isOpen);
+  const savedProvider = getAIProviderOption(savedAISettings?.provider);
+  const hasSelectedProviderKey = Boolean(savedAISettings?.hasApiKey && savedProvider.id === selectedProvider.id);
 
   const handleSelect = (option) => {
-    setSelected(option);
+    setSelectedProvider(option);
+    setAiModel(option.model);
     setIsOpen(false);
   };
 
@@ -48,7 +83,9 @@ export default function Settings() {
         }
 
         setSavedAISettings(response.data);
-        setAiModel(response.data?.model || "gpt-4.1-mini");
+        const providerOption = getAIProviderOption(response.data?.provider);
+        setSelectedProvider(providerOption);
+        setAiModel(response.data?.model || providerOption.model);
       })
       .catch((error) => {
         if (!isMounted) {
@@ -78,17 +115,17 @@ export default function Settings() {
 
     try {
       const response = await api.put("/settings/ai", {
-        provider: "openai",
+        provider: selectedProvider.id,
         api_key: aiApiKey,
-        model: aiModel,
+        model: aiModel || selectedProvider.model,
       });
       setSavedAISettings(response.data);
       setAiApiKey("");
-      setAlert({ type: "success", text: response.data?.message || "Ключ ChatGPT сохранен." });
+      setAlert({ type: "success", text: response.data?.message || `Ключ ${selectedProvider.label} сохранен.` });
     } catch (error) {
       setAlert({
         type: "error",
-        text: getApiErrorMessage(error, "Не удалось сохранить ключ ChatGPT."),
+        text: getApiErrorMessage(error, `Не удалось сохранить ключ ${selectedProvider.label}.`),
       });
     } finally {
       setIsSavingSettings(false);
@@ -140,10 +177,11 @@ export default function Settings() {
                 <div className="title_pages_stetttt">
                   <p>AI и ключи</p>
                 </div>
-                <div className="dinamic_buttons" style={{ position: 'relative' }}>
-                  <Buttons type="nm_black_prymary" onClick={toggleDropdown}>
-                    <div className="flex items-center gap-[8px]">
-                      <p>{selected}</p>
+                <div className="settings_ai_key_row">
+                  <div className="settings_ai_provider_select">
+                    <Buttons type="nm_black_prymary" onClick={toggleDropdown}>
+                      <div className="settings_ai_provider_button">
+                        <p>{selectedProvider.label}</p>
                       <span
                         className={`transition-transform duration-200 ${
                           isOpen ? 'rotate-180' : 'rotate-0'
@@ -165,58 +203,51 @@ export default function Settings() {
                         </svg>
                       </span>
                     </div>
-                  </Buttons>
+                    </Buttons>
 
                   {isOpen && (
                     <>
-                      <div className="absolute top-full left-0 mt-2 w-full bg-white border border-gray-200 rounded-md shadow-lg z-10">
-                        {options.map((option) => (
+                        <div className="settings_ai_provider_menu">
+                          {AI_PROVIDER_OPTIONS.map((option) => (
 	                          <button
-	                            key={option}
+	                            key={option.id}
 	                            type="button"
 	                            onClick={() => handleSelect(option)}
-                            className="w-full text-left px-4 py-2 hover:bg-gray-100 transition-colors first:rounded-t-md last:rounded-b-md"
-                            style={{ color: '#000' }}
                           >
-                            {option}
+                              <strong>{option.label}</strong>
+                              <span>{option.model}</span>
                           </button>
                         ))}
                       </div>
                       <div
-                        className="fixed inset-0 z-0"
+                          className="settings_ai_provider_backdrop"
                         onClick={() => setIsOpen(false)}
                       />
                     </>
                   )}
+                  </div>
 	                  <div className="settings_api_key">
                     {isSettingsLoading ? (
                       <div className="settings_api_hint settings_api_loading">
                         <LoaderAnimation height={34} rounded="12px" />
                         <span>Проверяем сохраненный ключ...</span>
                       </div>
-                    ) : savedAISettings?.hasApiKey ? (
+                    ) : hasSelectedProviderKey ? (
                       <p className="settings_api_hint settings_api_hint_success">
-                        Ключ подключен{savedAISettings.maskedApiKey ? `: ${savedAISettings.maskedApiKey}` : " через .env"}.
+                          {selectedProvider.label}: ключ подключен{savedAISettings.maskedApiKey ? `: ${savedAISettings.maskedApiKey}` : " через .env"}.
                       </p>
                     ) : (
                       <p className="settings_api_hint">
-                        Сохрани OpenAI API key, чтобы AI-блоки могли делать расширенный анализ.
+                          {selectedProvider.hint}
                       </p>
                     )}
 	                  <Inputs
 	                    variant="primary"
 	                    type="password"
-	                    placeholder="OpenAI API KEY"
+	                      placeholder={selectedProvider.placeholder}
 	                    value={aiApiKey}
 	                    onChange={(event) => setAiApiKey(event.target.value)}
 	                  />
-                    <Inputs
-                      variant="primary"
-                      type="text"
-                      placeholder="Модель"
-                      value={aiModel}
-                      onChange={(event) => setAiModel(event.target.value)}
-                    />
 	                </div>
                 </div>
                 

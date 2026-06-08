@@ -415,8 +415,8 @@ grid-template-columns: repeat(1, 1fr);
 
 .strategy_drawer_hero {
     position: relative;
-    height: 238px;
-    min-height: 238px;
+    height: clamp(170px, 26vh, 220px);
+    min-height: 170px;
     border: 2px solid var(--black-t);
     border-radius: 16px;
     overflow: hidden;
@@ -443,7 +443,7 @@ grid-template-columns: repeat(1, 1fr);
     position: relative;
     width: 100%;
     height: 100%;
-    min-height: 190px;
+    min-height: 150px;
     padding: 10px;
 }
 
@@ -470,7 +470,7 @@ grid-template-columns: repeat(1, 1fr);
 
 .strategy_capital_axis {
     fill: rgba(255, 255, 255, 0.46);
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 540;
 }
 
@@ -687,6 +687,36 @@ grid-template-columns: repeat(1, 1fr);
     color: var(--red);
 }
 
+.strategy_stat_card_current {
+    position: relative;
+    overflow: hidden;
+    border-color: rgba(255, 255, 255, 0.18);
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.025));
+}
+
+.strategy_stat_card_current::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    opacity: 0.42;
+}
+
+.strategy_stat_card_current.strategy_stat_card_positive {
+    border-color: rgba(0, 224, 164, 0.34);
+    box-shadow: inset 0 0 0 1px rgba(0, 224, 164, 0.08);
+}
+
+.strategy_stat_card_current.strategy_stat_card_negative {
+    border-color: rgba(255, 59, 48, 0.34);
+    box-shadow: inset 0 0 0 1px rgba(255, 59, 48, 0.08);
+}
+
+.strategy_stat_card_current.strategy_stat_card_neutral {
+    border-color: rgba(255, 255, 255, 0.18);
+}
+
 .strategy_drawer_section {
     border: 1.5px solid var(--black-t);
     border-radius: 16px;
@@ -785,7 +815,7 @@ grid-template-columns: repeat(1, 1fr);
     align-items: flex-end;
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 5px;
     flex: 0 0 auto;
     text-align: right;
 }
@@ -817,6 +847,7 @@ grid-template-columns: repeat(1, 1fr);
 }
 
 .strategy_history_execution {
+    display: none;
     color: rgba(255, 255, 255, 0.42);
     font-size: 10px;
     font-style: normal;
@@ -977,6 +1008,7 @@ grid-template-columns: repeat(1, 1fr);
 }
 
 .strategy_trade_history_price {
+    display: none;
     color: rgba(255, 255, 255, 0.42);
     font-size: 10.5px;
     line-height: 1.35;
