@@ -280,6 +280,25 @@ const formatStrategyDateTime = (value) => {
   });
 };
 
+const STRATEGY_TIME_HOUR = 60 * 60 * 1000;
+const STRATEGY_TIME_DAY = 24 * STRATEGY_TIME_HOUR;
+
+const getStrategyTimeTickCount = (spanMs, pointsCount) => {
+  if (pointsCount <= 2) {
+    return pointsCount;
+  }
+
+  if (spanMs <= 12 * STRATEGY_TIME_HOUR) {
+    return Math.min(5, pointsCount);
+  }
+
+  if (spanMs <= 3 * STRATEGY_TIME_DAY) {
+    return Math.min(4, pointsCount);
+  }
+
+  return Math.min(5, pointsCount);
+};
+
 const formatStrategyTickLabel = (timestamp, spanMs) => {
   const date = new Date(timestamp);
 
@@ -287,14 +306,23 @@ const formatStrategyTickLabel = (timestamp, spanMs) => {
     return "";
   }
 
-  if (spanMs <= 36 * 60 * 60 * 1000) {
+  if (spanMs <= 24 * STRATEGY_TIME_HOUR) {
     return date.toLocaleTimeString("ru-RU", {
       hour: "2-digit",
       minute: "2-digit",
     });
   }
 
-  if (spanMs <= 92 * 24 * 60 * 60 * 1000) {
+  if (spanMs <= 3 * STRATEGY_TIME_DAY) {
+    return date.toLocaleString("ru-RU", {
+      day: "numeric",
+      month: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  }
+
+  if (spanMs <= 120 * STRATEGY_TIME_DAY) {
     return date.toLocaleDateString("ru-RU", {
       day: "numeric",
       month: "short",
@@ -304,6 +332,58 @@ const formatStrategyTickLabel = (timestamp, spanMs) => {
   return date.toLocaleDateString("ru-RU", {
     month: "short",
     year: "2-digit",
+  });
+};
+
+const buildStrategyTimeTicks = (points, timeSpan) => {
+  if (!points.length) {
+    return [];
+  }
+
+  if (points.length === 1 || timeSpan <= 0) {
+    return [{
+      time: points[0].date?.getTime(),
+      x: points[0].x,
+      label: formatStrategyDateTime(points[0].time).replace(",", ""),
+    }];
+  }
+
+  const tickCount = getStrategyTimeTickCount(timeSpan, points.length);
+  const tickIndexes = Array.from({ length: tickCount }, (_, index) => (
+    Math.round((index / Math.max(tickCount - 1, 1)) * (points.length - 1))
+  ));
+  const uniqueIndexes = [...new Set(tickIndexes)];
+  const firstIndex = 0;
+  const lastIndex = points.length - 1;
+
+  if (!uniqueIndexes.includes(firstIndex)) {
+    uniqueIndexes.unshift(firstIndex);
+  }
+
+  if (!uniqueIndexes.includes(lastIndex)) {
+    uniqueIndexes.push(lastIndex);
+  }
+
+  const ticks = uniqueIndexes
+    .sort((left, right) => left - right)
+    .map((pointIndex) => {
+      const point = points[pointIndex];
+      const time = point.date?.getTime();
+
+      return {
+        time,
+        x: point.x,
+        label: formatStrategyTickLabel(time, timeSpan),
+      };
+    })
+    .filter((tick) => tick.label);
+
+  return ticks.filter((tick, index) => {
+    if (index === 0 || index === ticks.length - 1) {
+      return true;
+    }
+
+    return tick.label !== ticks[index - 1]?.label;
   });
 };
 
@@ -736,6 +816,7 @@ function StrategyLineChart({ values = [], color = "var(--primary-blue)", size = 
 
 function StrategyCapitalChart({ strategy, color }) {
   const [hoveredPoint, setHoveredPoint] = useState(null);
+  const [chartWidth, setChartWidth] = useState(860);
   const chartRef = useRef(null);
   const chartPoints = getStrategyChartPoints(strategy)
     .map((point) => ({
@@ -754,9 +835,40 @@ function StrategyCapitalChart({ strategy, color }) {
 
       return 0;
     });
-  const width = 900;
-  const height = 230;
-  const padding = { top: 18, right: 118, bottom: 34, left: 18 };
+  useEffect(() => {
+    const updateChartWidth = () => {
+      const nextWidth = Math.round(chartRef.current?.getBoundingClientRect().width || 0);
+
+      if (nextWidth > 0) {
+        setChartWidth((currentWidth) => (
+          Math.abs(currentWidth - nextWidth) > 4 ? nextWidth : currentWidth
+        ));
+      }
+    };
+
+    updateChartWidth();
+
+    const resizeObserver = typeof ResizeObserver !== "undefined"
+      ? new ResizeObserver(updateChartWidth)
+      : null;
+
+    if (chartRef.current && resizeObserver) {
+      resizeObserver.observe(chartRef.current);
+    }
+
+    window.addEventListener("resize", updateChartWidth);
+
+    return () => {
+      resizeObserver?.disconnect();
+      window.removeEventListener("resize", updateChartWidth);
+    };
+  }, []);
+
+  const width = chartWidth;
+  const height = chartWidth < 560 ? 210 : 230;
+  const padding = chartWidth < 560
+    ? { top: 16, right: 58, bottom: 34, left: 14 }
+    : { top: 18, right: 108, bottom: 34, left: 18 };
 
   if (chartPoints.length < 2) {
     return (
@@ -776,7 +888,7 @@ function StrategyCapitalChart({ strategy, color }) {
   const visualCenter = range > 0
     ? (minValue + maxValue) / 2
     : (Number.isFinite(initialCapital) && initialCapital > 0 ? initialCapital : maxValue);
-  const chartWidth = width - padding.left - padding.right;
+  const drawableWidth = width - padding.left - padding.right;
   const chartHeight = height - padding.top - padding.bottom;
   const gradientId = `strategy-capital-gradient-${strategy.id}-${String(color).replace(/[^a-zA-Z0-9]/g, "")}`;
   const visualMin = visualCenter - visualPaddingRange / 2;
@@ -794,7 +906,7 @@ function StrategyCapitalChart({ strategy, color }) {
     const progress = hasTimeScale && Number.isFinite(pointTime)
       ? (pointTime - minTime) / timeSpan
       : index / Math.max(chartPoints.length - 1, 1);
-    const x = padding.left + progress * chartWidth;
+    const x = padding.left + progress * drawableWidth;
     const y = padding.top + (1 - ((point.value - visualMin) / visualRange)) * chartHeight;
 
     return { ...point, x, y };
@@ -813,23 +925,9 @@ function StrategyCapitalChart({ strategy, color }) {
     && baselineY >= padding.top
     && baselineY <= height - padding.bottom;
   const tooltipGoesLeft = hoveredPoint ? hoveredPoint.cursorX > hoveredPoint.chartWidth - 220 : false;
-  const tickCount = hasTimeScale ? (timeSpan <= 36 * 60 * 60 * 1000 ? 4 : 3) : 2;
   const timeTicks = hasTimeScale
-    ? Array.from({ length: tickCount }, (_, index) => {
-      const tickTime = minTime + (timeSpan * index) / Math.max(tickCount - 1, 1);
-      return {
-        time: tickTime,
-        x: padding.left + ((tickTime - minTime) / timeSpan) * chartWidth,
-        label: formatStrategyTickLabel(tickTime, timeSpan),
-      };
-    })
-    : points
-      .filter((_, index) => index === 0 || index === points.length - 1)
-      .map((point) => ({
-        time: point.date?.getTime(),
-        x: point.x,
-        label: formatStrategyDateTime(point.time).replace(",", ""),
-      }));
+    ? buildStrategyTimeTicks(points, timeSpan)
+    : buildStrategyTimeTicks(points, 0);
 
   const handlePointerMove = (event) => {
     const svgRect = event.currentTarget.getBoundingClientRect();
