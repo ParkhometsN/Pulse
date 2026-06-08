@@ -682,13 +682,15 @@ function StrategyLineChart({ values = [], color = "var(--primary-blue)", size = 
   const padding = size === "hero" ? 18 : 12;
   const min = Math.min(...chartValues);
   const max = Math.max(...chartValues);
-  const range = max - min || 1;
-  const isFlat = max === min;
+  const actualRange = max - min;
+  const baseValue = Math.max(Math.abs(chartValues[0] || 0), 1);
+  const minimumVisualRange = Math.max(baseValue * 0.018, size === "hero" ? 900 : 700);
+  const visualRange = Math.max(actualRange * 1.35, minimumVisualRange);
+  const visualCenter = actualRange > 0 ? (min + max) / 2 : chartValues[0] || 0;
+  const visualMin = visualCenter - visualRange / 2;
   const chartPoints = chartValues.map((value, index) => {
       const x = padding + (index / Math.max(chartValues.length - 1, 1)) * (width - padding * 2);
-      const y = isFlat
-        ? height / 2
-        : height - padding - ((value - min) / range) * (height - padding * 2);
+      const y = height - padding - ((value - visualMin) / visualRange) * (height - padding * 2);
 
       return { x, y };
     });
@@ -719,7 +721,7 @@ function StrategyLineChart({ values = [], color = "var(--primary-blue)", size = 
         d={linePath}
         fill="none"
         stroke={color}
-        strokeWidth={size === "hero" ? "3" : "2.6"}
+        strokeWidth={size === "hero" ? "2.6" : "2"}
         strokeLinecap="round"
         strokeLinejoin="round"
         pathLength="1"
@@ -766,12 +768,19 @@ function StrategyCapitalChart({ strategy, color }) {
 
   const minValue = Math.min(...chartPoints.map((point) => point.value));
   const maxValue = Math.max(...chartPoints.map((point) => point.value));
-  const range = maxValue - minValue || 1;
+  const range = maxValue - minValue;
+  const initialCapital = Number(strategy.startCapital ?? strategy.paperRun?.startCapital ?? chartPoints[0]?.value ?? 0);
+  const scaleBase = Math.max(Math.abs(initialCapital), Math.abs(chartPoints[0]?.value || 0), 1);
+  const minimumVisualRange = Math.max(scaleBase * 0.018, 900);
+  const visualPaddingRange = Math.max(range * 1.35, minimumVisualRange);
+  const visualCenter = range > 0
+    ? (minValue + maxValue) / 2
+    : (Number.isFinite(initialCapital) && initialCapital > 0 ? initialCapital : maxValue);
   const chartWidth = width - padding.left - padding.right;
   const chartHeight = height - padding.top - padding.bottom;
   const gradientId = `strategy-capital-gradient-${strategy.id}-${String(color).replace(/[^a-zA-Z0-9]/g, "")}`;
-  const visualMin = minValue - range * 0.12;
-  const visualMax = maxValue + range * 0.12;
+  const visualMin = visualCenter - visualPaddingRange / 2;
+  const visualMax = visualCenter + visualPaddingRange / 2;
   const visualRange = visualMax - visualMin || 1;
   const timeValues = chartPoints
     .map((point) => point.date?.getTime())
@@ -794,10 +803,17 @@ function StrategyCapitalChart({ strategy, color }) {
     .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x.toFixed(1)} ${point.y.toFixed(1)}`)
     .join(" ");
   const areaPath = `${linePath} L ${width - padding.right} ${height - padding.bottom} L ${padding.left} ${height - padding.bottom} Z`;
-  const gridValues = [visualMax, visualMax - visualRange * 0.33, visualMax - visualRange * 0.66, visualMin];
+  const gridValues = [visualMax, visualMax - visualRange * 0.5, visualMin];
   const lastPoint = points[points.length - 1] || { x: padding.left, y: padding.top, value: 0 };
+  const baselineValue = Number.isFinite(initialCapital) && initialCapital > 0 ? initialCapital : chartPoints[0]?.value;
+  const baselineY = Number.isFinite(baselineValue)
+    ? padding.top + (1 - ((baselineValue - visualMin) / visualRange)) * chartHeight
+    : null;
+  const showBaseline = Number.isFinite(baselineY)
+    && baselineY >= padding.top
+    && baselineY <= height - padding.bottom;
   const tooltipGoesLeft = hoveredPoint ? hoveredPoint.cursorX > hoveredPoint.chartWidth - 220 : false;
-  const tickCount = hasTimeScale ? (timeSpan <= 36 * 60 * 60 * 1000 ? 5 : 4) : 2;
+  const tickCount = hasTimeScale ? (timeSpan <= 36 * 60 * 60 * 1000 ? 4 : 3) : 2;
   const timeTicks = hasTimeScale
     ? Array.from({ length: tickCount }, (_, index) => {
       const tickTime = minTime + (timeSpan * index) / Math.max(tickCount - 1, 1);
@@ -874,6 +890,15 @@ function StrategyCapitalChart({ strategy, color }) {
           );
         })}
         <path d={areaPath} fill={`url(#${gradientId})`} />
+        {showBaseline ? (
+          <line
+            x1={padding.left}
+            x2={width - padding.right}
+            y1={baselineY}
+            y2={baselineY}
+            className="strategy_capital_baseline"
+          />
+        ) : null}
         <path
           d={linePath}
           fill="none"
