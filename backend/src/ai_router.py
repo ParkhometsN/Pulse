@@ -2772,6 +2772,9 @@ def _build_strategy_payload(
         executed_at = start_at + timedelta(seconds=index + 1)
         trades.append(_build_strategy_trade(probability, side, asset, score_payload, allocation, executed_at))
 
+    unrealized_profit = sum(to_float(trade.get("resultAmount")) for trade in trades)
+    capital = normalized_start_capital + unrealized_profit
+
     if not trades:
         chart.extend([normalized_start_capital] * 4)
         chart_points.append({
@@ -2807,7 +2810,7 @@ def _build_strategy_payload(
         "currentCapital": round(capital, 2),
         "profit": round(profit, 2),
         "realizedProfit": 0,
-        "unrealizedProfit": 0,
+        "unrealizedProfit": round(unrealized_profit, 2),
         "equityProfit": round(profit, 2),
         "roi": round(roi, 2),
         "realizedRoi": 0,
