@@ -105,27 +105,27 @@ _strategy_market_context_cache: dict[str, Any] = {
     "payload": None,
 }
 PAPER_RISK_MAX_ALLOCATION = {
-    "careful": 0.18,
-    "balanced": 0.24,
-    "active": 0.32,
+    "careful": 0.12,
+    "balanced": 0.16,
+    "active": 0.20,
 }
 PAPER_RISK_MAX_OPEN_EXPOSURE = {
-    "careful": 0.72,
-    "balanced": 0.90,
-    "active": 0.98,
+    "careful": 0.42,
+    "balanced": 0.58,
+    "active": 0.76,
 }
 PAPER_RISK_MAX_OPEN_POSITIONS = {
-    "careful": 4,
-    "balanced": 5,
-    "active": 6,
+    "careful": 3,
+    "balanced": 4,
+    "active": 5,
 }
 PAPER_RISK_BOLDNESS = {
-    "careful": 35,
-    "balanced": 65,
-    "active": 90,
+    "careful": 30,
+    "balanced": 55,
+    "active": 78,
 }
-PAPER_REGROUP_DRAWDOWN_PERCENT = -2.0
-PAPER_DEFENSIVE_DRAWDOWN_PERCENT = -5.0
+PAPER_REGROUP_DRAWDOWN_PERCENT = -1.2
+PAPER_DEFENSIVE_DRAWDOWN_PERCENT = -2.6
 PAPER_REGROUP_LOSS_STREAK = 3
 PAPER_DEFENSIVE_LOSS_STREAK = 5
 NEWS_POSITIVE_TERMS = (
@@ -1853,16 +1853,16 @@ def _build_strategy_recovery_state(
         state = "defensive"
         label = "Защитная пересборка"
         reason = "Просадка или серия убытков высокая: стратегия режет риск и берет только самые сильные входы."
-        exposure_multiplier = 0.28
-        probability_bonus = 8.0
-        max_open_positions = max(1, min(max_open_positions, 2))
+        exposure_multiplier = 0.18
+        probability_bonus = 11.0
+        max_open_positions = max(1, min(max_open_positions, 1))
     elif drawdown_percent <= PAPER_REGROUP_DRAWDOWN_PERCENT or loss_streak >= PAPER_REGROUP_LOSS_STREAK:
         state = "regroup"
         label = "Пересборка"
         reason = "Стратегия ушла в минус: снижаем смелость, повышаем порог входа и убираем слабые позиции."
-        exposure_multiplier = 0.58
-        probability_bonus = 4.0
-        max_open_positions = max(2, min(max_open_positions, 3))
+        exposure_multiplier = 0.34
+        probability_bonus = 7.0
+        max_open_positions = max(1, min(max_open_positions, 2))
 
     return {
         "state": state,
@@ -1895,6 +1895,81 @@ def _entry_passes_recovery_filter(
     return probability >= min_probability and expected_value >= min_ev and risk_reward >= 1.25
 
 
+def _entry_quality_rejection_reason(
+    mode: str,
+    side: str,
+    asset: dict[str, Any],
+    score_payload: dict[str, Any],
+    probability: float,
+) -> str | None:
+    ai_decision = _score_payload_ai_decision(score_payload)
+    factors = _score_payload_factors(score_payload)
+    expected_value = to_float(ai_decision.get("expected_value_percent") or ai_decision.get("expectedValuePercent"))
+    risk_reward = to_float(ai_decision.get("risk_reward") or ai_decision.get("riskReward"), 1)
+    liquidity = _normalized_liquidity(
+        ai_decision.get("liquidity_score")
+        or ai_decision.get("liquidityScore")
+        or factors.get("liquidity_score")
+        or factors.get("liquidityScore")
+        or factors.get("liquidity")
+    )
+    spread = to_float(factors.get("spread_percent") or factors.get("spreadPercent") or asset.get("bidAskSpreadPercent"))
+    volatility = to_float(factors.get("volatility_atr") or factors.get("volatilityAtr") or factors.get("volatility"))
+    change_1h = to_float(factors.get("price_change_1h") or factors.get("priceChange1h") or asset.get("priceChangePercent1h"))
+    change_4h = to_float(factors.get("price_change_4h") or factors.get("priceChange4h") or asset.get("priceChangePercent4h"))
+    volume_change = to_float(factors.get("volume_change_24h") or factors.get("volumeChange24h"))
+    range_position = to_float(factors.get("range_position") or factors.get("rangePosition") or asset.get("rangePosition"), 0.5)
+    data_flags = set(score_payload.get("dataQualityFlags") or factors.get("data_quality_flags") or [])
+    min_probability = 66.0
+    min_ev = 0.22
+    min_liquidity = 0.55
+    max_spread = 0.16
+
+    if mode == "scalp":
+        min_probability = 70.0
+        min_ev = 0.26
+        min_liquidity = 0.58
+        if side != "Long":
+            return "scalp работает только по подтвержденному long-импульсу"
+        if change_1h < 0.08 or change_4h < -0.35:
+            return "нет короткого momentum-подтверждения"
+        if range_position > 0.96:
+            return "актив слишком близко к верхней границе диапазона"
+        if volume_change < -18:
+            return "объемы не поддерживают продолжение импульса"
+    elif mode == "hybrid":
+        min_probability = 68.0
+        min_ev = 0.24
+    elif mode == "long":
+        min_probability = 67.0
+        min_ev = 0.22
+        if side != "Long":
+            return "long-стратегия не открывает short-позиции"
+        if change_1h < -0.35 and change_4h < 0.2:
+            return "long-вход без подтверждения восстановления"
+
+    if side == "Short":
+        min_probability += 2.0
+        min_ev += 0.06
+
+    if probability < min_probability:
+        return f"вероятность стратегии ниже {min_probability:.0f}%"
+    if expected_value < min_ev:
+        return f"EV стратегии ниже {min_ev:.2f}%"
+    if risk_reward < 1.28:
+        return "risk/reward недостаточно сильный"
+    if liquidity < min_liquidity:
+        return "ликвидность ниже production-порога"
+    if spread > max_spread:
+        return "spread съедает ожидаемый edge"
+    if volatility > 10 and (probability < min_probability + 8 or expected_value < min_ev + 0.22):
+        return "волатильность слишком высокая для текущего edge"
+    if {"ticker_only_fallback", "missing_intraday_confirmation", "missing_turnover"} & data_flags:
+        return "качество данных недостаточно для автономного входа"
+
+    return None
+
+
 def _apply_strategy_recovery_actions(
     trades: list[dict[str, Any]],
     recovery_state: dict[str, Any],
@@ -1905,8 +1980,8 @@ def _apply_strategy_recovery_actions(
 
     now = _strategy_now().isoformat()
     next_trades: list[dict[str, Any]] = []
-    cut_threshold = -0.45 if state == "defensive" else -0.85
-    probability_drop = 5 if state == "defensive" else 7
+    cut_threshold = -2.2 if state == "defensive" else -2.8
+    probability_drop = 13 if state == "defensive" else 16
 
     for trade in trades:
         if trade.get("status") == "closed":
@@ -1918,11 +1993,11 @@ def _apply_strategy_recovery_actions(
         current_probability = to_float(trade.get("currentProbability"), entry_probability)
         should_cut = (
             result_percent <= cut_threshold
-            and current_probability <= max(entry_probability - probability_drop, 54)
+            and current_probability <= max(entry_probability - probability_drop, 48)
         )
         should_lock_small_profit = (
             state == "defensive"
-            and result_percent >= 0.25
+            and result_percent >= 0.55
             and current_probability < 64
         )
 
@@ -1989,6 +2064,38 @@ def _strategy_trade_rules(payload: dict[str, Any], trade: dict[str, Any]) -> dic
         "minFadeHoldMinutes": 20,
         "profitLock": None,
     }
+
+
+def _rules_with_ai_levels(trade: dict[str, Any], rules: dict[str, float | None]) -> dict[str, float | None]:
+    entry_price = to_float(trade.get("entryPrice"))
+    take_profit_price = to_float(trade.get("takeProfit"))
+    stop_loss_price = to_float(trade.get("stopLoss"))
+    side = str(trade.get("side") or "Long")
+
+    if entry_price <= 0:
+        return rules
+
+    ai_take_percent = 0.0
+    ai_stop_percent = 0.0
+
+    if side == "Short":
+        ai_take_percent = max((entry_price - take_profit_price) / entry_price * 100, 0)
+        ai_stop_percent = -max((stop_loss_price - entry_price) / entry_price * 100, 0)
+    else:
+        ai_take_percent = max((take_profit_price - entry_price) / entry_price * 100, 0)
+        ai_stop_percent = -max((entry_price - stop_loss_price) / entry_price * 100, 0)
+
+    next_rules = {**rules}
+
+    if ai_take_percent > 0:
+        default_take = to_float(rules.get("takeProfit"), 1.0)
+        next_rules["takeProfit"] = round(_clamp(ai_take_percent, max(default_take * 0.85, 0.85), 3.2), 4)
+
+    if ai_stop_percent < 0:
+        default_stop = abs(to_float(rules.get("stopLoss"), -1.2))
+        next_rules["stopLoss"] = round(-_clamp(abs(ai_stop_percent), 0.75, min(max(default_stop, 1.35), 2.4)), 4)
+
+    return next_rules
 
 
 def _calculate_trade_live_probability(
@@ -2237,6 +2344,12 @@ def _select_strategy_entries(
 
         side = "Short" if decision.final_action == FinalAction.OPEN_SHORT else "Long"
         raw_probability = round(decision.probability_tp_before_sl * 100, 2)
+        scalp_probability = None
+        if mode == "scalp":
+            scalp_score_payload = _calculate_asset_score(asset)
+            scalp_probability = _calculate_short_term_probability(scalp_score_payload, asset)
+            raw_probability = round(min(raw_probability, scalp_probability), 2)
+
         memory_item = (memory or {}).get(symbol)
         if _memory_blocks_entry(memory_item, raw_probability):
             continue
@@ -2271,9 +2384,23 @@ def _select_strategy_entries(
                 "tradesCount": int((memory_item or {}).get("tradesCount") or 0),
                 "winsCount": int((memory_item or {}).get("winsCount") or 0),
                 "lossesCount": int((memory_item or {}).get("lossesCount") or 0),
+                "scalpProbability": round(scalp_probability, 2) if scalp_probability is not None else None,
                 "note": "strategy_memory_applied" if memory_item else "no_strategy_memory_yet",
             },
         }
+
+        rejection_reason = _entry_quality_rejection_reason(mode, side, asset, score_payload, probability)
+        if rejection_reason:
+            if decision_log is not None:
+                decision_log.append({
+                    "assetType": asset.get("assetType") or "crypto",
+                    "strategyGate": "blocked",
+                    "symbol": symbol,
+                    "reason": rejection_reason,
+                    "probability": probability,
+                    "expectedValue": score_payload["aiDecision"].get("expected_value_percent"),
+                })
+            continue
 
         if mode == "short" and side == "Short":
             short_ranked.append((probability, side, asset, score_payload))
@@ -2735,7 +2862,7 @@ def _mark_strategy_to_market(
         virtual_amount = to_float(trade.get("virtualAmount"))
         asset_type = trade.get("assetType") or "crypto"
         quote_currency = trade.get("quoteCurrency") or ("RUB" if asset_type == "stock" else "USDT")
-        rules = _strategy_trade_rules(payload, trade)
+        rules = _rules_with_ai_levels(trade, _strategy_trade_rules(payload, trade))
         live_probability = _calculate_trade_live_probability(payload, trade, candidate)
         pnl_payload = _calculate_paper_trade_pnl(
             str(trade.get("side") or "Long"),
@@ -2862,7 +2989,17 @@ def _mark_strategy_to_market(
             status_value = "closed"
             close_reason = "profit_lock"
             closed_at = _strategy_now().isoformat()
-        elif hold_minutes >= float(rules["maxHoldMinutes"] or PAPER_MAX_HOLD_MINUTES) and abs(result_percent) >= 0.12:
+        elif (
+            hold_minutes >= float(rules["maxHoldMinutes"] or PAPER_MAX_HOLD_MINUTES)
+            and (
+                result_percent >= 0.35
+                or (
+                    result_percent <= -0.85
+                    and (live_probability is None or live_probability < max(to_float(trade.get("probability")) - 10, 52))
+                )
+                or hold_minutes >= float(rules["maxHoldMinutes"] or PAPER_MAX_HOLD_MINUTES) * 3
+            )
+        ):
             status_value = "closed"
             close_reason = "time_exit"
             closed_at = _strategy_now().isoformat()

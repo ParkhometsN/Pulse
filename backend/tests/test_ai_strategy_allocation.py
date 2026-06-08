@@ -6,6 +6,7 @@ from src.ai_router import (
     _allocate_strategy_entries,
     _build_strategy_recovery_state,
     _enrich_strategy_candidate_with_context,
+    _entry_quality_rejection_reason,
     _memory_blocks_entry,
     _memory_score_adjustment,
     _strategy_config,
@@ -49,22 +50,22 @@ def make_entry(
 
 
 class AIStrategyAllocationTest(unittest.TestCase):
-    def test_balanced_profile_deploys_most_capital_without_overallocating(self):
+    def test_balanced_profile_keeps_cash_buffer_without_overallocating(self):
         entries = [make_entry(f"TEST{i}USDT") for i in range(5)]
         allocations = _allocate_strategy_entries(entries, 100_000, "balanced")
 
         self.assertEqual(len(allocations), 5)
-        self.assertGreaterEqual(sum(allocations), 88_000)
-        self.assertLessEqual(sum(allocations), 90_000)
-        self.assertTrue(all(value <= 24_000 for value in allocations))
+        self.assertGreaterEqual(sum(allocations), 57_000)
+        self.assertLessEqual(sum(allocations), 58_500)
+        self.assertTrue(all(value <= 16_000 for value in allocations))
 
-    def test_active_profile_can_use_almost_all_capital(self):
+    def test_active_profile_uses_capital_but_keeps_risk_buffer(self):
         entries = [make_entry(f"TEST{i}USDT", probability=78) for i in range(6)]
         allocations = _allocate_strategy_entries(entries, 100_000, "active")
 
-        self.assertGreaterEqual(sum(allocations), 96_000)
-        self.assertLessEqual(sum(allocations), 98_000)
-        self.assertTrue(all(value <= 32_000 for value in allocations))
+        self.assertGreaterEqual(sum(allocations), 75_000)
+        self.assertLessEqual(sum(allocations), 76_500)
+        self.assertTrue(all(value <= 20_000 for value in allocations))
 
     def test_short_card_is_short_term_scalp_not_bearish_only(self):
         self.assertEqual(_strategy_config("ai-short")["mode"], "scalp")
@@ -111,6 +112,36 @@ class AIStrategyAllocationTest(unittest.TestCase):
         self.assertLess(_memory_score_adjustment(bad_memory), 0)
         self.assertTrue(_memory_blocks_entry(bad_memory, 70))
         self.assertFalse(_memory_blocks_entry(bad_memory, 84))
+
+    def test_strategy_quality_gate_blocks_weak_edge(self):
+        reason = _entry_quality_rejection_reason(
+            "scalp",
+            "Long",
+            {
+                "symbol": "WEAKUSDT",
+                "turnover24h": 2_000_000,
+                "bidAskSpreadPercent": 0.22,
+                "priceChangePercent1h": -0.1,
+                "priceChangePercent4h": -0.4,
+            },
+            {
+                "aiDecision": {
+                    "expected_value_percent": 0.08,
+                    "risk_reward": 1.2,
+                    "liquidity_score": 0.4,
+                },
+                "factors": {
+                    "price_change_1h": -0.1,
+                    "price_change_4h": -0.4,
+                    "volume_change_24h": -25,
+                    "volatility_atr": 5,
+                    "spread_percent": 0.22,
+                },
+            },
+            64,
+        )
+
+        self.assertIsNotNone(reason)
 
     def test_market_context_enriches_strategy_candidate(self):
         enriched = _enrich_strategy_candidate_with_context(
