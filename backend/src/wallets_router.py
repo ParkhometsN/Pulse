@@ -1796,6 +1796,87 @@ async def _load_tbank_trade_history(row, limit: int = 25) -> list[dict[str, Any]
 
 async def _load_bybit_trade_history(row, limit: int = 25) -> list[dict[str, Any]]:
     try:
+        executions = await bybit_client.get_execution_history(
+            row["api_key"],
+            row["api_secret_encrypted"],
+            category="spot",
+            limit=max(limit * 4, 50),
+        )
+    except UpstreamHTTPError:
+        executions = []
+
+    execution_groups: dict[str, dict[str, Any]] = {}
+
+    for execution in executions:
+        if not isinstance(execution, dict):
+            continue
+
+        symbol = str(execution.get("symbol") or "").upper()
+        side = str(execution.get("side") or "")
+        order_id = str(execution.get("orderId") or execution.get("execId") or "")
+        quantity = _decimal_from_string(execution.get("execQty"))
+        value = _decimal_from_string(execution.get("execValue"))
+        price = _decimal_from_string(execution.get("execPrice"))
+        executed_at = _parse_datetime(execution.get("execTime"))
+
+        if not symbol or not side or quantity <= 0:
+            continue
+
+        group_key = order_id or f"{symbol}-{side}-{executed_at.isoformat()}"
+        group = execution_groups.get(group_key)
+
+        if not group:
+            group = {
+                "id": group_key,
+                "symbol": symbol,
+                "side": side,
+                "quantity": Decimal("0"),
+                "totalAmount": Decimal("0"),
+                "executedAt": executed_at,
+            }
+            execution_groups[group_key] = group
+
+        group["quantity"] += quantity
+        group["totalAmount"] += value if value > 0 else price * quantity
+        if executed_at > group["executedAt"]:
+            group["executedAt"] = executed_at
+
+    if execution_groups:
+        items: list[dict[str, Any]] = []
+
+        for group in execution_groups.values():
+            symbol = group["symbol"]
+            base_coin = symbol.removesuffix("USDT") if symbol.endswith("USDT") else symbol
+            quantity = group["quantity"]
+            total_amount = group["totalAmount"]
+            price = total_amount / quantity if quantity > 0 and total_amount > 0 else Decimal("0")
+            executed_at = group["executedAt"]
+
+            items.append({
+                "id": f"bybit-exec-{group['id']}",
+                "provider": "bybit",
+                "providerLabel": PROVIDER_LABELS["bybit"],
+                "action": "Продажа" if group["side"] == "Sell" else "Покупка",
+                "assetType": "crypto",
+                "symbol": base_coin,
+                "routeSymbol": symbol,
+                "name": get_coin_name(base_coin) or base_coin,
+                "iconUrl": get_coinmarketcap_icon_url(base_coin),
+                "quantity": float(quantity),
+                "price": _decimal_to_float(price),
+                "totalAmount": _decimal_to_float(total_amount),
+                "currency": "USDT",
+                "executedAt": executed_at.isoformat(),
+                "time": executed_at.strftime("%H:%M"),
+            })
+
+        return sorted(
+            items,
+            key=lambda item: item.get("executedAt") or "",
+            reverse=True,
+        )[:limit]
+
+    try:
         orders = await bybit_client.get_order_history(
             row["api_key"],
             row["api_secret_encrypted"],

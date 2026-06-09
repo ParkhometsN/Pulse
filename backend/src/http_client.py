@@ -273,6 +273,25 @@ class BybitHTTPClient:
 
         return result.get("list", [])
 
+    async def get_execution_history(
+        self,
+        api_key: str,
+        api_secret: str,
+        category: str = "spot",
+        limit: int = 50,
+    ):
+        result = await self._signed_get(
+            "/v5/execution/list",
+            api_key=api_key.strip(),
+            api_secret=api_secret.strip(),
+            params={
+                "category": category,
+                "limit": limit,
+            },
+        )
+
+        return result.get("list", [])
+
     async def create_order(
         self,
         api_key: str,

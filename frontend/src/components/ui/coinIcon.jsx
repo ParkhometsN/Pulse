@@ -46,6 +46,7 @@ const CRYPTO_LOGO_SLUGS = {
   PEPE: "pepe-pepe",
   MNT: "mantle-mnt",
   TIA: "celestia-tia",
+  WLD: "worldcoin-org-wld",
 };
 
 const CRYPTO_COINMARKETCAP_IDS = {
@@ -80,6 +81,9 @@ const CRYPTO_COINMARKETCAP_IDS = {
   PEPE: 24478,
   TIA: 22861,
   MNT: 27075,
+  WLD: 13502,
+  VIRTUAL: 29420,
+  HYPE: 32196,
 };
 
 const STATIC_ICON_SOURCES = {

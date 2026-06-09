@@ -418,6 +418,48 @@ const getStrategyTradeAmountMeta = (trade) => {
   )}`;
 };
 
+const formatStrategyTradePrice = (value, currency = "USDT") => {
+  const number = Number(value);
+  const normalizedCurrency = String(currency || "USDT").toUpperCase();
+
+  if (!Number.isFinite(number) || number <= 0) {
+    return "";
+  }
+
+  const maximumFractionDigits = number >= 100
+    ? 2
+    : number >= 1
+      ? 4
+      : 8;
+
+  const formatted = number.toLocaleString("ru-RU", {
+    maximumFractionDigits,
+  });
+
+  if (normalizedCurrency === "RUB" || normalizedCurrency === "RUR") {
+    return `${formatted} ₽`;
+  }
+
+  return `${formatted} ${normalizedCurrency}`;
+};
+
+const getStrategyTradePriceMeta = (trade) => {
+  const currency = trade.quoteCurrency || (trade.assetType === "stock" ? "RUB" : "USDT");
+  const entryPrice = formatStrategyTradePrice(trade.entryPrice, currency);
+
+  if (!entryPrice) {
+    return "";
+  }
+
+  if (!trade.isExit) {
+    return `Вход ${entryPrice}`;
+  }
+
+  const exitPrice = formatStrategyTradePrice(trade.price || trade.exitPrice || trade.currentPrice, currency);
+
+  return exitPrice ? `Вход ${entryPrice} · Выход ${exitPrice}` : `Вход ${entryPrice}`;
+};
+
 const getStrategyTradePnlMeta = (trade) => (
   `${formatSignedStrategyPercent(trade.resultPercent)} · ${formatSignedStrategyMoney(trade.resultAmount || 0)}`
 );
@@ -1317,7 +1359,8 @@ function StrategyHistoryPanel({
                   const tone = getStrategyTone(item.resultAmount);
                   const isNavigable = item.asset && item.asset !== "NO_SIGNAL";
                   const actionTone = item.action === "Продажа" ? "sell" : "buy";
-                  const shouldShowPnl = item.isExit || item.status !== "closed";
+                  const shouldShowPnl = item.isExit;
+                  const priceMeta = getStrategyTradePriceMeta(item);
 
                   return (
                     <button
@@ -1352,6 +1395,11 @@ function StrategyHistoryPanel({
                         <strong>
                           {getStrategyTradeAmountMeta(item)}
                         </strong>
+                        {priceMeta ? (
+                          <small className="strategy_history_price_meta">
+                            {priceMeta}
+                          </small>
+                        ) : null}
                         {shouldShowPnl ? (
                           <small className={`strategy_history_pnl strategy_history_result_${tone}`}>
                             {getStrategyTradePnlMeta(item)}
@@ -1516,9 +1564,9 @@ function StrategyDrawer({
               </div>
               <div className="strategy_history_list strategy_history_list_preview">
                 {strategy.history.map((item) => {
-                  const tone = getStrategyTone(item.resultPercent);
                   const baseAsset = getStrategyTradeBase(item);
                   const isNavigable = item.asset && item.asset !== "NO_SIGNAL";
+                  const priceMeta = getStrategyTradePriceMeta(item);
 
                   if (!isNavigable) {
                     return (
@@ -1565,9 +1613,11 @@ function StrategyDrawer({
                           {getStrategyTradeEntryAction(item)}
                         </span>
                         <span>{getStrategyTradeAmountMeta(item)}</span>
-                        <small className={`strategy_history_pnl strategy_history_result_${tone}`}>
-                          {getStrategyTradePnlMeta(item)}
-                        </small>
+                        {priceMeta ? (
+                          <small className="strategy_history_price_meta">
+                            {priceMeta}
+                          </small>
+                        ) : null}
                       </div>
                     </button>
                   );

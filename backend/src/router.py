@@ -35,6 +35,11 @@ COIN_NAMES = {
     "SHIB": "Shiba Inu",
     "UNI": "Uniswap",
     "ETC": "Ethereum Classic",
+    "MNT": "Mantle",
+    "TIA": "Celestia",
+    "WLD": "Worldcoin",
+    "HYPE": "Hyperliquid",
+    "VIRTUAL": "Virtuals Protocol",
 }
 
 COINMARKETCAP_IDS = {
@@ -72,6 +77,11 @@ COINMARKETCAP_IDS = {
     "SUI": 20947,
     "APT": 21794,
     "PEPE": 24478,
+    "TIA": 22861,
+    "MNT": 27075,
+    "WLD": 13502,
+    "VIRTUAL": 29420,
+    "HYPE": 32196,
 }
 
 

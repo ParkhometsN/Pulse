@@ -268,16 +268,6 @@ const LEGACY_TBANK_MONEY_NAMES = {
 
 const PORTFOLIO_MONEY_SYMBOLS = new Set(["RUB", "USD", "EUR", "USDT", "USDC"]);
 
-const PROVIDER_ICONS = {
-  tbank: Tbankicon,
-  bybit: BybitIcon,
-  "pulse-ai": ChartUP,
-};
-
-const getProviderLogo = (provider) => PROVIDER_ICONS[provider] || ChartUP;
-
-const getProviderAlt = (provider, label) => label || (provider === "tbank" ? "Т Банк" : "Bybit");
-
 const getSafeChangeTone = (value) => {
   const number = Number(value) || 0;
 
@@ -398,6 +388,16 @@ const groupTradesByDate = (items) => {
   });
 
   return Array.from(groups.values());
+};
+
+const getTradeIconBase = (trade) => {
+  const symbol = String(trade.routeSymbol || trade.symbol || "").toUpperCase();
+
+  if (trade.assetType === "crypto" && symbol.endsWith("USDT")) {
+    return symbol.replace(/USDT$/, "");
+  }
+
+  return normalizeDisplaySymbol(trade.symbol || trade.routeSymbol || trade.name || "?");
 };
 
 const formatPercent = (value) => {
@@ -686,9 +686,11 @@ export default function Dashboard() {
 
   useEffect(() => {
     const refreshPortfolioData = async ({ silent = false, forceRefresh = false } = {}) => {
-      await fetchPortfolioSummary({ silent, forceRefresh });
-      await fetchPortfolioAnalytics();
-      await fetchPortfolioTrades();
+      await Promise.all([
+        fetchPortfolioSummary({ silent, forceRefresh }),
+        fetchPortfolioAnalytics(),
+        fetchPortfolioTrades(),
+      ]);
     };
 
     const initialRefresh = window.setTimeout(() => {
@@ -1424,16 +1426,16 @@ export default function Dashboard() {
 
                     <Drawer>
                       <DrawerTrigger asChild>
-                        <Buttons type="nm_black_prymary">
+                        <Buttons type="nm_black_prymary" onClick={fetchPortfolioTrades}>
                           <p style={{ fontSize: "12px" }}>История</p>
                         </Buttons>
                       </DrawerTrigger>
 
                       <DrawerContent className="trade_history_drawer bg-black-s text-white border border-black-t rounded-t-2xl">
 
-                        <div className="max-w-[800px]">
+                        <div className="trade_history_drawer_inner">
 
-                          <center>
+                        <center>
                           <div className="lineDrawer"></div>
                         </center>
 
@@ -1459,9 +1461,12 @@ export default function Dashboard() {
                                     onClick={() => openAssetPage(item)}
                                   >
                                     <div className="trade_history_item_main">
-                                      <img
-                                        src={getProviderLogo(item.provider || item.source)}
-                                        alt={getProviderAlt(item.provider || item.source, item.providerLabel || item.sourceLabel)}
+                                      <CoinIcon
+                                        baseCoin={getTradeIconBase(item)}
+                                        iconUrl={item.iconUrl}
+                                        label={item.name || item.symbol}
+                                        type={item.assetType === "stock" ? "stock" : "crypto"}
+                                        className="trade_history_asset_icon"
                                       />
                                       <div>
                                         <h4>{getLegacyDisplayName(item.name, item.symbol)}</h4>
@@ -1497,7 +1502,6 @@ export default function Dashboard() {
                           </DrawerClose> */}
                         </DrawerFooter>
                         </div>
-                        
                       </DrawerContent>
                     </Drawer>
                   </div>
