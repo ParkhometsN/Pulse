@@ -305,28 +305,40 @@ def detect_market_regime(features: MarketFeatures) -> MarketRegime:
     change_1h = features.price_change_1h or 0
     change_4h = features.price_change_4h or 0
     change_1d = features.price_change_1d or 0
+    volume_24h = features.volume_change_24h or 0
     atr = features.volatility_atr or 0
     rsi = features.rsi
     ema_trend = features.ema_trend
     range_position = features.range_position if features.range_position is not None else 0.5
 
-    if features.news_sentiment is not None and abs(features.news_sentiment) >= 0.75:
+    if (
+        features.news_sentiment is not None
+        and abs(features.news_sentiment) >= 0.6
+        and (abs(change_1h) >= 0.7 or abs(change_4h) >= 1.4 or volume_24h >= 35)
+    ):
         return MarketRegime.NEWS_DRIVEN
 
-    if change_1d <= -8 and atr >= 4:
+    if change_1d <= -7 and (atr >= 3.5 or change_1h <= -2.5 or volume_24h >= 45):
         return MarketRegime.PANIC
 
-    if change_1d >= 10 and range_position >= 0.82 and (rsi or 0) >= 68:
+    if (
+        change_1d >= 8
+        and range_position >= 0.86
+        and ((rsi or 0) >= 66 or change_1h >= 3.2)
+    ):
         return MarketRegime.EUPHORIA
 
     if atr >= 5 or abs(change_1h) >= 3.5 or abs(change_4h) >= 8:
         return MarketRegime.HIGH_VOLATILITY
 
-    if ema_trend == "bullish" and change_4h > 0 and change_1d > 0:
+    if ema_trend == "bullish" and change_4h > 0.15 and change_1d > 0.25 and range_position < 0.94:
         return MarketRegime.BULL_TREND
 
-    if ema_trend == "bearish" and change_4h < 0 and change_1d < 0:
+    if ema_trend == "bearish" and change_4h < -0.15 and change_1d < -0.25 and range_position > 0.06:
         return MarketRegime.BEAR_TREND
+
+    if atr <= 1.7 and abs(change_4h) <= 1.2 and 0.22 <= range_position <= 0.78:
+        return MarketRegime.RANGE
 
     if atr <= 0.8 and abs(change_1d) <= 1.2:
         return MarketRegime.LOW_VOLATILITY

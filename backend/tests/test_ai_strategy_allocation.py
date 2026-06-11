@@ -5,8 +5,11 @@ import unittest
 from src.ai_router import (
     _allocate_strategy_entries,
     _build_strategy_recovery_state,
+    _build_trade_exit_plan,
+    _calibration_probability_adjustment,
     _enrich_strategy_candidate_with_context,
     _entry_quality_rejection_reason,
+    _merge_external_signal_with_rating,
     _memory_blocks_entry,
     _memory_score_adjustment,
     _strategy_config,
@@ -63,9 +66,9 @@ class AIStrategyAllocationTest(unittest.TestCase):
         entries = [make_entry(f"TEST{i}USDT", probability=78) for i in range(6)]
         allocations = _allocate_strategy_entries(entries, 100_000, "active")
 
-        self.assertGreaterEqual(sum(allocations), 75_000)
-        self.assertLessEqual(sum(allocations), 76_500)
-        self.assertTrue(all(value <= 20_000 for value in allocations))
+        self.assertGreaterEqual(sum(allocations), 89_000)
+        self.assertLessEqual(sum(allocations), 90_500)
+        self.assertTrue(all(value <= 22_000 for value in allocations))
 
     def test_short_card_is_short_term_scalp_not_bearish_only(self):
         self.assertEqual(_strategy_config("ai-short")["mode"], "scalp")
@@ -113,6 +116,44 @@ class AIStrategyAllocationTest(unittest.TestCase):
         self.assertTrue(_memory_blocks_entry(bad_memory, 70))
         self.assertFalse(_memory_blocks_entry(bad_memory, 84))
 
+    def test_probability_calibration_penalizes_bad_realized_history(self):
+        bad_memory = {
+            "tradesCount": 8,
+            "winsCount": 2,
+            "lossesCount": 6,
+            "netResultAmount": -900,
+            "avgResultPercent": -0.7,
+        }
+
+        self.assertLess(_calibration_probability_adjustment(bad_memory, 72), 0)
+
+    def test_external_signal_merges_into_technical_rating(self):
+        merged = _merge_external_signal_with_rating(
+            {"score": 0.1, "signal": "neutral"},
+            {"direction": "LONG", "strength": 0.9},
+        )
+
+        self.assertGreater(merged["score"], 0.1)
+        self.assertEqual(merged["externalSignal"]["direction"], "LONG")
+
+    def test_trade_exit_plan_contains_tp_sl_trailing_and_time_stop(self):
+        plan = _build_trade_exit_plan(
+            "Long",
+            "scalp",
+            100,
+            {
+                "take_profit": 101.4,
+                "stop_loss": 98.9,
+                "expected_value_percent": 0.42,
+                "risk_reward": 1.35,
+            },
+        )
+
+        self.assertEqual(plan["policy"], "tp_sl_trailing_time_stop")
+        self.assertEqual(plan["takeProfit"], 101.4)
+        self.assertEqual(plan["stopLoss"], 98.9)
+        self.assertGreater(plan["trailingActivationPercent"], 0)
+
     def test_strategy_quality_gate_blocks_weak_edge(self):
         reason = _entry_quality_rejection_reason(
             "scalp",
@@ -142,6 +183,41 @@ class AIStrategyAllocationTest(unittest.TestCase):
         )
 
         self.assertIsNotNone(reason)
+
+    def test_strategy_quality_gate_blocks_late_overheated_scalp_entry(self):
+        reason = _entry_quality_rejection_reason(
+            "scalp",
+            "Long",
+            {
+                "symbol": "HOTUSDT",
+                "turnover24h": 8_000_000,
+                "bidAskSpreadPercent": 0.04,
+                "priceChangePercent1h": 3.8,
+                "priceChangePercent4h": 6.0,
+                "priceChangePercent24h": 13.0,
+                "rangePosition": 0.91,
+                "volumeTrendRatio": 1.3,
+            },
+            {
+                "aiDecision": {
+                    "expected_value_percent": 0.6,
+                    "risk_reward": 1.5,
+                    "liquidity_score": 0.8,
+                },
+                "factors": {
+                    "price_change_1h": 3.8,
+                    "price_change_4h": 6.0,
+                    "price_change_1d": 13.0,
+                    "volume_trend_ratio": 1.3,
+                    "volatility_atr": 4.0,
+                    "spread_percent": 0.04,
+                    "range_position": 0.91,
+                },
+            },
+            82,
+        )
+
+        self.assertEqual(reason, "актив слишком близко к верхней границе диапазона")
 
     def test_market_context_enriches_strategy_candidate(self):
         enriched = _enrich_strategy_candidate_with_context(

@@ -284,6 +284,26 @@ async def ensure_auth_schema() -> None:
         )
         await connection.execute(
             """
+            create table if not exists ai_market_signals (
+                id uuid primary key default gen_random_uuid(),
+                user_id uuid references users(id) on delete cascade,
+                source varchar(40) not null default 'tradingview',
+                signal_key varchar(255) not null,
+                symbol varchar(40) not null,
+                asset_type varchar(30) not null default 'crypto',
+                direction varchar(20) not null default 'NEUTRAL',
+                strength numeric(8, 6) not null default 0,
+                timeframe varchar(30),
+                price numeric(24, 10),
+                payload jsonb not null default '{}'::jsonb,
+                expires_at timestamptz not null,
+                created_at timestamptz not null default now(),
+                unique(source, signal_key)
+            )
+            """
+        )
+        await connection.execute(
+            """
             create table if not exists ai_trade_decisions (
                 id uuid primary key default gen_random_uuid(),
                 user_id uuid not null references users(id) on delete cascade,
@@ -411,6 +431,12 @@ async def ensure_auth_schema() -> None:
         )
         await connection.execute(
             "create index if not exists idx_ai_strategy_audit_logs_user_strategy on ai_strategy_audit_logs(user_id, strategy_id, created_at desc)"
+        )
+        await connection.execute(
+            "create index if not exists idx_ai_market_signals_symbol_created on ai_market_signals(symbol, created_at desc)"
+        )
+        await connection.execute(
+            "create index if not exists idx_ai_market_signals_expires on ai_market_signals(expires_at)"
         )
         await connection.execute(
             "create index if not exists idx_ai_trade_decisions_user_created on ai_trade_decisions(user_id, created_at desc)"

@@ -46,6 +46,7 @@ class Settings(BaseSettings):
     ai_trading_enabled: bool = True
     ai_auto_execution_enabled: bool = False
     ai_autonomous_paper_strategies_enabled: bool = True
+    ai_trading_webhook_secret: str | None = None
     min_probability_tp_before_sl: float = 0.63
     min_risk_reward: float = 1.3
     min_expected_value_percent: float = 0.18

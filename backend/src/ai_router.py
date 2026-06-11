@@ -54,7 +54,7 @@ logger = logging.getLogger(__name__)
 MOSCOW_TZ = timezone(timedelta(hours=3))
 PAPER_START_CAPITAL = 100_000.0
 PAPER_USD_RUB_RATE = 92.0
-PAPER_STRATEGY_SCHEMA_VERSION = 9
+PAPER_STRATEGY_SCHEMA_VERSION = 11
 PAPER_STRATEGY_IDS = ("ai-short", "ai-long", "ai-short-long")
 PAPER_UNIVERSES = {"crypto", "stocks", "mixed"}
 PAPER_RISK_PROFILES = {"careful", "balanced", "active"}
@@ -72,12 +72,18 @@ PAPER_DCA_STEP_PERCENT = -1.4
 PAPER_DCA_ADD_RATIO = 0.45
 PAPER_MAX_SCALE_INS = 1
 PAPER_MAX_HOLD_MINUTES = 180
-PAPER_SCALP_TAKE_PROFIT_PERCENT = 1.0
-PAPER_SCALP_STOP_LOSS_PERCENT = -1.8
-PAPER_SCALP_DCA_STEP_PERCENT = -0.9
-PAPER_SCALP_MAX_HOLD_MINUTES = 55
-PAPER_SCALP_MOMENTUM_FADE_PROBABILITY = 54
-PAPER_SCALP_PROFIT_LOCK_PERCENT = 0.45
+PAPER_SCALP_TAKE_PROFIT_PERCENT = 1.25
+PAPER_SCALP_STOP_LOSS_PERCENT = -1.35
+PAPER_SCALP_DCA_STEP_PERCENT = -0.75
+PAPER_SCALP_MAX_HOLD_MINUTES = 45
+PAPER_SCALP_MOMENTUM_FADE_PROBABILITY = 58
+PAPER_SCALP_PROFIT_LOCK_PERCENT = 0.72
+PAPER_SCALP_MIN_EV_PERCENT = 0.34
+PAPER_SCALP_MAX_RANGE_POSITION = 0.90
+PAPER_SCALP_LATE_ENTRY_RANGE_POSITION = 0.86
+PAPER_SCALP_OVERHEAT_1H_PERCENT = 3.2
+PAPER_SCALP_OVERHEAT_1D_PERCENT = 12.0
+PAPER_SCALP_MIN_VOLUME_RATIO = 1.03
 PAPER_CRYPTO_FEE_RATE = 0.001
 PAPER_STOCK_FEE_RATE = 0.0005
 PAPER_REENTRY_COOLDOWN_MINUTES = 20
@@ -94,7 +100,7 @@ STRATEGY_SNAPSHOT_TIMEOUT_SECONDS = 2.0
 STRATEGY_CRYPTO_KLINE_TIMEOUT_SECONDS = 2.5
 STRATEGY_STOCK_CANDLES_TIMEOUT_SECONDS = 2.5
 STRATEGY_TBANK_LOOKUP_TIMEOUT_SECONDS = 2.0
-STRATEGY_CRYPTO_KLINE_CANDIDATES_LIMIT = 20
+STRATEGY_CRYPTO_KLINE_CANDIDATES_LIMIT = 28
 STRATEGY_STOCK_CANDIDATES_LIMIT = 18
 STRATEGY_MARKET_CONTEXT_TTL_SECONDS = 180
 _strategy_candidates_cache: dict[str, dict[str, Any]] = {}
@@ -107,17 +113,17 @@ _strategy_market_context_cache: dict[str, Any] = {
 PAPER_RISK_MAX_ALLOCATION = {
     "careful": 0.12,
     "balanced": 0.16,
-    "active": 0.20,
+    "active": 0.22,
 }
 PAPER_RISK_MAX_OPEN_EXPOSURE = {
     "careful": 0.42,
     "balanced": 0.58,
-    "active": 0.76,
+    "active": 0.90,
 }
 PAPER_RISK_MAX_OPEN_POSITIONS = {
     "careful": 3,
     "balanced": 4,
-    "active": 5,
+    "active": 6,
 }
 PAPER_RISK_BOLDNESS = {
     "careful": 30,
@@ -168,6 +174,21 @@ class ExecuteAIDecisionRequest(BaseModel):
     decision: AITradeDecision
     strategy_id: str | None = Field(default=None, max_length=80)
     virtual_capital: float = Field(default=PAPER_START_CAPITAL, gt=0, le=100_000_000)
+
+
+class TradingViewWebhookRequest(BaseModel):
+    symbol: str = Field(max_length=40)
+    action: str | None = Field(default=None, max_length=40)
+    direction: str | None = Field(default=None, max_length=40)
+    signal: str | None = Field(default=None, max_length=80)
+    signal_id: str | None = Field(default=None, max_length=180)
+    asset_type: str = Field(default="crypto", pattern="^(crypto|stock|currency)$")
+    strength: float = Field(default=0.65, ge=0, le=1)
+    timeframe: str | None = Field(default=None, max_length=30)
+    price: float | None = Field(default=None, ge=0)
+    expires_in_minutes: int = Field(default=360, ge=5, le=1440)
+    secret: str | None = Field(default=None, max_length=255)
+    payload: dict[str, Any] = Field(default_factory=dict)
 
 
 def _mask_api_key(value: str | None) -> str | None:
@@ -260,7 +281,18 @@ def _calculate_asset_score(asset: dict[str, Any]) -> dict[str, Any]:
         or (asset.get("assetType") != "crypto" and change_1d > 0)
     )
     volume_confirmation = _clamp((volume_ratio - 1) * 18, -8, 12)
-    range_confirmation = _clamp((range_position - 0.45) * 18, -6, 8)
+    if 0.42 <= range_position <= 0.82:
+        range_confirmation = 6
+    elif 0.82 < range_position <= PAPER_SCALP_MAX_RANGE_POSITION:
+        range_confirmation = 2
+    elif range_position > PAPER_SCALP_MAX_RANGE_POSITION:
+        # Late breakout entries are the main source of fee churn: do not reward
+        # assets that already sit at the very top of their intraday range.
+        range_confirmation = -8 - min((range_position - PAPER_SCALP_MAX_RANGE_POSITION) * 80, 10)
+    elif range_position < 0.25:
+        range_confirmation = -4
+    else:
+        range_confirmation = 0
     spread_penalty = min(spread_percent * 22, 14)
 
     momentum_score = _clamp(
@@ -298,6 +330,9 @@ def _calculate_asset_score(asset: dict[str, Any]) -> dict[str, Any]:
 
         if spread_percent > 0.35:
             composite -= 10
+
+        if change_1d > PAPER_SCALP_OVERHEAT_1D_PERCENT and range_position > PAPER_SCALP_LATE_ENTRY_RANGE_POSITION:
+            composite -= 12
 
         if change_1d > 18 and change_1h < 0:
             composite -= 14
@@ -864,7 +899,7 @@ async def _ensure_autonomous_strategy_connections(user_id: Any) -> list[str]:
     async with pool.acquire() as connection:
         rows = await connection.fetch(
             """
-            select strategy_id
+            select strategy_id, is_active
             from ai_strategy_connections
             where user_id = $1
               and strategy_id = any($2::varchar[])
@@ -873,6 +908,11 @@ async def _ensure_autonomous_strategy_connections(user_id: Any) -> list[str]:
             list(PAPER_STRATEGY_IDS),
         )
         existing_strategy_ids = {row["strategy_id"] for row in rows}
+        inactive_strategy_ids = [
+            row["strategy_id"]
+            for row in rows
+            if row["strategy_id"] in PAPER_STRATEGY_IDS and not bool(row["is_active"])
+        ]
         missing_strategy_ids = [
             strategy_id
             for strategy_id in PAPER_STRATEGY_IDS
@@ -906,6 +946,26 @@ async def _ensure_autonomous_strategy_connections(user_id: Any) -> list[str]:
                 extra={
                     "user_id": str(user_id),
                     "strategy_ids": ",".join(missing_strategy_ids),
+                },
+            )
+
+        if inactive_strategy_ids:
+            await connection.execute(
+                """
+                update ai_strategy_connections
+                set is_active = true,
+                    updated_at = now()
+                where user_id = $1
+                  and strategy_id = any($2::varchar[])
+                """,
+                user_id,
+                inactive_strategy_ids,
+            )
+            logger.info(
+                "Reactivated autonomous AI paper strategies",
+                extra={
+                    "user_id": str(user_id),
+                    "strategy_ids": ",".join(inactive_strategy_ids),
                 },
             )
 
@@ -1053,6 +1113,79 @@ def _news_symbol_keys(symbol: str | None) -> set[str]:
     return keys
 
 
+def _normalize_signal_symbol(symbol: str | None, asset_type: str = "crypto") -> str:
+    normalized = str(symbol or "").upper().replace("/", "").replace("-", "").strip()
+    if not normalized:
+        return ""
+
+    if asset_type == "crypto" and normalized not in {"USDT", "USDC"} and not normalized.endswith("USDT"):
+        return f"{normalized}USDT"
+
+    return normalized
+
+
+def _normalize_external_signal_direction(value: str | None) -> str:
+    normalized = str(value or "").strip().lower()
+
+    if normalized in {"buy", "long", "open_long", "strong_buy", "bull", "bullish"}:
+        return "LONG"
+
+    if normalized in {"sell", "short", "open_short", "strong_sell", "bear", "bearish"}:
+        return "SHORT"
+
+    if normalized in {"close", "flat", "hold", "neutral", "no_trade", "none"}:
+        return "NEUTRAL"
+
+    return "NEUTRAL"
+
+
+def _external_signal_score(direction: str, strength: float) -> float:
+    bounded_strength = _clamp(to_float(strength, 0), 0, 1)
+
+    if direction == "LONG":
+        return bounded_strength
+
+    if direction == "SHORT":
+        return -bounded_strength
+
+    return 0
+
+
+def _merge_external_signal_with_rating(
+    rating: dict[str, Any],
+    signal: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if not signal:
+        return rating
+
+    signal_score = _external_signal_score(str(signal.get("direction") or "NEUTRAL"), to_float(signal.get("strength")))
+    if signal_score == 0:
+        return {
+            **rating,
+            "externalSignal": signal,
+        }
+
+    base_score = to_float(rating.get("score"))
+    merged_score = _clamp(base_score * 0.72 + signal_score * 0.28, -1, 1)
+    if merged_score >= 0.55:
+        merged_signal = "strong_buy"
+    elif merged_score >= 0.18:
+        merged_signal = "buy"
+    elif merged_score <= -0.55:
+        merged_signal = "strong_sell"
+    elif merged_score <= -0.18:
+        merged_signal = "sell"
+    else:
+        merged_signal = "neutral"
+
+    return {
+        **rating,
+        "score": round(merged_score, 4),
+        "signal": merged_signal,
+        "externalSignal": signal,
+    }
+
+
 def _score_news_sentiment(item: dict[str, Any]) -> float:
     text = f"{item.get('title') or ''} {item.get('summary') or ''}".lower().replace("ё", "е")
     positive = sum(1 for term in NEWS_POSITIVE_TERMS if term in text)
@@ -1143,6 +1276,52 @@ def _build_tradingview_style_rating(asset: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+async def _load_recent_market_signals(limit: int = 250) -> dict[str, dict[str, Any]]:
+    pool = get_database_pool()
+
+    try:
+        async with pool.acquire() as connection:
+            rows = await connection.fetch(
+                """
+                select source, signal_key, symbol, asset_type, direction, strength,
+                       timeframe, price, payload, created_at, expires_at
+                from ai_market_signals
+                where expires_at > now()
+                order by created_at desc
+                limit $1
+                """,
+                limit,
+            )
+    except Exception:
+        logger.exception("Failed to load external market signals")
+        return {}
+
+    signals: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        symbol = str(row["symbol"] or "").upper()
+        if not symbol or symbol in signals:
+            continue
+
+        signal = {
+            "source": row["source"],
+            "signalKey": row["signal_key"],
+            "symbol": symbol,
+            "assetType": row["asset_type"],
+            "direction": row["direction"],
+            "strength": float(row["strength"] or 0),
+            "timeframe": row["timeframe"],
+            "price": float(row["price"]) if row["price"] is not None else None,
+            "payload": _safe_json_payload(row["payload"], {}),
+            "createdAt": row["created_at"].isoformat() if row["created_at"] else None,
+            "expiresAt": row["expires_at"].isoformat() if row["expires_at"] else None,
+        }
+        signals[symbol] = signal
+        if symbol.endswith("USDT"):
+            signals.setdefault(symbol.removesuffix("USDT"), signal)
+
+    return signals
+
+
 async def _load_strategy_market_context() -> dict[str, Any]:
     cached = _strategy_market_context_cache.get("payload")
     created_at = to_float(_strategy_market_context_cache.get("created_at"))
@@ -1193,6 +1372,7 @@ async def _load_strategy_market_context() -> dict[str, Any]:
     current_mood = market_mood.get("current") if isinstance(market_mood, dict) else {}
     fear_greed = to_float((current_mood or {}).get("value"), 50)
     fear_greed_sentiment = _clamp((fear_greed - 50) / 50, -1, 1)
+    external_signals = await _load_recent_market_signals()
     payload = {
         "fearGreedIndex": fear_greed,
         "fearGreedSentiment": round(fear_greed_sentiment, 4),
@@ -1207,6 +1387,7 @@ async def _load_strategy_market_context() -> dict[str, Any]:
             for category, values in category_sentiment.items()
             if (value := _aggregate_weighted_sentiment(values)) is not None
         },
+        "externalSignals": external_signals,
         "sourceManifest": ["pulse_news_feed", "fear_greed_index", "pulse_tradingview_style_rating"],
         "updatedAt": datetime.now(timezone.utc).isoformat(),
     }
@@ -1220,6 +1401,7 @@ def _enrich_strategy_candidate_with_context(asset: dict[str, Any], context: dict
     asset_type = str(asset.get("assetType") or "crypto").lower()
     symbol_keys = _news_symbol_keys(asset.get("symbol"))
     asset_sentiment_map = context.get("assetSentiment") if isinstance(context.get("assetSentiment"), dict) else {}
+    external_signals = context.get("externalSignals") if isinstance(context.get("externalSignals"), dict) else {}
     news_counts = context.get("assetNewsCounts") if isinstance(context.get("assetNewsCounts"), dict) else {}
     category_sentiment = context.get("categorySentiment") if isinstance(context.get("categorySentiment"), dict) else {}
     direct_values = [
@@ -1246,11 +1428,24 @@ def _enrich_strategy_candidate_with_context(asset: dict[str, Any], context: dict
     else:
         combined_sentiment = combined_sentiment * 0.75 + market_sentiment * 0.25
 
-    technical_rating = _build_tradingview_style_rating(asset)
+    external_signal = next(
+        (
+            external_signals.get(symbol_key)
+            for symbol_key in symbol_keys
+            if external_signals.get(symbol_key)
+        ),
+        None,
+    )
+    technical_rating = _merge_external_signal_with_rating(
+        _build_tradingview_style_rating(asset),
+        external_signal,
+    )
     source_manifest = [
         *list(asset.get("sourceManifest") or []),
         *list(context.get("sourceManifest") or []),
     ]
+    if external_signal:
+        source_manifest.append(str(external_signal.get("source") or "external_signal"))
 
     return {
         **asset,
@@ -1262,6 +1457,7 @@ def _enrich_strategy_candidate_with_context(asset: dict[str, Any], context: dict
             "categorySentiment": fallback_sentiment,
             "marketSentiment": market_sentiment,
             "fearGreedSentiment": fear_greed_sentiment if asset_type == "crypto" else None,
+            "externalSignal": external_signal,
             "sourceManifest": context.get("sourceManifest") or [],
         },
         "tradingViewTechnicalScore": technical_rating["score"],
@@ -1547,15 +1743,17 @@ def _calculate_short_term_probability(score_payload: dict[str, Any], asset: dict
     breakout_bonus = 0
     if 0.18 <= change_1h <= 4 and 0.45 <= change_4h <= 10 and 1.2 <= change_1d <= 14:
         breakout_bonus += min(change_1d * 0.9, 8)
-    if 14 < change_1d <= 28 and liquidity >= 58 and change_1h > 0:
+    if 14 < change_1d <= 28 and liquidity >= 58 and 0 < change_1h <= PAPER_SCALP_OVERHEAT_1H_PERCENT:
         breakout_bonus += 4
     confirmation_bonus = 0
     if change_1h > 0 and change_4h > 0:
         confirmation_bonus += 8
     if volume_ratio >= 1.12:
         confirmation_bonus += min((volume_ratio - 1) * 10, 8)
-    if 0.52 <= range_position <= 0.92:
+    if 0.45 <= range_position <= 0.86:
         confirmation_bonus += 5
+    elif range_position > PAPER_SCALP_MAX_RANGE_POSITION:
+        confirmation_bonus -= min((range_position - PAPER_SCALP_MAX_RANGE_POSITION) * 80 + 5, 13)
     momentum = (
         max(change_1h, 0) * 6.2
         + max(change_4h, 0) * 3.8
@@ -1570,10 +1768,12 @@ def _calculate_short_term_probability(score_payload: dict[str, Any], asset: dict
         + max(-change_7d, 0) * 0.7
     )
     overheating_penalty = (
-        max(change_1d - 18, 0) * 0.85
-        + max(change_1h - 5, 0) * 4
-        + max(volatility - 18, 0) * 1.2
+        max(change_1d - PAPER_SCALP_OVERHEAT_1D_PERCENT, 0) * 1.15
+        + max(change_1h - PAPER_SCALP_OVERHEAT_1H_PERCENT, 0) * 5.2
+        + max(volatility - 16, 0) * 1.4
     )
+    if volume_ratio < 1 and change_1h > 1:
+        overheating_penalty += min((1 - volume_ratio) * 12 + change_1h * 0.8, 8)
     micro_liquidity_penalty = 14 if asset.get("assetType") == "crypto" and 0 < turnover < 1_000_000 else 0
     spread_penalty = min(spread_percent * 24, 16)
 
@@ -1696,7 +1896,15 @@ def _strategy_entry_rank(item: tuple[float, str, dict[str, Any], dict[str, Any]]
     expected_value = to_float(ai_decision.get("expected_value_percent") or ai_decision.get("expectedValuePercent"))
     risk_reward = to_float(ai_decision.get("risk_reward") or ai_decision.get("riskReward"), 1)
     spread = to_float(factors.get("spread_percent") or factors.get("spreadPercent") or asset.get("bidAskSpreadPercent"))
+    volume_ratio = to_float(
+        factors.get("volume_trend_ratio")
+        or factors.get("volumeTrendRatio")
+        or asset.get("volumeTrendRatio"),
+        1,
+    )
     volume_change = to_float(factors.get("volume_change_24h") or factors.get("volumeChange24h"))
+    if volume_change == 0 and volume_ratio != 1:
+        volume_change = (volume_ratio - 1) * 100
     change_1h = to_float(factors.get("price_change_1h") or factors.get("priceChange1h") or asset.get("priceChangePercent1h"))
     turnover = to_float(asset.get("turnover24h") or asset.get("volume24h"))
     turnover_bonus = _clamp((math.log10(max(turnover, 1)) - 5) * 1.4, -2.5, 6)
@@ -1917,7 +2125,16 @@ def _entry_quality_rejection_reason(
     volatility = to_float(factors.get("volatility_atr") or factors.get("volatilityAtr") or factors.get("volatility"))
     change_1h = to_float(factors.get("price_change_1h") or factors.get("priceChange1h") or asset.get("priceChangePercent1h"))
     change_4h = to_float(factors.get("price_change_4h") or factors.get("priceChange4h") or asset.get("priceChangePercent4h"))
+    change_1d = to_float(factors.get("price_change_1d") or factors.get("priceChange1d") or asset.get("priceChangePercent24h"))
+    volume_ratio = to_float(
+        factors.get("volume_trend_ratio")
+        or factors.get("volumeTrendRatio")
+        or asset.get("volumeTrendRatio"),
+        1,
+    )
     volume_change = to_float(factors.get("volume_change_24h") or factors.get("volumeChange24h"))
+    if volume_change == 0 and volume_ratio != 1:
+        volume_change = (volume_ratio - 1) * 100
     range_position = to_float(factors.get("range_position") or factors.get("rangePosition") or asset.get("rangePosition"), 0.5)
     data_flags = set(score_payload.get("dataQualityFlags") or factors.get("data_quality_flags") or [])
     min_probability = 66.0
@@ -1927,14 +2144,21 @@ def _entry_quality_rejection_reason(
 
     if mode == "scalp":
         min_probability = 70.0
-        min_ev = 0.26
+        min_ev = PAPER_SCALP_MIN_EV_PERCENT
         min_liquidity = 0.58
+        max_spread = 0.12
         if side != "Long":
             return "scalp работает только по подтвержденному long-импульсу"
         if change_1h < 0.08 or change_4h < -0.35:
             return "нет короткого momentum-подтверждения"
-        if range_position > 0.96:
+        if range_position > PAPER_SCALP_MAX_RANGE_POSITION:
             return "актив слишком близко к верхней границе диапазона"
+        if change_1h > PAPER_SCALP_OVERHEAT_1H_PERCENT and range_position > PAPER_SCALP_LATE_ENTRY_RANGE_POSITION:
+            return "поздний вход после резкого импульса"
+        if change_1d > PAPER_SCALP_OVERHEAT_1D_PERCENT and change_1h <= 0.35:
+            return "дневной импульс уже отыгран, нет свежего ускорения"
+        if volume_ratio < PAPER_SCALP_MIN_VOLUME_RATIO and change_1h < 0.45:
+            return "объемы не подтверждают новый импульс"
         if volume_change < -18:
             return "объемы не поддерживают продолжение импульса"
     elif mode == "hybrid":
@@ -2225,6 +2449,30 @@ def _memory_score_adjustment(memory_item: dict[str, Any] | None) -> float:
     return _clamp(score * 0.55 * confidence_multiplier - loss_bias, -10, 10)
 
 
+def _calibration_probability_adjustment(memory_item: dict[str, Any] | None, raw_probability: float) -> float:
+    if not memory_item:
+        return 0
+
+    trades_count = int(memory_item.get("tradesCount") or 0)
+    if trades_count < 4:
+        return 0
+
+    wins_count = int(memory_item.get("winsCount") or 0)
+    net_result_amount = to_float(memory_item.get("netResultAmount"))
+    avg_result_percent = to_float(memory_item.get("avgResultPercent"))
+    win_rate = wins_count / trades_count * 100 if trades_count else 0
+    sample_weight = min(trades_count / 12, 1)
+    probability_gap = win_rate - raw_probability
+    adjustment = probability_gap * 0.12 * sample_weight
+
+    if net_result_amount < 0:
+        adjustment -= min(abs(avg_result_percent) * 0.9 + 1.2, 4.5) * sample_weight
+    elif net_result_amount > 0 and avg_result_percent > 0:
+        adjustment += min(avg_result_percent * 0.55, 2.5) * sample_weight
+
+    return _clamp(adjustment, -8, 5)
+
+
 def _memory_blocks_entry(memory_item: dict[str, Any] | None, raw_probability: float) -> bool:
     if not memory_item:
         return False
@@ -2355,7 +2603,8 @@ def _select_strategy_entries(
             continue
 
         memory_adjustment = _memory_score_adjustment(memory_item)
-        probability = round(_clamp(raw_probability + memory_adjustment, 0, 100), 2)
+        calibration_adjustment = _calibration_probability_adjustment(memory_item, raw_probability)
+        probability = round(_clamp(raw_probability + memory_adjustment + calibration_adjustment, 0, 100), 2)
         if probability < 60:
             continue
 
@@ -2381,6 +2630,7 @@ def _select_strategy_entries(
                 "rawShortProbability": round((decision.probability_short_success or 0) * 100, 2),
                 "rawProbability": raw_probability,
                 "memoryAdjustment": round(memory_adjustment, 2),
+                "calibrationAdjustment": round(calibration_adjustment, 2),
                 "tradesCount": int((memory_item or {}).get("tradesCount") or 0),
                 "winsCount": int((memory_item or {}).get("winsCount") or 0),
                 "lossesCount": int((memory_item or {}).get("lossesCount") or 0),
@@ -2437,6 +2687,50 @@ def _select_strategy_entries(
     return long_ranked[:limit]
 
 
+def _build_trade_exit_plan(
+    side: str,
+    strategy_leg: str,
+    entry_price: float,
+    ai_decision: dict[str, Any],
+) -> dict[str, Any]:
+    take_profit = to_float(ai_decision.get("take_profit") or ai_decision.get("takeProfit"))
+    stop_loss = to_float(ai_decision.get("stop_loss") or ai_decision.get("stopLoss"))
+    expected_value = to_float(ai_decision.get("expected_value_percent") or ai_decision.get("expectedValuePercent"))
+    risk_reward = to_float(ai_decision.get("risk_reward") or ai_decision.get("riskReward"))
+    leg = str(strategy_leg or "").lower()
+
+    if leg == "scalp":
+        trailing_activation = PAPER_SCALP_PROFIT_LOCK_PERCENT
+        trailing_distance = 0.38
+        time_stop_minutes = PAPER_SCALP_MAX_HOLD_MINUTES
+    elif side == "Short":
+        trailing_activation = 0.75
+        trailing_distance = 0.55
+        time_stop_minutes = 120
+    else:
+        trailing_activation = 1.10
+        trailing_distance = 0.70
+        time_stop_minutes = PAPER_MAX_HOLD_MINUTES
+
+    return {
+        "policy": "tp_sl_trailing_time_stop",
+        "side": side,
+        "entryPrice": round(entry_price, 8),
+        "takeProfit": round(take_profit, 8) if take_profit > 0 else None,
+        "stopLoss": round(stop_loss, 8) if stop_loss > 0 else None,
+        "trailingActivationPercent": round(trailing_activation, 4),
+        "trailingDistancePercent": round(trailing_distance, 4),
+        "timeStopMinutes": time_stop_minutes,
+        "riskReward": round(risk_reward, 4),
+        "expectedValuePercent": round(expected_value, 4),
+        "executionMode": "paper_now_live_later",
+        "notes": [
+            "TP/SL считаются обязательным планом выхода, а не рекомендацией без риска.",
+            "Trailing включается только после выхода позиции в прибыль.",
+        ],
+    }
+
+
 def _build_strategy_trade(
     probability: float,
     side: str,
@@ -2451,6 +2745,8 @@ def _build_strategy_trade(
     price_currency_rate = _paper_price_rate(asset_type, quote_currency)
     quantity = allocation_rub / (entry_price * price_currency_rate) if entry_price > 0 else 0
     ai_decision = score_payload.get("aiDecision") or {}
+    strategy_leg = score_payload.get("strategyLeg") or ("short" if side == "Short" else "long")
+    exit_plan = _build_trade_exit_plan(side, str(strategy_leg), entry_price, ai_decision)
     opening_pnl = _calculate_paper_trade_pnl(
         side,
         asset_type,
@@ -2467,7 +2763,7 @@ def _build_strategy_trade(
         "name": asset.get("name") or asset.get("shortName") or asset.get("symbol"),
         "assetType": asset_type,
         "side": side,
-        "strategyLeg": score_payload.get("strategyLeg") or ("short" if side == "Short" else "long"),
+        "strategyLeg": strategy_leg,
         "probability": round(probability, 2),
         "entryPrice": round(entry_price, 8),
         "currentPrice": round(entry_price, 8),
@@ -2485,13 +2781,15 @@ def _build_strategy_trade(
         "stopLoss": ai_decision.get("stop_loss") or ai_decision.get("stopLoss"),
         "expectedValuePercent": ai_decision.get("expected_value_percent") or ai_decision.get("expectedValuePercent"),
         "riskReward": ai_decision.get("risk_reward") or ai_decision.get("riskReward"),
+        "exitPlan": exit_plan,
         "entryContext": {
             "score": score_payload.get("score"),
             "confidence": score_payload.get("confidence"),
             "factors": score_payload.get("factors") or {},
             "memory": score_payload.get("memory") or {},
-            "strategyLeg": score_payload.get("strategyLeg") or ("short" if side == "Short" else "long"),
+            "strategyLeg": strategy_leg,
             "aiDecision": ai_decision,
+            "exitPlan": exit_plan,
         },
         "status": "open",
         "closeReason": None,
@@ -4370,6 +4668,81 @@ async def get_ai_asset_summary(
     }
 
 
+@router.post("/ai/tradingview/webhook")
+async def receive_tradingview_webhook(payload: TradingViewWebhookRequest):
+    if settings.ai_trading_webhook_secret:
+        if payload.secret != settings.ai_trading_webhook_secret:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Неверный webhook secret.")
+    elif settings.is_production:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="В production нужно задать AI_TRADING_WEBHOOK_SECRET.",
+        )
+
+    asset_type = payload.asset_type.lower()
+    symbol = _normalize_signal_symbol(payload.symbol, asset_type)
+    if not symbol:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Пустой символ сигнала.")
+
+    raw_direction = payload.direction or payload.action or payload.signal
+    direction = _normalize_external_signal_direction(raw_direction)
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=payload.expires_in_minutes)
+    signal_key = (
+        payload.signal_id
+        or f"tradingview:{symbol}:{payload.timeframe or 'default'}:{direction}:{int(time.time())}"
+    )
+    safe_payload = {
+        **payload.payload,
+        "action": payload.action,
+        "signal": payload.signal,
+        "direction": direction,
+    }
+    pool = get_database_pool()
+
+    async with pool.acquire() as connection:
+        await connection.execute(
+            """
+            insert into ai_market_signals (
+                source, signal_key, symbol, asset_type, direction, strength,
+                timeframe, price, payload, expires_at
+            )
+            values ('tradingview', $1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9)
+            on conflict (source, signal_key) do update set
+                symbol = excluded.symbol,
+                asset_type = excluded.asset_type,
+                direction = excluded.direction,
+                strength = excluded.strength,
+                timeframe = excluded.timeframe,
+                price = excluded.price,
+                payload = excluded.payload,
+                expires_at = excluded.expires_at,
+                created_at = now()
+            """,
+            signal_key,
+            symbol,
+            asset_type,
+            direction,
+            _clamp(payload.strength, 0, 1),
+            payload.timeframe,
+            payload.price,
+            json.dumps(safe_payload),
+            expires_at,
+        )
+
+    _strategy_market_context_cache["payload"] = None
+    _strategy_market_context_cache["created_at"] = 0
+
+    return {
+        "accepted": True,
+        "source": "tradingview",
+        "signalKey": signal_key,
+        "symbol": symbol,
+        "direction": direction,
+        "strength": round(_clamp(payload.strength, 0, 1), 4),
+        "expiresAt": expires_at.isoformat(),
+    }
+
+
 @router.get("/ai/decision/{symbol}")
 async def get_ai_trade_decision(
     symbol: str,
@@ -4635,6 +5008,13 @@ async def execute_ai_decision_in_paper(
 
     notional = payload.virtual_capital * decision.position_size_percent / 100
     quantity = notional / decision.entry_price if decision.entry_price > 0 else 0
+    side = "Short" if decision.final_action == FinalAction.OPEN_SHORT else "Long"
+    exit_plan = _build_trade_exit_plan(
+        side,
+        decision.strategy_type.value.lower(),
+        decision.entry_price,
+        decision.model_dump(mode="json"),
+    )
     paper_order = {
         "id": decision.id,
         "symbol": decision.symbol,
@@ -4644,6 +5024,7 @@ async def execute_ai_decision_in_paper(
         "entryPrice": decision.entry_price,
         "takeProfit": decision.take_profit,
         "stopLoss": decision.stop_loss,
+        "exitPlan": exit_plan,
         "quantity": round(quantity, 10),
         "notional": round(notional, 2),
         "expectedValuePercent": decision.expected_value_percent,
