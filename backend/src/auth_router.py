@@ -28,6 +28,27 @@ RESET_CODE_TTL_MINUTES = 15
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
+def _database_unavailable_error() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="База данных временно недоступна. Попробуйте еще раз через минуту.",
+    )
+
+
+def _is_database_error(error: Exception) -> bool:
+    return isinstance(
+        error,
+        (
+            asyncpg.PostgresError,
+            asyncpg.InterfaceError,
+            asyncpg.ConnectionDoesNotExistError,
+            OSError,
+            TimeoutError,
+            asyncio.TimeoutError,
+        ),
+    )
+
+
 class RegisterRequest(BaseModel):
     first_name: str = Field(min_length=1, max_length=80)
     last_name: str = Field(min_length=1, max_length=80)
@@ -213,12 +234,12 @@ async def get_current_user(authorization: str | None = Header(default=None)):
                     UUID(payload["sub"]),
                 )
             break
-        except (asyncpg.ConnectionDoesNotExistError, asyncpg.InterfaceError):
+        except Exception as error:
+            if not _is_database_error(error):
+                raise
+
             if attempt == 1:
-                raise HTTPException(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail="Соединение с базой данных временно недоступно. Повторите запрос.",
-                ) from None
+                raise _database_unavailable_error() from None
 
             await asyncio.sleep(0.1)
 
@@ -275,28 +296,35 @@ async def register(payload: RegisterRequest):
     pool = get_database_pool()
     email = _validate_email(payload.email)
 
-    async with pool.acquire() as connection:
-        existing_user = await connection.fetchval(
-            "select id from users where email = $1",
-            email,
-        )
-        if existing_user:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Аккаунт с такой почтой уже существует.",
+    try:
+        async with pool.acquire() as connection:
+            existing_user = await connection.fetchval(
+                "select id from users where email = $1",
+                email,
             )
+            if existing_user:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Аккаунт с такой почтой уже существует.",
+                )
 
-        user = await connection.fetchrow(
-            """
-            insert into users (first_name, last_name, email, password_hash)
-            values ($1, $2, $3, $4)
-            returning id, first_name, last_name, email, avatar_url, is_email_verified
-            """,
-            payload.first_name.strip(),
-            payload.last_name.strip(),
-            email,
-            _hash_password(payload.password),
-        )
+            user = await connection.fetchrow(
+                """
+                insert into users (first_name, last_name, email, password_hash)
+                values ($1, $2, $3, $4)
+                returning id, first_name, last_name, email, avatar_url, is_email_verified
+                """,
+                payload.first_name.strip(),
+                payload.last_name.strip(),
+                email,
+                _hash_password(payload.password),
+            )
+    except HTTPException:
+        raise
+    except Exception as error:
+        if _is_database_error(error):
+            raise _database_unavailable_error() from None
+        raise
 
     token = _create_access_token(str(user["id"]), user["email"])
     return {"accessToken": token, "user": _public_user(user)}
@@ -307,15 +335,20 @@ async def login(payload: LoginRequest):
     pool = get_database_pool()
     email = _validate_email(payload.email)
 
-    async with pool.acquire() as connection:
-        user = await connection.fetchrow(
-            """
-            select id, first_name, last_name, email, password_hash, avatar_url, is_email_verified
-            from users
-            where email = $1
-            """,
-            email,
-        )
+    try:
+        async with pool.acquire() as connection:
+            user = await connection.fetchrow(
+                """
+                select id, first_name, last_name, email, password_hash, avatar_url, is_email_verified
+                from users
+                where email = $1
+                """,
+                email,
+            )
+    except Exception as error:
+        if _is_database_error(error):
+            raise _database_unavailable_error() from None
+        raise
 
     if not user or not _verify_password(payload.password, user["password_hash"]):
         raise HTTPException(
@@ -332,11 +365,16 @@ async def check_email(payload: CheckEmailRequest):
     pool = get_database_pool()
     email = _validate_email(payload.email)
 
-    async with pool.acquire() as connection:
-        exists = await connection.fetchval(
-            "select exists(select 1 from users where email = $1)",
-            email,
-        )
+    try:
+        async with pool.acquire() as connection:
+            exists = await connection.fetchval(
+                "select exists(select 1 from users where email = $1)",
+                email,
+            )
+    except Exception as error:
+        if _is_database_error(error):
+            raise _database_unavailable_error() from None
+        raise
 
     return {"exists": bool(exists)}
 
