@@ -66,8 +66,8 @@ class AIStrategyAllocationTest(unittest.TestCase):
         entries = [make_entry(f"TEST{i}USDT", probability=78) for i in range(6)]
         allocations = _allocate_strategy_entries(entries, 100_000, "active")
 
-        self.assertGreaterEqual(sum(allocations), 89_000)
-        self.assertLessEqual(sum(allocations), 90_500)
+        self.assertGreaterEqual(sum(allocations), 95_000)
+        self.assertLessEqual(sum(allocations), 96_500)
         self.assertTrue(all(value <= 22_000 for value in allocations))
 
     def test_short_card_is_short_term_scalp_not_bearish_only(self):
@@ -95,7 +95,7 @@ class AIStrategyAllocationTest(unittest.TestCase):
 
         self.assertEqual(state["state"], "regroup")
         self.assertLess(state["effectiveBoldness"], state["baseBoldness"])
-        self.assertLessEqual(state["maxOpenPositions"], 3)
+        self.assertLessEqual(state["maxOpenPositions"], 4)
 
     def test_strategy_memory_adjusts_and_blocks_repeated_bad_patterns(self):
         good_memory = {

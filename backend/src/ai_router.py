@@ -76,9 +76,9 @@ PAPER_SCALP_TAKE_PROFIT_PERCENT = 1.25
 PAPER_SCALP_STOP_LOSS_PERCENT = -1.35
 PAPER_SCALP_DCA_STEP_PERCENT = -0.75
 PAPER_SCALP_MAX_HOLD_MINUTES = 45
-PAPER_SCALP_MOMENTUM_FADE_PROBABILITY = 58
-PAPER_SCALP_PROFIT_LOCK_PERCENT = 0.72
-PAPER_SCALP_MIN_EV_PERCENT = 0.34
+PAPER_SCALP_MOMENTUM_FADE_PROBABILITY = 55
+PAPER_SCALP_PROFIT_LOCK_PERCENT = 0.58
+PAPER_SCALP_MIN_EV_PERCENT = 0.22
 PAPER_SCALP_MAX_RANGE_POSITION = 0.90
 PAPER_SCALP_LATE_ENTRY_RANGE_POSITION = 0.86
 PAPER_SCALP_OVERHEAT_1H_PERCENT = 3.2
@@ -97,6 +97,9 @@ ASSET_SCORE_MODEL = "deterministic-v3"
 STRATEGY_CANDIDATES_CACHE_TTL_SECONDS = 45
 STRATEGY_RESPONSE_CACHE_TTL_SECONDS = 12
 STRATEGY_SNAPSHOT_TIMEOUT_SECONDS = 2.0
+STRATEGY_BYBIT_TICKERS_TIMEOUT_SECONDS = 4.0
+STRATEGY_MOEX_STOCKS_TIMEOUT_SECONDS = 4.0
+STRATEGY_MARKET_CONTEXT_TIMEOUT_SECONDS = 3.5
 STRATEGY_CRYPTO_KLINE_TIMEOUT_SECONDS = 2.5
 STRATEGY_STOCK_CANDLES_TIMEOUT_SECONDS = 2.5
 STRATEGY_TBANK_LOOKUP_TIMEOUT_SECONDS = 2.0
@@ -118,7 +121,7 @@ PAPER_RISK_MAX_ALLOCATION = {
 PAPER_RISK_MAX_OPEN_EXPOSURE = {
     "careful": 0.42,
     "balanced": 0.58,
-    "active": 0.90,
+    "active": 0.96,
 }
 PAPER_RISK_MAX_OPEN_POSITIONS = {
     "careful": 3,
@@ -1333,16 +1336,22 @@ async def _load_strategy_market_context() -> dict[str, Any]:
     market_mood: dict[str, Any] = {}
     try:
         news_items, market_mood = await asyncio.gather(
-            get_cached_news(),
-            get_cached_market_mood(),
+            asyncio.wait_for(get_cached_news(), timeout=STRATEGY_MARKET_CONTEXT_TIMEOUT_SECONDS),
+            asyncio.wait_for(get_cached_market_mood(), timeout=STRATEGY_MARKET_CONTEXT_TIMEOUT_SECONDS),
         )
     except Exception:
         try:
-            news_items = await get_cached_news()
+            news_items = await asyncio.wait_for(
+                get_cached_news(),
+                timeout=STRATEGY_MARKET_CONTEXT_TIMEOUT_SECONDS,
+            )
         except Exception:
             news_items = []
         try:
-            market_mood = await get_cached_market_mood()
+            market_mood = await asyncio.wait_for(
+                get_cached_market_mood(),
+                timeout=STRATEGY_MARKET_CONTEXT_TIMEOUT_SECONDS,
+            )
         except Exception:
             market_mood = {}
 
@@ -1486,6 +1495,27 @@ def _strategy_candidates_by_symbol(candidates: list[dict[str, Any]]) -> dict[str
         for candidate in candidates
         if candidate.get("symbol")
     }
+
+
+def _mark_strategy_candidates_from_stale_cache(candidates: list[dict[str, Any]], reason: str) -> list[dict[str, Any]]:
+    marked_candidates: list[dict[str, Any]] = []
+
+    for candidate in candidates:
+        data_flags = list(dict.fromkeys([
+            *list(candidate.get("dataQualityFlags") or []),
+            reason,
+        ]))
+        source_manifest = list(dict.fromkeys([
+            *list(candidate.get("sourceManifest") or []),
+            "stale_strategy_candidates_cache",
+        ]))
+        marked_candidates.append({
+            **candidate,
+            "dataQualityFlags": data_flags,
+            "sourceManifest": source_manifest,
+        })
+
+    return marked_candidates
 
 
 def _normalize_bybit_kline_item(item: Any) -> dict[str, Any] | None:
@@ -2061,16 +2091,16 @@ def _build_strategy_recovery_state(
         state = "defensive"
         label = "Защитная пересборка"
         reason = "Просадка или серия убытков высокая: стратегия режет риск и берет только самые сильные входы."
-        exposure_multiplier = 0.18
-        probability_bonus = 11.0
-        max_open_positions = max(1, min(max_open_positions, 1))
+        exposure_multiplier = 0.45
+        probability_bonus = 8.0
+        max_open_positions = max(2, min(max_open_positions, 3))
     elif drawdown_percent <= PAPER_REGROUP_DRAWDOWN_PERCENT or loss_streak >= PAPER_REGROUP_LOSS_STREAK:
         state = "regroup"
         label = "Пересборка"
         reason = "Стратегия ушла в минус: снижаем смелость, повышаем порог входа и убираем слабые позиции."
-        exposure_multiplier = 0.34
-        probability_bonus = 7.0
-        max_open_positions = max(1, min(max_open_positions, 2))
+        exposure_multiplier = 0.65
+        probability_bonus = 4.0
+        max_open_positions = max(3, min(max_open_positions, 4))
 
     return {
         "state": state,
@@ -2137,13 +2167,13 @@ def _entry_quality_rejection_reason(
         volume_change = (volume_ratio - 1) * 100
     range_position = to_float(factors.get("range_position") or factors.get("rangePosition") or asset.get("rangePosition"), 0.5)
     data_flags = set(score_payload.get("dataQualityFlags") or factors.get("data_quality_flags") or [])
-    min_probability = 66.0
-    min_ev = 0.22
+    min_probability = 64.0
+    min_ev = 0.18
     min_liquidity = 0.55
     max_spread = 0.16
 
     if mode == "scalp":
-        min_probability = 70.0
+        min_probability = 66.0
         min_ev = PAPER_SCALP_MIN_EV_PERCENT
         min_liquidity = 0.58
         max_spread = 0.12
@@ -2162,11 +2192,11 @@ def _entry_quality_rejection_reason(
         if volume_change < -18:
             return "объемы не поддерживают продолжение импульса"
     elif mode == "hybrid":
-        min_probability = 68.0
-        min_ev = 0.24
+        min_probability = 65.0
+        min_ev = 0.20
     elif mode == "long":
-        min_probability = 67.0
-        min_ev = 0.22
+        min_probability = 65.0
+        min_ev = 0.20
         if side != "Long":
             return "long-стратегия не открывает short-позиции"
         if change_1h < -0.35 and change_4h < 0.2:
@@ -2807,6 +2837,7 @@ async def _load_strategy_candidates(user_id: Any | None = None) -> list[dict[str
     cache_key = str(user_id or "anonymous")
     cached = _strategy_candidates_cache.get(cache_key)
     now_monotonic = time.monotonic()
+    stale_cached_items = list(cached.get("items") or []) if cached else []
 
     if cached and now_monotonic - cached["created_at"] < STRATEGY_CANDIDATES_CACHE_TTL_SECONDS:
         return cached["items"]
@@ -2822,7 +2853,10 @@ async def _load_strategy_candidates(user_id: Any | None = None) -> list[dict[str
             tbank_token = None
 
     try:
-        tickers = await bybit_client.get_tickers("spot")
+        tickers = await asyncio.wait_for(
+            bybit_client.get_tickers("spot"),
+            timeout=STRATEGY_BYBIT_TICKERS_TIMEOUT_SECONDS,
+        )
         tradable_tickers = [
             item for item in tickers
             if str(item.get("symbol") or "").endswith("USDT")
@@ -2911,10 +2945,13 @@ async def _load_strategy_candidates(user_id: Any | None = None) -> list[dict[str
             if isinstance(item, dict)
         ])
     except Exception:
-        pass
+        logger.exception("Failed to load Bybit strategy candidates")
 
     try:
-        moex_payload = await moex_client.get_stocks(board="TQBR")
+        moex_payload = await asyncio.wait_for(
+            moex_client.get_stocks(board="TQBR"),
+            timeout=STRATEGY_MOEX_STOCKS_TIMEOUT_SECONDS,
+        )
         securities = table_to_dicts(moex_payload, "securities")
         marketdata = table_to_dicts(moex_payload, "marketdata")
         securities_map = {item.get("SECID"): item for item in securities}
@@ -2982,7 +3019,7 @@ async def _load_strategy_candidates(user_id: Any | None = None) -> list[dict[str
         ], return_exceptions=True)
         candidates.extend([item for item in stock_candidates if item])
     except Exception:
-        pass
+        logger.exception("Failed to load MOEX strategy candidates")
 
     if candidates:
         try:
@@ -3007,6 +3044,13 @@ async def _load_strategy_candidates(user_id: Any | None = None) -> list[dict[str
                 for candidate in candidates
             ]
 
+    if not candidates and stale_cached_items:
+        logger.warning(
+            "Using stale strategy candidates because fresh providers returned no data",
+            extra={"user_id": str(user_id or "anonymous"), "candidates_count": len(stale_cached_items)},
+        )
+        return _mark_strategy_candidates_from_stale_cache(stale_cached_items, "stale_provider_cache")
+
     if len(_strategy_candidates_cache) > 300:
         oldest_key = min(
             _strategy_candidates_cache,
@@ -3014,10 +3058,11 @@ async def _load_strategy_candidates(user_id: Any | None = None) -> list[dict[str
         )
         _strategy_candidates_cache.pop(oldest_key, None)
 
-    _strategy_candidates_cache[cache_key] = {
-        "created_at": time.monotonic(),
-        "items": candidates,
-    }
+    if candidates:
+        _strategy_candidates_cache[cache_key] = {
+            "created_at": time.monotonic(),
+            "items": candidates,
+        }
 
     return candidates
 
@@ -5459,6 +5504,11 @@ async def run_due_paper_strategies_for_all_users() -> None:
 
         try:
             candidates = await _load_strategy_candidates(user_id)
+            if not candidates:
+                logger.warning(
+                    "Paper strategy scheduler has no market candidates",
+                    extra={"user_id": str(user_id), "strategy_ids": ",".join(strategy_ids)},
+                )
             results = await asyncio.gather(*[
                 _get_or_create_strategy_run(user_id, strategy_id, candidates=candidates)
                 for strategy_id in strategy_ids

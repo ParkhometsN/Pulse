@@ -5,6 +5,7 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import secrets
 import smtplib
 import re
@@ -22,6 +23,7 @@ from src.database import get_database_pool
 
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+logger = logging.getLogger(__name__)
 
 PASSWORD_ITERATIONS = 180_000
 RESET_CODE_TTL_MINUTES = 15
@@ -43,10 +45,21 @@ def _is_database_error(error: Exception) -> bool:
             asyncpg.InterfaceError,
             asyncpg.ConnectionDoesNotExistError,
             OSError,
+            RuntimeError,
             TimeoutError,
             asyncio.TimeoutError,
         ),
     )
+
+
+def _get_auth_database_pool():
+    try:
+        return get_database_pool()
+    except Exception as error:
+        if _is_database_error(error):
+            logger.exception("Auth database pool is unavailable")
+            raise _database_unavailable_error() from None
+        raise
 
 
 class RegisterRequest(BaseModel):
@@ -219,7 +232,7 @@ async def get_current_user(authorization: str | None = Header(default=None)):
         )
 
     payload = _decode_access_token(authorization.split(" ", 1)[1])
-    pool = get_database_pool()
+    pool = _get_auth_database_pool()
     user = None
 
     for attempt in range(2):
@@ -293,7 +306,7 @@ async def register(payload: RegisterRequest):
             detail="Пароли не совпадают.",
         )
 
-    pool = get_database_pool()
+    pool = _get_auth_database_pool()
     email = _validate_email(payload.email)
 
     try:
@@ -323,6 +336,7 @@ async def register(payload: RegisterRequest):
         raise
     except Exception as error:
         if _is_database_error(error):
+            logger.exception("Registration database operation failed", extra={"email": email})
             raise _database_unavailable_error() from None
         raise
 
@@ -332,7 +346,7 @@ async def register(payload: RegisterRequest):
 
 @router.post("/login")
 async def login(payload: LoginRequest):
-    pool = get_database_pool()
+    pool = _get_auth_database_pool()
     email = _validate_email(payload.email)
 
     try:
@@ -347,6 +361,7 @@ async def login(payload: LoginRequest):
             )
     except Exception as error:
         if _is_database_error(error):
+            logger.exception("Login database operation failed", extra={"email": email})
             raise _database_unavailable_error() from None
         raise
 
@@ -362,7 +377,7 @@ async def login(payload: LoginRequest):
 
 @router.post("/check-email")
 async def check_email(payload: CheckEmailRequest):
-    pool = get_database_pool()
+    pool = _get_auth_database_pool()
     email = _validate_email(payload.email)
 
     try:
@@ -373,6 +388,7 @@ async def check_email(payload: CheckEmailRequest):
             )
     except Exception as error:
         if _is_database_error(error):
+            logger.exception("Check email database operation failed", extra={"email": email})
             raise _database_unavailable_error() from None
         raise
 
