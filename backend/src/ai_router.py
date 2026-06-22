@@ -91,6 +91,8 @@ PAPER_CHART_POINT_INTERVAL_SECONDS = 60
 PAPER_SCHEDULER_INTERVAL_SECONDS = 60
 PAPER_SCHEDULER_STARTUP_DELAY_SECONDS = 20
 PAPER_MAX_DAILY_TRADES = 320
+PAPER_DECISION_LOG_STORE_LIMIT = 8
+PAPER_STORAGE_CLEANUP_INTERVAL_SECONDS = 6 * 60 * 60
 STRATEGY_MEMORY_SCORE_LIMIT = 15
 STRATEGY_GPT_REVIEW_COOLDOWN_HOURS = 12
 ASSET_SCORE_MODEL = "deterministic-v3"
@@ -113,6 +115,7 @@ _strategy_market_context_cache: dict[str, Any] = {
     "created_at": 0,
     "payload": None,
 }
+_strategy_storage_cleanup_last_run = 0.0
 PAPER_RISK_MAX_ALLOCATION = {
     "careful": 0.12,
     "balanced": 0.16,
@@ -3990,8 +3993,84 @@ async def _record_strategy_audit_logs(
         )
 
 
+def _strategy_decision_log_rank(item: dict[str, Any]) -> tuple[int, int, float, float]:
+    decision = item.get("decision") if isinstance(item.get("decision"), dict) else {}
+    final_action = str(decision.get("final_action") or decision.get("finalAction") or "")
+    risk_passed = bool(decision.get("risk_manager_passed") or decision.get("riskManagerPassed"))
+    validator_passed = bool(decision.get("validator_passed") or decision.get("validatorPassed"))
+    expected_value = to_float(decision.get("expected_value_percent") or decision.get("expectedValuePercent"))
+    probability = to_float(decision.get("probability_tp_before_sl") or decision.get("probabilityTpBeforeSl"))
+
+    return (
+        1 if risk_passed and validator_passed else 0,
+        1 if final_action and final_action != FinalAction.NO_TRADE.value else 0,
+        expected_value,
+        probability,
+    )
+
+
+async def _cleanup_strategy_storage_if_due() -> None:
+    global _strategy_storage_cleanup_last_run
+
+    now_monotonic = time.monotonic()
+    if now_monotonic - _strategy_storage_cleanup_last_run < PAPER_STORAGE_CLEANUP_INTERVAL_SECONDS:
+        return
+
+    _strategy_storage_cleanup_last_run = now_monotonic
+    pool = get_database_pool()
+
+    try:
+        async with pool.acquire() as connection:
+            async with connection.transaction():
+                deleted_decisions = await connection.execute(
+                    """
+                    delete from ai_trade_decisions
+                    where (
+                            result = 'strategy_decision'
+                            and created_at < now() - interval '48 hours'
+                          )
+                       or created_at < now() - interval '14 days'
+                    """
+                )
+                deleted_scores = await connection.execute(
+                    """
+                    delete from ai_asset_scores
+                    where created_at < now() - interval '14 days'
+                    """
+                )
+                deleted_audit = await connection.execute(
+                    """
+                    delete from ai_strategy_audit_logs
+                    where created_at < now() - interval '14 days'
+                    """
+                )
+                deleted_signals = await connection.execute(
+                    """
+                    delete from ai_market_signals
+                    where expires_at < now() - interval '1 day'
+                    """
+                )
+        logger.info(
+            "Strategy storage cleanup completed",
+            extra={
+                "deleted_decisions": deleted_decisions,
+                "deleted_scores": deleted_scores,
+                "deleted_audit": deleted_audit,
+                "deleted_signals": deleted_signals,
+            },
+        )
+    except Exception:
+        logger.exception("Strategy storage cleanup failed")
+
+
 async def _record_strategy_ai_decisions(user_id: Any, strategy_id: str, payload: dict[str, Any]) -> None:
-    for item in payload.get("decisionLog") or []:
+    decision_items = [
+        item for item in payload.get("decisionLog") or []
+        if isinstance(item, dict) and isinstance(item.get("decision"), dict)
+    ]
+    decision_items.sort(key=_strategy_decision_log_rank, reverse=True)
+
+    for item in decision_items[:PAPER_DECISION_LOG_STORE_LIMIT]:
         if not isinstance(item, dict) or not isinstance(item.get("decision"), dict):
             continue
 
@@ -5467,6 +5546,7 @@ async def disconnect_ai_strategy(
 
 async def run_due_paper_strategies_for_all_users() -> None:
     pool = get_database_pool()
+    await _cleanup_strategy_storage_if_due()
     await _ensure_autonomous_strategy_connections_for_all_users()
 
     async with pool.acquire() as connection:
